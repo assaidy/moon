@@ -45,7 +45,7 @@ func New(opts ...AppOption) *App {
 		services:             make(map[reflect.Type]any),
 		startedServices:      make(map[reflect.Type]any),
 		logger:               slog.Default(),
-		errorHandler:         defaultErrorHandler,
+		errorHandler:         DefaultErrorHandler,
 		enableRequestLogging: true,
 		preforkChildrenCount: runtime.NumCPU(),
 		preforkRetriesCount:  5,
@@ -86,7 +86,7 @@ func WithLogger(l *slog.Logger) AppOption {
 
 // ErrorHandler is used to handle errors returned by the handler chain.
 //
-// Default: [defaultErrorHandler]
+// Default: [DefaultErrorHandler]
 func WithErrorHandler(eh ErrorHandler) AppOption {
 	Assert(eh != nil)
 	return func(app *App) {

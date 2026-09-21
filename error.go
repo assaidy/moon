@@ -6,6 +6,10 @@ import (
 	"net/http"
 )
 
+// Error is the standard JSON error body written by the default [ErrorHandler].
+// StatusCode sets the response status and is never serialized. Kind is a
+// machine-readable code matched by [Error.Is]. Details carries optional extra
+// context and is omitted when nil.
 type Error struct {
 	StatusCode  int    `json:"-"`
 	Kind        string `json:"kind"`
@@ -13,6 +17,8 @@ type Error struct {
 	Details     any    `json:"details,omitempty"`
 }
 
+// Error implements [error]. It returns the Kind,
+// or "kind(details)" when Details is set.
 func (me Error) Error() string {
 	if me.Details != nil {
 		return fmt.Sprintf("%s(%s)", me.Kind, me.Details)
@@ -20,6 +26,8 @@ func (me Error) Error() string {
 	return me.Kind
 }
 
+// Is reports whether target is an [Error] with the same Kind, so
+// [errors.Is] matches across Details and wrapping.
 func (me Error) Is(target error) bool {
 	e, ok := errors.AsType[Error](target)
 	if !ok {
@@ -28,10 +36,13 @@ func (me Error) Is(target error) bool {
 	return e.Kind == me.Kind
 }
 
+// NewError creates an [Error] with the given status code, kind and description.
 func NewError(statusCode int, kind, description string) Error {
 	return Error{StatusCode: statusCode, Kind: kind, Description: description}
 }
 
+// WithDetails returns a copy of the error with Details set.
+// The original is unchanged.
 func (me Error) WithDetails(d any) Error {
 	me.Details = d
 	return me
@@ -84,9 +95,16 @@ var (
 	ErrNetworkAuthenticationRequired = NewError(http.StatusNetworkAuthenticationRequired, "network_authentication_required", "Network authentication is required.")
 )
 
+// ErrorHandler handles an error returned by the handler chain.
+// Use the [Context] Write methods to send the response.
+// Set it via [WithErrorHandler]. Request logging, when enabled via
+// [WithRequestLogging], runs after the handler and logs the error.
 type ErrorHandler func(ctx *Context, err error)
 
-func defaultErrorHandler(ctx *Context, err error) {
+// DefaultErrorHandler writes an [Error] as JSON with its status code,
+// stripping Details for internal_server_error. Any other error becomes a
+// generic [ErrInternalServerError] response.
+func DefaultErrorHandler(ctx *Context, err error) {
 	if e, ok := errors.AsType[Error](err); ok {
 		if errors.Is(e, ErrInternalServerError) {
 			e.Details = nil
