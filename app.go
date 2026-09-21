@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// App is the HTTP server, router and owner of shared state, typed
+// dependencies and managed services. Build it with [New], register routes
+// with [App.Handle] and [App.Use], then serve with [App.Start] and stop
+// with [App.Shutdown]. Use [App.Test] to exercise handlers without listening.
 type App struct {
 	httpServer      *http.Server
 	routes          []Route
@@ -38,6 +42,8 @@ type App struct {
 	passLocalsToContext  bool
 }
 
+// New creates an App with sensible defaults, applies opts and registers
+// the root handler. Serve it with [App.Start].
 func New(opts ...AppOption) *App {
 	app := &App{
 		httpServer:           new(http.Server),
@@ -60,6 +66,7 @@ func New(opts ...AppOption) *App {
 	return app
 }
 
+// AppOption configures an [App]. Pass options to [New].
 type AppOption func(app *App)
 
 // WithListenAddress sets the TCP address the server listens on,
