@@ -53,7 +53,7 @@ func (me *Context) GetService[T Service]() T {
 // StartServices starts all registered services according to the configured
 // start timeout ([WithServiceStartTimeout]) and mode ([WithParallelServiceStart]).
 // If any service fails to start, already-started services are stopped and
-// the error is returned.
+// discarded; the start error is returned.
 //
 // Only successfully started services become visible to [Context.GetService]
 // and are stopped by [App.StopServices].
@@ -151,6 +151,8 @@ func (me *App) StopServices() {
 	} else {
 		me.stopServicesSequential()
 	}
+
+	me.startedServices = make(map[reflect.Type]any, len(me.services))
 }
 
 func (me *App) stopServicesSequential() {
