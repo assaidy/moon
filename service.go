@@ -25,9 +25,13 @@ type Service interface {
 
 	// IsAvailable reports whether the service is currently available for use.
 	IsAvailable() bool
+
+	// TODO: create a utility to track availability inside services.
 }
 
-// AddService registers a service that can be retrieved through [Context.GetService].
+// AddService registers a service that becomes retrievable through
+// [Context.GetService] only after it has been successfully started
+// (see [App.StartServices]).
 // If a service of the same type is already registered, it is replaced.
 // The service must not be nil.
 func (me *App) AddService[T Service](s T) {
@@ -35,8 +39,10 @@ func (me *App) AddService[T Service](s T) {
 	me.services[reflect.TypeOf(s)] = s
 }
 
-// GetService returns the service registered for T through [App.AddService].
-// It panics when no service of that type was registered.
+// GetService returns the started service for T (see [App.AddService] and
+// [App.StartServices]).
+// It panics when no service of that type was registered, or when it was
+// registered but never successfully started.
 func (me *Context) GetService[T Service]() T {
 	t := reflect.TypeFor[T]()
 	s, ok := me.services[t].(T)
@@ -46,6 +52,11 @@ func (me *Context) GetService[T Service]() T {
 
 // StartServices starts all registered services according to the configured
 // start timeout ([WithServiceStartTimeout]) and mode ([WithParallelServiceStart]).
+// If any service fails to start, already-started services are stopped and
+// the error is returned.
+//
+// Only successfully started services become visible to [Context.GetService]
+// and are stopped by [App.StopServices].
 //
 // It is called automatically by [App.Start]. It is exported so tests can
 // start services without listening, e.g. TestMain or TestXxx setups that
@@ -67,17 +78,12 @@ func (me *App) StartServices() error {
 }
 
 func (me *App) startServicesSequential() error {
-	started := make(map[reflect.Type]any, len(me.services))
-	original := me.services
-
 	for t, s := range me.services {
 		if err := me.startOneService(s.(Service)); err != nil {
-			me.services = started
 			me.StopServices()
-			me.services = original
 			return err
 		}
-		started[t] = s
+		me.startedServices[t] = s
 	}
 
 	me.logger.Info("all services started")
@@ -85,8 +91,6 @@ func (me *App) startServicesSequential() error {
 }
 
 func (me *App) startServicesParallel() error {
-	started := make(map[reflect.Type]any, len(me.services))
-	original := me.services
 	var wg errgroup.Group
 	var mu sync.Mutex
 
@@ -96,16 +100,14 @@ func (me *App) startServicesParallel() error {
 				return err
 			}
 			mu.Lock()
-			started[t] = s
+			me.startedServices[t] = s
 			mu.Unlock()
 			return nil
 		})
 	}
 
 	if err := wg.Wait(); err != nil {
-		me.services = started
 		me.StopServices()
-		me.services = original
 		return err
 	}
 
@@ -130,7 +132,7 @@ func (me *App) startOneService(service Service) error {
 	return nil
 }
 
-// StopServices stops all registered services according to the configured
+// StopServices stops all started services according to the configured
 // stop timeout ([WithServiceStopTimeout]) and mode ([WithParallelServiceStop]).
 //
 // It is called automatically by [App.Shutdown]. It is exported so tests that
@@ -152,7 +154,7 @@ func (me *App) StopServices() {
 }
 
 func (me *App) stopServicesSequential() {
-	for _, s := range me.services {
+	for _, s := range me.startedServices {
 		me.stopOneService(s.(Service))
 	}
 	me.logger.Info("all services stopped")
@@ -160,10 +162,8 @@ func (me *App) stopServicesSequential() {
 
 func (me *App) stopServicesParallel() {
 	var wg sync.WaitGroup
-	for _, s := range me.services {
-		wg.Go(func() {
-			me.stopOneService(s.(Service))
-		})
+	for _, s := range me.startedServices {
+		wg.Go(func() { me.stopOneService(s.(Service)) })
 	}
 	wg.Wait()
 	me.logger.Info("all services stopped")

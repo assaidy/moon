@@ -13,8 +13,8 @@ import (
 // Context is the per-request handle passed to every [Handler].
 // It carries the request and response, the matched route pattern and
 // parameters, per-request locals, app-shared state, and the typed
-// dependencies and services registered on the app (see [Context.GetDependency]
-// and [Context.GetService]). A new Context is created for each request, so
+// dependencies registered on the app and services started on the app
+// (see [Context.GetDependency] and [Context.GetService]). A new Context is created for each request, so
 // locals never leak between requests.
 type Context struct {
 	// Request is the incoming HTTP request.
