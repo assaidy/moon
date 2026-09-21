@@ -4,8 +4,14 @@ import (
 	"reflect"
 )
 
+// Map is shorthand for building response bodies (see [Context.WriteAs]).
+//
+// Example:
+//
+//	return ctx.WriteAs(http.StatusOK, CodecJson, Map{"hello": "world"})
 type Map map[string]any
 
+// Assert panics when condition is false, with message when given.
 func Assert(condition bool, message ...string) {
 	if !condition {
 		if len(message) > 0 {
