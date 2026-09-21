@@ -7,15 +7,24 @@ import (
 	"github.com/shamaton/msgpack/v2"
 )
 
+// Codec encodes and decodes request and response bodies.
+// See [Context.ReadAs] and [Context.WriteAs].
+// [Context.WriteAs] sets the Content-Type header from [Codec.ContentType].
 type Codec interface {
+	// Encode serializes v for the response body.
 	Encode(v any) ([]byte, error)
+	// Decode parses raw request body into v.
 	Decode(raw []byte, v any) error
+	// ContentType returns the MIME type set on responses written with this codec.
 	ContentType() string
 }
 
 var (
-	CodecJson        Codec = jsonCodec{}
-	CodecXml         Codec = xmlCodec{}
+	// CodecJson encodes and decodes JSON ("application/json").
+	CodecJson Codec = jsonCodec{}
+	// CodecXml encodes and decodes XML ("application/xml").
+	CodecXml Codec = xmlCodec{}
+	// CodecMessagePack encodes and decodes MessagePack ("application/vnd.msgpack").
 	CodecMessagePack Codec = messagePackCodec{}
 )
 
