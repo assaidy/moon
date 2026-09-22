@@ -10,6 +10,7 @@ import (
 )
 
 // TODO: add static files support (maybe as a middleware)
+// TODO: add route grouping
 
 func (me *App) registerRootHandler() {
 	mux := http.NewServeMux()
@@ -18,8 +19,8 @@ func (me *App) registerRootHandler() {
 	// this is expected as the error handler and the logger are for handled requests.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// cut trailing forward slashes except the root "/"
-		for i := len(r.URL.Path) - 1; i > 0 && r.URL.Path[i] == '/'; i-- {
-			r.URL.Path = r.URL.Path[:i]
+		if r.URL.Path != "/" {
+			r.URL.Path = strings.TrimRight(r.URL.Path, "/")
 		}
 
 		var middlewares []Handler

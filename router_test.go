@@ -645,14 +645,15 @@ func TestRouter_Dispatch(t *testing.T) {
 		app := New(WithRequestLogging(false))
 		var called []string
 
-		app.Handle(http.MethodGet, "/users", newHandler("handler", &called))
+		app.Handle(http.MethodGet, "/", newHandler("root", &called))
+		app.Handle(http.MethodGet, "/users", newHandler("users", &called))
 
-		for _, path := range []string{"/users", "/users/"} {
-			called = nil
+		for _, path := range []string{"/", "/users", "/users/"} {
 			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
 			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
-			require.Equal(t, []string{"handler"}, called, "path: %s", path)
 		}
+
+		require.Equal(t, []string{"root", "users", "users"}, called)
 	})
 
 	t.Run("unknown path returns 404 invalid_endpoint", func(t *testing.T) {

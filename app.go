@@ -66,6 +66,8 @@ func New(opts ...AppOption) *App {
 	return app
 }
 
+// TODO: rename [AppOption] to AppOptionFunc.
+
 // AppOption configures an [App]. Pass options to [New].
 type AppOption func(app *App)
 

@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// TODO: add redirection
+
 // Context is the per-request handle passed to every [Handler].
 // It carries the request and response, the matched route pattern and
 // parameters, per-request locals, app-shared state, and the typed
@@ -34,6 +36,7 @@ type Context struct {
 	services            map[reflect.Type]any
 }
 
+// TODO: accept the app and store it as a field
 func newContext(
 	w http.ResponseWriter,
 	r *http.Request,
