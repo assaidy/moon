@@ -5,8 +5,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"reflect"
-	"sync"
 	"time"
 )
 
@@ -25,28 +23,21 @@ type Context struct {
 	// SetHeader/AddHeader over writing to it directly.
 	Response *httpResponseWriterWrapper
 
-	params              map[string]string
-	handlers            []Handler
-	nextHandlerIndex    int
-	pattern             string
-	locals              map[string]any
-	passLocalsToContext bool
-	state               *sync.Map
-	dependencies        map[reflect.Type]any
-	services            map[reflect.Type]any
+	params           map[string]string
+	handlers         []Handler
+	nextHandlerIndex int
+	pattern          string
+	locals           map[string]any
+	app              *App
 }
 
-// TODO: accept the app and store it as a field
 func newContext(
 	w http.ResponseWriter,
 	r *http.Request,
 	pattern string,
 	params map[string]string,
 	handlers []Handler,
-	state *sync.Map,
-	dependencies map[reflect.Type]any,
-	services map[reflect.Type]any,
-	passLocalsToContext bool,
+	app *App,
 ) *Context {
 	ctx := new(Context)
 	ctx.Response = &httpResponseWriterWrapper{writer: w}
@@ -55,10 +46,7 @@ func newContext(
 	ctx.params = params
 	ctx.handlers = handlers
 	ctx.locals = make(map[string]any)
-	ctx.passLocalsToContext = passLocalsToContext
-	ctx.state = state
-	ctx.dependencies = dependencies
-	ctx.services = services
+	ctx.app = app
 	return ctx
 }
 
@@ -343,7 +331,7 @@ func (me *Context) SetLocal(key string, value any) {
 	Assert(key != "", "key cannot be empty")
 	Assert(value != nil, "value cannot be nil")
 	me.locals[key] = value
-	if me.passLocalsToContext {
+	if me.app.passLocalsToContext {
 		me.Request = me.Request.WithContext(context.WithValue(me.Request.Context(), key, value))
 	}
 }
@@ -366,7 +354,7 @@ func (me *Context) GetLocal[T any](key string) (T, bool) {
 // key is shadowed with nil in the request context.
 func (me *Context) DeleteLocal(key string) {
 	delete(me.locals, key)
-	if me.passLocalsToContext {
+	if me.app.passLocalsToContext {
 		me.Request = me.Request.WithContext(context.WithValue(me.Request.Context(), key, nil))
 	}
 }
@@ -376,19 +364,19 @@ func (me *Context) DeleteLocal(key string) {
 func (me *Context) SetState(key, value any) {
 	Assert(key != "", "key cannot be empty")
 	Assert(value != nil, "value cannot be nil")
-	me.state.Store(key, value)
+	me.app.state.Store(key, value)
 }
 
 // GetAnyState returns the app-shared value for key and whether it exists.
 func (me *Context) GetAnyState(key string) (any, bool) {
-	return me.state.Load(key)
+	return me.app.state.Load(key)
 }
 
 // GetState returns the app-shared value for key asserted to T.
 // ok is false when the key is missing or the value has another type.
 func (me *Context) GetState[T any](key string) (T, bool) {
 	var t T
-	v, ok := me.state.Load(key)
+	v, ok := me.app.state.Load(key)
 	if !ok {
 		return t, false
 	}
@@ -398,5 +386,5 @@ func (me *Context) GetState[T any](key string) (T, bool) {
 
 // DeleteState removes the app-shared value for key.
 func (me *Context) DeleteState(key string) {
-	me.state.Delete(key)
+	me.app.state.Delete(key)
 }

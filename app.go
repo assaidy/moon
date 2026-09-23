@@ -42,9 +42,9 @@ type App struct {
 	passLocalsToContext  bool
 }
 
-// New creates an App with sensible defaults, applies opts and registers
+// New creates an App with sensible defaults, applies optionFuncs and registers
 // the root handler. Serve it with [App.Start].
-func New(opts ...AppOption) *App {
+func New(optionFuncs ...AppOptionFunc) *App {
 	app := &App{
 		httpServer:           new(http.Server),
 		dependencies:         make(map[reflect.Type]any),
@@ -57,8 +57,8 @@ func New(opts ...AppOption) *App {
 		preforkRetriesCount:  5,
 	}
 
-	for _, opt := range opts {
-		opt(app)
+	for _, optFunc := range optionFuncs {
+		optFunc(app)
 	}
 
 	app.registerRootHandler()
@@ -66,17 +66,15 @@ func New(opts ...AppOption) *App {
 	return app
 }
 
-// TODO: rename [AppOption] to AppOptionFunc.
-
-// AppOption configures an [App]. Pass options to [New].
-type AppOption func(app *App)
+// AppOptionFunc configures an [App]. Pass option funcs to [New].
+type AppOptionFunc func(app *App)
 
 // WithListenAddress sets the TCP address the server listens on,
 // e.g. ":8080" or "127.0.0.1:3000".
 //
 // Default: ":http" (port 80), or ":https" (port 443) when TLS is
 // enabled via [WithTls].
-func WithListenAddress(address string) AppOption {
+func WithListenAddress(address string) AppOptionFunc {
 	return func(app *App) {
 		app.listenAddress = address
 	}
@@ -86,7 +84,7 @@ func WithListenAddress(address string) AppOption {
 // It is also used for request logging when [EnableRequestLogging] is true.
 //
 // Default: [slog.Default]
-func WithLogger(l *slog.Logger) AppOption {
+func WithLogger(l *slog.Logger) AppOptionFunc {
 	Assert(l != nil)
 	return func(app *App) {
 		app.logger = l
@@ -96,7 +94,7 @@ func WithLogger(l *slog.Logger) AppOption {
 // ErrorHandler is used to handle errors returned by the handler chain.
 //
 // Default: [DefaultErrorHandler]
-func WithErrorHandler(eh ErrorHandler) AppOption {
+func WithErrorHandler(eh ErrorHandler) AppOptionFunc {
 	Assert(eh != nil)
 	return func(app *App) {
 		app.errorHandler = eh
@@ -107,7 +105,7 @@ func WithErrorHandler(eh ErrorHandler) AppOption {
 // such as response time, status code, remote address, error, etc.
 //
 // Default: true
-func WithRequestLogging(b bool) AppOption {
+func WithRequestLogging(b bool) AppOptionFunc {
 	return func(app *App) {
 		app.enableRequestLogging = b
 	}
@@ -118,7 +116,7 @@ func WithRequestLogging(b bool) AppOption {
 // with a 200 OK status and a Content-Length of 0.
 //
 // Default: true
-func WithGeneralOptionsHandler(b bool) AppOption {
+func WithGeneralOptionsHandler(b bool) AppOptionFunc {
 	return func(app *App) {
 		app.httpServer.DisableGeneralOptionsHandler = !b
 	}
@@ -128,7 +126,7 @@ func WithGeneralOptionsHandler(b bool) AppOption {
 // including the body.
 //
 // Default: no timeout
-func WithReadTimeout(d time.Duration) AppOption {
+func WithReadTimeout(d time.Duration) AppOptionFunc {
 	Assert(d > 0)
 	return func(app *App) {
 		app.httpServer.ReadTimeout = d
@@ -140,7 +138,7 @@ func WithReadTimeout(d time.Duration) AppOption {
 // allowing the Handler to decide what is considered too slow for the body.
 //
 // Default: read timout
-func WithReadHeaderTimeout(d time.Duration) AppOption {
+func WithReadHeaderTimeout(d time.Duration) AppOptionFunc {
 	Assert(d > 0)
 	return func(app *App) {
 		app.httpServer.ReadHeaderTimeout = d
@@ -152,7 +150,7 @@ func WithReadHeaderTimeout(d time.Duration) AppOption {
 // does not allow Handlers to make per-request decisions.
 //
 // Default: no timeout
-func WithWriteTimeout(d time.Duration) AppOption {
+func WithWriteTimeout(d time.Duration) AppOptionFunc {
 	Assert(d > 0)
 	return func(app *App) {
 		app.httpServer.WriteTimeout = d
@@ -163,7 +161,7 @@ func WithWriteTimeout(d time.Duration) AppOption {
 // when keep-alives are enabled.
 //
 // Default: read timout
-func WithIdleTimeout(d time.Duration) AppOption {
+func WithIdleTimeout(d time.Duration) AppOptionFunc {
 	return func(app *App) {
 		Assert(d > 0)
 		app.httpServer.IdleTimeout = d
@@ -175,7 +173,7 @@ func WithIdleTimeout(d time.Duration) AppOption {
 // It does not limit the size of the request body.
 //
 // Default: [http.DefaultMaxHeaderBytes]
-func WithMaxHeaderBytes(i int) AppOption {
+func WithMaxHeaderBytes(i int) AppOptionFunc {
 	Assert(i > 0)
 	return func(app *App) {
 		app.httpServer.MaxHeaderBytes = i
@@ -188,7 +186,7 @@ func WithMaxHeaderBytes(i int) AppOption {
 // header lines are counted separately.
 //
 // Default: [http.DefaultMaxHeaderValueCount]
-func WithMaxHeaderValueCount(i int) AppOption {
+func WithMaxHeaderValueCount(i int) AppOptionFunc {
 	Assert(i > 0)
 	return func(app *App) {
 		app.httpServer.MaxHeaderValueCount = i
@@ -200,7 +198,7 @@ func WithMaxHeaderValueCount(i int) AppOption {
 // port by enabling the SO_REUSEPORT socket option.
 //
 // Default: false
-func WithPrefork(b bool) AppOption {
+func WithPrefork(b bool) AppOptionFunc {
 	return func(app *App) {
 		app.preforkIsEnabled = b
 	}
@@ -210,7 +208,7 @@ func WithPrefork(b bool) AppOption {
 // prefork is enabled.
 //
 // Default: number of logical CPUs from [runtime.NumCPU]
-func WithPreforkChildrenCount(i int) AppOption {
+func WithPreforkChildrenCount(i int) AppOptionFunc {
 	Assert(i > 0)
 	return func(app *App) {
 		app.preforkChildrenCount = i
@@ -223,7 +221,7 @@ func WithPreforkChildrenCount(i int) AppOption {
 // [App.Start].
 //
 // Default: 5
-func WithPreforkRetriesCount(i int) AppOption {
+func WithPreforkRetriesCount(i int) AppOptionFunc {
 	Assert(i >= 0)
 	return func(app *App) {
 		app.preforkRetriesCount = i
@@ -235,7 +233,7 @@ func WithPreforkRetriesCount(i int) AppOption {
 // keyFile specifies the path to the TLS private key file.
 //
 // Default: no TLS
-func WithTls(certFile, keyFile string) AppOption {
+func WithTls(certFile, keyFile string) AppOptionFunc {
 	Assert(certFile != "" && keyFile != "")
 	return func(app *App) {
 		app.useTls = true
@@ -246,7 +244,7 @@ func WithTls(certFile, keyFile string) AppOption {
 
 // WithTlsConfig provides a TLS configuration for the server.
 // The configuration is cloned before use by the server.
-func WithTlsConfig(c *tls.Config) AppOption {
+func WithTlsConfig(c *tls.Config) AppOptionFunc {
 	Assert(c != nil)
 	return func(app *App) {
 		app.httpServer.TLSConfig = c
@@ -254,7 +252,7 @@ func WithTlsConfig(c *tls.Config) AppOption {
 }
 
 // WithHttp2Config configures HTTP/2 connections.
-func WithHttp2Config(c *http.HTTP2Config) AppOption {
+func WithHttp2Config(c *http.HTTP2Config) AppOptionFunc {
 	Assert(c != nil)
 	return func(app *App) {
 		app.httpServer.HTTP2 = c
@@ -268,7 +266,7 @@ func WithHttp2Config(c *http.HTTP2Config) AppOption {
 // and unencrypted HTTP/2 on the same address and port.
 //
 // Default: HTTP/1 and HTTP/2
-func WithProtocols(p *http.Protocols) AppOption {
+func WithProtocols(p *http.Protocols) AppOptionFunc {
 	Assert(p != nil)
 	return func(app *App) {
 		app.httpServer.Protocols = p
@@ -283,7 +281,7 @@ func WithProtocols(p *http.Protocols) AppOption {
 // round-robin order without prioritization.
 //
 // Default: true
-func WithClientPriority(b bool) AppOption {
+func WithClientPriority(b bool) AppOptionFunc {
 	return func(app *App) {
 		app.httpServer.DisableClientPriority = !b
 	}
@@ -294,7 +292,7 @@ func WithClientPriority(b bool) AppOption {
 // A service that does not finish in time fails with a context error and is skipped.
 //
 // Default: no timeout
-func WithServiceStartTimeout(d time.Duration) AppOption {
+func WithServiceStartTimeout(d time.Duration) AppOptionFunc {
 	Assert(d > 0)
 	return func(app *App) {
 		app.serviceStartTimeout = d
@@ -306,7 +304,7 @@ func WithServiceStartTimeout(d time.Duration) AppOption {
 // A service that does not finish in time fails with a context error, which is logged.
 //
 // Default: no timeout
-func WithServiceStopTimeout(d time.Duration) AppOption {
+func WithServiceStopTimeout(d time.Duration) AppOptionFunc {
 	Assert(d > 0)
 	return func(app *App) {
 		app.serviceStopTimeout = d
@@ -317,7 +315,7 @@ func WithServiceStopTimeout(d time.Duration) AppOption {
 // instead of one after another.
 //
 // Default: false
-func WithParallelServiceStart() AppOption {
+func WithParallelServiceStart() AppOptionFunc {
 	return func(app *App) {
 		app.serviceStartParallel = true
 	}
@@ -327,7 +325,7 @@ func WithParallelServiceStart() AppOption {
 // instead of one after another.
 //
 // Default: false
-func WithParallelServiceStop() AppOption {
+func WithParallelServiceStop() AppOptionFunc {
 	return func(app *App) {
 		app.serviceStopParallel = true
 	}
@@ -336,7 +334,7 @@ func WithParallelServiceStop() AppOption {
 // WithShutdownTimeout sets the maximum duration for http server shutdown.
 //
 // Default: no timeout
-func WithShutdownTimeout(d time.Duration) AppOption {
+func WithShutdownTimeout(d time.Duration) AppOptionFunc {
 	Assert(d > 0)
 	return func(app *App) {
 		app.shutdownTimeout = d
@@ -352,7 +350,7 @@ func WithShutdownTimeout(d time.Duration) AppOption {
 // Enable only for interop with stdlib/middleware reading r.Context().Value().
 //
 // Default: false
-func WithPassLocalsToContext(b bool) AppOption {
+func WithPassLocalsToContext(b bool) AppOptionFunc {
 	return func(app *App) {
 		app.passLocalsToContext = b
 	}

@@ -159,17 +159,7 @@ func (me *App) processRequest(
 	params map[string]string,
 	handlers []Handler,
 ) {
-	ctx := newContext(
-		w,
-		r,
-		pattern,
-		params,
-		handlers,
-		&me.state,
-		me.dependencies,
-		me.startedServices,
-		me.passLocalsToContext,
-	)
+	ctx := newContext(w, r, pattern, params, handlers, me)
 	start := time.Now()
 
 	// first handler/middleware that will execute all handlers

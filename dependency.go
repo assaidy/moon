@@ -15,7 +15,7 @@ func (me *App) AddDependency(d any) {
 // was registered.
 func (me *Context) GetDependency[T any]() T {
 	t := reflect.TypeFor[T]()
-	d, ok := me.dependencies[t].(T)
+	d, ok := me.app.dependencies[t].(T)
 	Assert(ok, "dependency not found: "+t.String())
 	return d
 }

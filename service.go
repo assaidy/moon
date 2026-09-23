@@ -45,7 +45,7 @@ func (me *App) AddService[T Service](s T) {
 // registered but never successfully started.
 func (me *Context) GetService[T Service]() T {
 	t := reflect.TypeFor[T]()
-	s, ok := me.services[t].(T)
+	s, ok := me.app.startedServices[t].(T)
 	Assert(ok, "service not found: "+t.String())
 	return s
 }
