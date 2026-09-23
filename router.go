@@ -167,11 +167,7 @@ func (me *App) processRequest(
 	if err != nil {
 		me.errorHandler(ctx, err)
 	}
-
-	statusCode := ctx.GetStatusCode()
-	if statusCode == 0 {
-		statusCode = 200
-	}
+	ctx.Response.flush()
 
 	if me.enableRequestLogging {
 		me.logger.Info(
@@ -180,7 +176,7 @@ func (me *App) processRequest(
 			"client", ctx.GetRemoteAddress(),
 			"method", ctx.GetMethod(),
 			"path", ctx.GetPath(),
-			"status", statusCode,
+			"status", ctx.GetStatusCode(),
 			"error", err,
 		)
 	}
@@ -207,7 +203,11 @@ func isValidHttpMethod(method string) bool {
 // Call [Context.Next] to invoke the next handler in the chain and return
 // its error (typically `return ctx.Next()`). Return nil to end the chain
 // successfully, or a non-nil error to abort and invoke the app
-// [ErrorHandler]. Use the [Context] Write methods to send a response.
+// [ErrorHandler]. Use the [Context] Write methods to buffer a response.
+//
+// Responses are buffered until the chain finishes, so headers or status set
+// after [Context.Next] returns still apply. Do not mix buffered writes with
+// the raw writer from Unwrap in one request; raw use discards the buffer.
 type Handler func(ctx *Context) error
 
 // TODO: add support for route metadata to generate apenapi spec

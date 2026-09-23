@@ -616,7 +616,7 @@ func TestContext_StatusCode(t *testing.T) {
 		require.Empty(t, raw)
 	})
 
-	t.Run("SetStatusCode keeps headers set before", func(t *testing.T) {
+	t.Run("SetStatusCode buffers, headers before and after apply", func(t *testing.T) {
 		app := New(WithRequestLogging(false))
 		app.Use("/", func(ctx *Context) error {
 			ctx.SetHeader("X-Custom", "yes")
@@ -628,7 +628,116 @@ func TestContext_StatusCode(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
 		require.Equal(t, http.StatusAccepted, resp.StatusCode)
-		require.Equal(t, "yes", resp.Header.Get("X-Custom"))
+		require.Equal(t, "no", resp.Header.Get("X-Custom"))
+	})
+
+	t.Run("header set after Next applies", func(t *testing.T) {
+		app := New(WithRequestLogging(false))
+		app.Handle(http.MethodGet, "/timed",
+			func(ctx *Context) error {
+				require.NoError(t, ctx.Next())
+				ctx.SetHeader("X-Response-Time", "1ms")
+				return nil
+			},
+			func(ctx *Context) error {
+				return ctx.Write(http.StatusOK, "hello")
+			},
+		)
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/timed", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "1ms", resp.Header.Get("X-Response-Time"))
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, "hello", string(raw))
+	})
+
+	t.Run("last status wins", func(t *testing.T) {
+		app := New(WithRequestLogging(false))
+		app.Use("/", func(ctx *Context) error {
+			require.NoError(t, ctx.Write(http.StatusCreated, "hello"))
+			ctx.SetStatusCode(http.StatusAccepted)
+			require.Equal(t, http.StatusAccepted, ctx.GetStatusCode())
+			return nil
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+		require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	})
+}
+
+func TestContext_RawWriter(t *testing.T) {
+	t.Run("pure raw path skips buffered flush", func(t *testing.T) {
+		app := New(WithRequestLogging(false))
+		app.Use("/", func(ctx *Context) error {
+			raw := ctx.Response.Unwrap()
+			raw.Header().Set("X-Raw", "yes")
+			raw.WriteHeader(http.StatusCreated)
+			_, err := raw.Write([]byte("raw-body"))
+			require.NoError(t, err)
+			require.Equal(t, http.StatusCreated, ctx.GetStatusCode())
+			return nil
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.Equal(t, "yes", resp.Header.Get("X-Raw"))
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, "raw-body", string(raw))
+	})
+
+	t.Run("raw flush marks raw without panic", func(t *testing.T) {
+		app := New(WithRequestLogging(false))
+		app.Use("/", func(ctx *Context) error {
+			raw := ctx.Response.Unwrap()
+			raw.Header().Set("X-Flush", "yes")
+			http.NewResponseController(raw).Flush()
+			_, err := raw.Write([]byte("stream"))
+			require.NoError(t, err)
+			return nil
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+		require.Equal(t, "yes", resp.Header.Get("X-Flush"))
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, "stream", string(raw))
+	})
+
+	t.Run("mixed raw wins over buffered", func(t *testing.T) {
+		app := New(WithRequestLogging(false))
+		app.Use("/", func(ctx *Context) error {
+			require.NoError(t, ctx.Write(http.StatusOK, "buffered"))
+			_, err := ctx.Response.Unwrap().Write([]byte("raw"))
+			require.NoError(t, err)
+			return nil
+		})
+
+		var resp *http.Response
+		require.NotPanics(t, func() {
+			resp = app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+		})
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, "raw", string(raw))
+	})
+
+	t.Run("raw header use discards buffered write", func(t *testing.T) {
+		app := New(WithRequestLogging(false))
+		app.Use("/", func(ctx *Context) error {
+			ctx.Response.Unwrap().Header().Set("X-Raw", "yes")
+			return ctx.Write(http.StatusOK, "buffered")
+		})
+
+		var resp *http.Response
+		require.NotPanics(t, func() {
+			resp = app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+		})
+		require.Equal(t, "yes", resp.Header.Get("X-Raw"))
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Empty(t, raw)
 	})
 }
 
