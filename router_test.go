@@ -803,7 +803,7 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, int64(200), loggedStatus(t, logs))
+		require.Equal(t, "200", loggedStatus(t, logs))
 	})
 
 	t.Run("logs written status", func(t *testing.T) {
@@ -815,6 +815,6 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
-		require.Equal(t, int64(http.StatusCreated), loggedStatus(t, logs))
+		require.Equal(t, "201", loggedStatus(t, logs))
 	})
 }

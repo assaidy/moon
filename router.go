@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 )
 
 // TODO: add static files support (maybe as a middleware)
@@ -160,25 +159,18 @@ func (me *App) processRequest(
 	handlers []Handler,
 ) {
 	ctx := newContext(w, r, pattern, params, handlers, me)
-	start := time.Now()
+	setRequestHandlingStartTimeLocal(ctx)
 
 	// first handler/middleware that will execute all handlers
 	err := ctx.Next()
 	if err != nil {
 		me.errorHandler(ctx, err)
+		setRequestHandlingErrorLocal(ctx, err)
 	}
 	ctx.Response.flush()
 
 	if me.enableRequestLogging {
-		me.logger.Info(
-			"request handled",
-			"took", time.Since(start),
-			"client", ctx.GetRemoteAddress(),
-			"method", ctx.GetMethod(),
-			"path", ctx.GetPath(),
-			"status", ctx.GetStatusCode(),
-			"error", err,
-		)
+		me.logRequest(ctx)
 	}
 }
 

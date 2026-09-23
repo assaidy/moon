@@ -16,12 +16,12 @@ import (
 // Requests for which the [WithSkip] predicate returns true run the chain
 // without recording anything.
 func New(optionFuncs ...OptionFunc) moon.Handler {
-	return func(ctx *moon.Context) error {
-		opts := options{header: "X-Response-Time"}
-		for _, of := range optionFuncs {
-			of(&opts)
-		}
+	opts := options{header: "X-Response-Time"}
+	for _, of := range optionFuncs {
+		of(&opts)
+	}
 
+	return func(ctx *moon.Context) error {
 		if opts.skip != nil && opts.skip(ctx) {
 			return ctx.Next()
 		}

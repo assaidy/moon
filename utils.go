@@ -1,6 +1,8 @@
 package moon
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"reflect"
 )
 
@@ -39,4 +41,38 @@ func isNil(value any) bool {
 	}
 
 	return false
+}
+
+// GenerateSecureToken returns a cryptographically random token encoded with
+// [base64.RawURLEncoding] (URL-safe, unpadded), suitable for session IDs,
+// CSRF tokens and similar secrets.
+//
+// Called with no arguments it uses 32 random bytes (43 encoded characters).
+// An optional length overrides the random byte count; at most one may be
+// given. The default length takes a stack-allocated fast path.
+func GenerateSecureToken(length ...int) string {
+	const defaultLength = 32
+	// 32 bytes encode to 44 base64 chars minus 1 pad char dropped by RawURLEncoding.
+	const fastPathEncodedLength = 43
+
+	n := defaultLength
+	if len(length) > 0 {
+		Assert(len(length) == 1, "at most one length may be given")
+		n = length[0]
+	}
+
+	// fast path without heap allocation
+	if n == defaultLength {
+		var buffer [defaultLength]byte
+		src := buffer[:]
+		rand.Read(src)
+
+		var encoded [fastPathEncodedLength]byte
+		base64.RawURLEncoding.Encode(encoded[:], src)
+		return string(encoded[:])
+	}
+
+	buffer := make([]byte, n)
+	rand.Read(buffer)
+	return base64.RawURLEncoding.EncodeToString(buffer)
 }
