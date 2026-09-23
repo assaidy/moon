@@ -96,6 +96,9 @@ var (
 )
 
 // ErrorHandler handles an error returned by the handler chain.
+// This includes [ErrInvalidEndpoint] for unknown paths and
+// [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
+// inspect or override them.
 // Use the [Context] Write methods to send the response.
 // Set it via [WithErrorHandler]. Request logging, when enabled via
 // [WithRequestLogging], runs after the handler and logs the error.

@@ -1,7 +1,6 @@
 package moon
 
 import (
-	"encoding/json"
 	"net/http"
 	"regexp"
 	"slices"
@@ -15,8 +14,6 @@ import (
 func (me *App) registerRootHandler() {
 	mux := http.NewServeMux()
 
-	// NOTE: we cannot log/error-handle invalid requests here.
-	// this is expected as the error handler and the logger are for handled requests.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// cut trailing forward slashes except the root "/"
 		if r.URL.Path != "/" {
@@ -35,20 +32,18 @@ func (me *App) registerRootHandler() {
 				if handlers, ok := route.methodHandlers[r.Method]; ok {
 					me.processRequest(w, r, route.pattern, params, append(middlewares, handlers...))
 				} else {
-					w.WriteHeader(ErrMethodNotAllowed.StatusCode)
-					json.NewEncoder(w).Encode(ErrMethodNotAllowed)
+					me.processRequest(w, r, "", nil, []Handler{func(ctx *Context) error { return ErrMethodNotAllowed }})
 				}
 				return
 			}
 		}
 
 		if len(middlewares) > 0 {
-			me.processRequest(w, r, r.URL.Path, nil, middlewares)
+			me.processRequest(w, r, "", nil, middlewares)
 			return
 		}
 
-		w.WriteHeader(ErrInvalidEndpoint.StatusCode)
-		json.NewEncoder(w).Encode(ErrInvalidEndpoint)
+		me.processRequest(w, r, "", nil, []Handler{func(ctx *Context) error { return ErrInvalidEndpoint }})
 	})
 
 	me.httpServer.Handler = mux
@@ -71,7 +66,10 @@ func (me *App) registerRootHandler() {
 //
 // Middlewares registered with [App.Use] before this call whose prefix
 // matches the request path run before handlers. A path match with an
-// unregistered method responds 405; no match responds 404.
+// unregistered method invokes the app's [ErrorHandler] with
+// [ErrMethodNotAllowed]; no match invokes it with [ErrInvalidEndpoint],
+// so a custom handler can inspect or override them. Both carry an empty
+// [Context.GetPattern] since no route pattern matched.
 func (me *App) Handle(method string, pattern string, handlers ...Handler) {
 	Assert(isValidHttpMethod(method), "invalid http method")
 	Assert(isValidRoutePattern(pattern), "invalid route pattern")
@@ -118,7 +116,9 @@ func areParamNamesUnique(pattern string) bool {
 // Panics on invalid prefix. Does nothing if no middlewares are given.
 // Registration order matters: only [App.Handle] routes registered after
 // this call observe it, in registration order. If no route matches but a
-// prefix does, the collected middlewares still run.
+// prefix does, the collected middlewares still run with an empty
+// [Context.GetPattern]: the pattern is only set for routes registered
+// by [App.Handle].
 //
 // Each middleware must call [Context.Next] to continue the chain; a
 // returned error from the chain is passed to the app's [ErrorHandler].
@@ -168,6 +168,11 @@ func (me *App) processRequest(
 		me.errorHandler(ctx, err)
 	}
 
+	statusCode := ctx.GetStatusCode()
+	if statusCode == 0 {
+		statusCode = 200
+	}
+
 	if me.enableRequestLogging {
 		me.logger.Info(
 			"request handled",
@@ -175,7 +180,7 @@ func (me *App) processRequest(
 			"client", ctx.GetRemoteAddress(),
 			"method", ctx.GetMethod(),
 			"path", ctx.GetPath(),
-			"status", ctx.GetStatusCode(),
+			"status", statusCode,
 			"error", err,
 		)
 	}
@@ -210,6 +215,9 @@ type Handler func(ctx *Context) error
 // Route is a handler route (pattern + per-method handlers) or a
 // middleware prefix entry. See [App.Handle] and [App.Use].
 type Route struct {
+	// TODO: use a route per method.
+	//	struct Route {pattern, method, handlers}
+	// middlewares don't have a pattern or a method.
 	pattern            string
 	methodHandlers     map[string][]Handler
 	isMiddlewarePrefix bool

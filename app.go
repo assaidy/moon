@@ -91,7 +91,10 @@ func WithLogger(l *slog.Logger) AppOptionFunc {
 	}
 }
 
-// ErrorHandler is used to handle errors returned by the handler chain.
+// ErrorHandler is used to handle errors returned by the handler chain,
+// including [ErrInvalidEndpoint] for unknown paths and
+// [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
+// inspect or override them.
 //
 // Default: [DefaultErrorHandler]
 func WithErrorHandler(eh ErrorHandler) AppOptionFunc {
@@ -103,6 +106,9 @@ func WithErrorHandler(eh ErrorHandler) AppOptionFunc {
 
 // WithRequestLogging determines whether to log request handling results,
 // such as response time, status code, remote address, error, etc.
+// Every request routed through the app is logged, including unmatched
+// paths/methods handled as [ErrInvalidEndpoint]/[ErrMethodNotAllowed].
+// The logged status defaults to 200 when no response was written.
 //
 // Default: true
 func WithRequestLogging(b bool) AppOptionFunc {

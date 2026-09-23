@@ -1,9 +1,11 @@
 package moon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -692,6 +694,46 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, ErrMethodNotAllowed.Kind, body.Kind)
 	})
 
+	t.Run("unknown path reaches custom error handler as invalid_endpoint", func(t *testing.T) {
+		var captured error
+		var pattern string
+
+		app := New(
+			WithRequestLogging(false),
+			WithErrorHandler(func(ctx *Context, err error) {
+				captured = err
+				pattern = ctx.GetPattern()
+				ctx.WriteAs(http.StatusNotFound, CodecJson, ErrInvalidEndpoint)
+			}),
+		)
+		app.Handle(http.MethodGet, "/users", newHandler("handler", &[]string{}))
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.ErrorIs(t, captured, ErrInvalidEndpoint)
+		require.Equal(t, "", pattern)
+	})
+
+	t.Run("wrong method reaches custom error handler as method_not_allowed", func(t *testing.T) {
+		var captured error
+		var pattern string
+
+		app := New(
+			WithRequestLogging(false),
+			WithErrorHandler(func(ctx *Context, err error) {
+				captured = err
+				pattern = ctx.GetPattern()
+				ctx.WriteAs(http.StatusMethodNotAllowed, CodecJson, ErrMethodNotAllowed)
+			}),
+		)
+		app.Handle(http.MethodGet, "/users", newHandler("handler", &[]string{}))
+
+		resp := app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
+		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+		require.ErrorIs(t, captured, ErrMethodNotAllowed)
+		require.Equal(t, "", pattern)
+	})
+
 	t.Run("middleware Next chain and error bubbling to errorHandler", func(t *testing.T) {
 		sentinel := errors.New("boom")
 		var order []string
@@ -724,5 +766,55 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, http.StatusTeapot, resp.StatusCode)
 		require.Equal(t, sentinel, captured)
 		require.Equal(t, []string{"mw1-before", "mw2", "handler", "mw1-after"}, order)
+	})
+}
+
+type captureLogHandler struct {
+	records []slog.Record
+}
+
+func (h *captureLogHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *captureLogHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r)
+	return nil
+}
+func (h *captureLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *captureLogHandler) WithGroup(string) slog.Handler      { return h }
+
+func loggedStatus(t *testing.T, h *captureLogHandler) any {
+	t.Helper()
+	require.Len(t, h.records, 1)
+	var status any
+	h.records[0].Attrs(func(a slog.Attr) bool {
+		if a.Key == "status" {
+			status = a.Value.Any()
+			return false
+		}
+		return true
+	})
+	return status
+}
+
+func TestRouter_RequestLoggingStatus(t *testing.T) {
+	t.Run("defaults to 200 when nothing written", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := New(WithLogger(slog.New(logs)))
+		app.Handle(http.MethodGet, "/x", func(ctx *Context) error { return nil })
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, int64(200), loggedStatus(t, logs))
+	})
+
+	t.Run("logs written status", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := New(WithLogger(slog.New(logs)))
+		app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
+			return ctx.Write(http.StatusCreated, "hello")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.Equal(t, int64(http.StatusCreated), loggedStatus(t, logs))
 	})
 }

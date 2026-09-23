@@ -101,7 +101,7 @@ func TestContext_GetPattern(t *testing.T) {
 		require.Equal(t, expected, acutal)
 	})
 
-	t.Run("with Use() pattern equals path", func(t *testing.T) {
+	t.Run("with Use() pattern is empty", func(t *testing.T) {
 		paths := []string{
 			"/",
 			"/api",
@@ -123,9 +123,8 @@ func TestContext_GetPattern(t *testing.T) {
 			useApp.Test(httptest.NewRequest(http.MethodGet, path, nil))
 		}
 
-		require.Equal(t, paths, actualPatterns)
+		require.Equal(t, []string{"", "", "", "", ""}, actualPatterns)
 		require.Equal(t, paths, actualPaths)
-		require.Equal(t, actualPaths, actualPatterns)
 	})
 }
 

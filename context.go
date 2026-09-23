@@ -93,7 +93,9 @@ func (me *Context) GetMethod() string {
 }
 
 // GetPattern returns the route pattern that matched the request
-// (e.g. "/users/:id"). For middleware-only requests it is the request path.
+// (e.g. "/users/:id"). It is empty for middleware-only requests and for
+// unmatched requests ([ErrInvalidEndpoint], [ErrMethodNotAllowed]),
+// since the pattern is only set for routes registered by [App.Handle].
 func (me *Context) GetPattern() string {
 	return me.pattern
 }
