@@ -78,7 +78,7 @@ func TestNew(t *testing.T) {
 				}
 			}
 
-			app := moon.New(moon.WithRequestLogging(false))
+			app := moon.New()
 			app.Use("/", New(tc.optionFuncs...))
 			app.Handle(http.MethodGet, "/timed", handler)
 

@@ -54,7 +54,6 @@ func New(optionFuncs ...AppOptionFunc) *App {
 		startedServices:      make(map[reflect.Type]any),
 		logger:               slog.Default(),
 		errorHandler:         DefaultErrorHandler,
-		enableRequestLogging: true,
 		preforkChildrenCount: runtime.NumCPU(),
 		preforkRetriesCount:  -1,
 	}
@@ -113,7 +112,7 @@ func WithErrorHandler(eh ErrorHandler) AppOptionFunc {
 // paths/methods handled as [ErrInvalidEndpoint]/[ErrMethodNotAllowed].
 // The logged status defaults to 200 when no response was written.
 //
-// Default: true
+// Default: false
 func WithRequestLogging(b bool) AppOptionFunc {
 	return func(app *App) {
 		app.enableRequestLogging = b

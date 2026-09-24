@@ -101,7 +101,7 @@ func TestNew(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var fromCtx string
 
-			app := moon.New(moon.WithRequestLogging(false))
+			app := moon.New()
 			app.Use("/", New(tc.optionFuncs...))
 			app.Handle(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				fromCtx = GetFromContext(ctx)
@@ -137,7 +137,7 @@ func TestNew(t *testing.T) {
 
 // The entry registers once no matter how many requests one instance serves.
 func TestRegistersLoggingEntryOnce(t *testing.T) {
-	app := moon.New(moon.WithRequestLogging(false))
+	app := moon.New()
 	app.Use("/", New(
 		WithRequestLoggingEntry(true),
 		WithRequestLoggingEntryKey("test-request-id-once"),
@@ -180,7 +180,7 @@ func TestLogsRequestIdEntry(t *testing.T) {
 	const entryKey = "test-request-id-logged"
 
 	logs := &captureLogHandler{}
-	app := moon.New(moon.WithLogger(slog.New(logs)))
+	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
 	app.Use("/", New(
 		WithRequestLoggingEntry(true),
 		WithRequestLoggingEntryKey(entryKey),

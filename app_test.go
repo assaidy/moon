@@ -19,7 +19,7 @@ func TestAppOptions_Defaults(t *testing.T) {
 	require.Equal(t, "", app.listenAddress)
 	require.Same(t, slog.Default(), app.logger)
 	require.NotNil(t, app.errorHandler)
-	require.True(t, app.enableRequestLogging)
+	require.False(t, app.enableRequestLogging)
 	require.False(t, app.preforkIsEnabled)
 	require.Equal(t, runtime.NumCPU(), app.preforkChildrenCount)
 	require.Equal(t, -1, app.preforkRetriesCount)
@@ -55,7 +55,6 @@ func TestAppOptions_WithLogger(t *testing.T) {
 func TestAppOptions_WithErrorHandler(t *testing.T) {
 	var captured error
 	app := New(
-		WithRequestLogging(false),
 		WithErrorHandler(func(ctx *Context, err error) {
 			captured = err
 			ctx.SetStatusCode(http.StatusTeapot)
@@ -74,7 +73,7 @@ func TestAppOptions_WithErrorHandler(t *testing.T) {
 
 func TestAppOptions_WithRequestLogging(t *testing.T) {
 	require.True(t, New(WithRequestLogging(true)).enableRequestLogging)
-	require.False(t, New(WithRequestLogging(false)).enableRequestLogging)
+	require.False(t, New().enableRequestLogging)
 }
 
 func TestAppOptions_WithGeneralOptionsHandler(t *testing.T) {

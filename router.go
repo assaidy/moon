@@ -103,6 +103,78 @@ func areParamNamesUnique(pattern string) bool {
 	return true
 }
 
+// Get registers handlers for the GET method. See [App.Handle].
+func (me *App) Get(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodGet, pattern, handlers...)
+}
+
+// Head registers handlers for the HEAD method. See [App.Handle].
+//
+// Handlers must not write bytes to the body of a HEAD response.
+func (me *App) Head(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodHead, pattern, handlers...)
+}
+
+// Post registers handlers for the POST method. See [App.Handle].
+func (me *App) Post(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodPost, pattern, handlers...)
+}
+
+// Put registers handlers for the PUT method. See [App.Handle].
+func (me *App) Put(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodPut, pattern, handlers...)
+}
+
+// Patch registers handlers for the PATCH method. See [App.Handle].
+func (me *App) Patch(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodPatch, pattern, handlers...)
+}
+
+// Delete registers handlers for the DELETE method. See [App.Handle].
+func (me *App) Delete(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodDelete, pattern, handlers...)
+}
+
+// Connect registers handlers for the CONNECT method. See [App.Handle].
+func (me *App) Connect(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodConnect, pattern, handlers...)
+}
+
+// Options registers handlers for the OPTIONS method. See [App.Handle].
+func (me *App) Options(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodOptions, pattern, handlers...)
+}
+
+// Trace registers handlers for the TRACE method. See [App.Handle].
+func (me *App) Trace(pattern string, handlers ...Handler) {
+	me.Handle(http.MethodTrace, pattern, handlers...)
+}
+
+// All registers handlers for every HTTP method on pattern, calling
+// [App.Handle] once per method. A request whose method has no dedicated
+// registration still reaches these handlers.
+//
+// Panics if any method is already registered for pattern. Does nothing if
+// no handlers are given. See [App.Handle] for the pattern grammar.
+func (me *App) All(pattern string, handlers ...Handler) {
+	if len(handlers) == 0 {
+		return
+	}
+	for _, method := range []string{
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+		http.MethodConnect,
+		http.MethodOptions,
+		http.MethodTrace,
+	} {
+		me.Handle(method, pattern, handlers...)
+	}
+}
+
 // Use registers middlewares for a raw string prefix.
 //
 // Matching is [strings.HasPrefix], so "/api" matches "/api", "/api/...", and "/api2/...".
@@ -122,6 +194,8 @@ func areParamNamesUnique(pattern string) bool {
 // Each middleware must call [Context.Next] to continue the chain; a
 // returned error from the chain is passed to the app's [ErrorHandler].
 func (me *App) Use(prefix string, middlewares ...Handler) {
+	// TODO: enable `*` within the prefix, but now after it.
+	// this allows maching paths like /x/y/z/... using /x/*/z
 	Assert(isValidMiddlewareRoutePrefix(prefix), "invalid middleware route prefix")
 
 	if len(middlewares) == 0 {
@@ -167,7 +241,7 @@ func (me *App) processRequest(
 		me.errorHandler(ctx, err)
 		setRequestHandlingErrorLocal(ctx, err)
 	}
-	ctx.Response.flush()
+	ctx.response.flush()
 
 	if me.enableRequestLogging {
 		me.logRequest(ctx)
@@ -202,14 +276,15 @@ func isValidHttpMethod(method string) bool {
 // the raw writer from Unwrap in one request; raw use discards the buffer.
 type Handler func(ctx *Context) error
 
-// TODO: add support for route metadata to generate apenapi spec
-
 // Route is a handler route (pattern + per-method handlers) or a
 // middleware prefix entry. See [App.Handle] and [App.Use].
 type Route struct {
-	// TODO: use a route per method.
-	//	struct Route {pattern, method, handlers}
+	// TODO: add support for route metadata to generate apenapi spec
+	// TODO: use a route per method: struct Route {pattern, method, handlers}
 	// middlewares don't have a pattern or a method.
+	// OR use a separate `Prefix` type, but think about its metadata support.
+	// TODO: find a way to distinguish between a handler registered as middleware [App.Use] or as a route [App.Handle]
+	// this enables a new context mehtod `Context.IsMiddleware()`
 	pattern            string
 	methodHandlers     map[string][]Handler
 	isMiddlewarePrefix bool

@@ -12,7 +12,7 @@ func TestDependency(t *testing.T) {
 	type testDB struct{ dsn string }
 
 	t.Run("hit distinct types coexist", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.AddDependency("hello")
 		app.AddDependency(42)
 		app.AddDependency(&testDB{dsn: "postgres://localhost"})
@@ -28,7 +28,7 @@ func TestDependency(t *testing.T) {
 	})
 
 	t.Run("shared across requests", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.AddDependency("shared")
 
 		var seen []string
@@ -43,7 +43,7 @@ func TestDependency(t *testing.T) {
 	})
 
 	t.Run("replace same type", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.AddDependency("a")
 		app.AddDependency("b")
 
@@ -56,7 +56,7 @@ func TestDependency(t *testing.T) {
 	})
 
 	t.Run("pointer identity", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		db := &testDB{dsn: "postgres://localhost"}
 		app.AddDependency(db)
 
@@ -69,7 +69,7 @@ func TestDependency(t *testing.T) {
 	})
 
 	t.Run("missing panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.Use("/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetDependency[string]() })
 			return nil
@@ -79,7 +79,7 @@ func TestDependency(t *testing.T) {
 	})
 
 	t.Run("wrong type panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.AddDependency(42)
 
 		app.Use("/", func(ctx *Context) error {
@@ -91,7 +91,7 @@ func TestDependency(t *testing.T) {
 	})
 
 	t.Run("nil panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() { app.AddDependency(nil) })
 		require.Panics(t, func() { app.AddDependency((*testDB)(nil)) })
 	})

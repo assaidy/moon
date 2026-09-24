@@ -20,16 +20,16 @@ import (
 // (see [Context.GetDependency] and [Context.GetService]). A new Context is created for each request, so
 // locals never leak between requests.
 type Context struct {
-	// Request is the incoming HTTP request.
-	Request *http.Request
-	// Response buffers status, headers and body until the handler chain
+	// request is the incoming HTTP request.
+	request *http.Request
+	// response buffers status, headers and body until the handler chain
 	// finishes, then flushes them to the client. This lets middleware set
 	// headers or status after calling [Context.Next] (e.g. response-time).
 	//
 	// Do not mix buffered writes with the raw writer from Unwrap (including
 	// via [http.NewResponseController]): any use of the raw writer marks the
 	// request as raw and the buffered response is discarded at flush.
-	Response *httpResponseWriterWrapper
+	response *httpResponseWriterWrapper
 
 	params           map[string]string
 	handlers         []Handler
@@ -48,16 +48,16 @@ func newContext(
 	app *App,
 ) *Context {
 	ctx := new(Context)
-	ctx.Response = new(httpResponseWriterWrapper{
+	ctx.response = new(httpResponseWriterWrapper{
 		// TODO: consider using memory pools for buffers and maps
 		headers: make(http.Header),
 		body:    new(bytes.Buffer),
 	})
-	ctx.Response.tracker = new(httpResponseWriterTracker{
+	ctx.response.tracker = new(httpResponseWriterTracker{
 		writer:     w,
-		statusCode: &ctx.Response.statusCode,
+		statusCode: &ctx.response.statusCode,
 	})
-	ctx.Request = r
+	ctx.request = r
 	ctx.pattern = pattern
 	ctx.params = params
 	ctx.handlers = handlers
@@ -171,16 +171,30 @@ func (me *httpResponseWriterTracker) Hijack() (net.Conn, *bufio.ReadWriter, erro
 	return http.NewResponseController(me.writer).Hijack()
 }
 
+// GetHttpRequest returns the underlying incoming HTTP request. It is an
+// escape hatch for stdlib interop; prefer the Context getters when available.
+func (me *Context) GetHttpRequest() *http.Request {
+	return me.request
+}
+
+// GetHttpResponseWriter returns the buffered response writer. Writes are
+// buffered until flush: headers or status can be set before or after the
+// status code, and after [Context.Next] returns. Use Unwrap on the returned
+// writer for the raw path; any raw use discards the buffer at flush.
+func (me *Context) GetHttpResponseWriter() *httpResponseWriterWrapper {
+	return me.response
+}
+
 // GetRemoteAddress returns the client address (host:port) the request came from.
 func (me *Context) GetRemoteAddress() string {
-	return me.Request.RemoteAddr
+	return me.request.RemoteAddr
 }
 
 // TODO: implement ctx.RealIp() with trusted proxies and IP validations
 
 // GetMethod returns the request HTTP method (GET, POST, ...).
 func (me *Context) GetMethod() string {
-	return me.Request.Method
+	return me.request.Method
 }
 
 // GetPattern returns the route pattern that matched the request
@@ -193,29 +207,29 @@ func (me *Context) GetPattern() string {
 
 // GetPath returns the request URL path without the query string.
 func (me *Context) GetPath() string {
-	return me.Request.URL.Path
+	return me.request.URL.Path
 }
 
 // GetUrl returns the full request URL, including path and query.
 func (me *Context) GetUrl() *url.URL {
-	return me.Request.URL
+	return me.request.URL
 }
 
 // GetQueryString returns the raw encoded query string,
 // or "" when the request has no query.
 func (me *Context) GetQueryString() string {
-	return me.Request.URL.RawQuery
+	return me.request.URL.RawQuery
 }
 
 // GetQuery returns the first value of the query key,
 // or "" when the key is missing.
 func (me *Context) GetQuery(key string) string {
-	return me.Request.URL.Query().Get(key)
+	return me.request.URL.Query().Get(key)
 }
 
 // GetAllQueries returns every query value grouped by key.
 func (me *Context) GetAllQueries() map[string][]string {
-	return me.Request.URL.Query()
+	return me.request.URL.Query()
 }
 
 // GetParam returns the path parameter value for key,
@@ -232,27 +246,27 @@ func (me *Context) GetAllParams() map[string]string {
 // GetHeader returns the first value of the request header key,
 // or "" when the key is missing.
 func (me *Context) GetHeader(key string) string {
-	return me.Request.Header.Get(key)
+	return me.request.Header.Get(key)
 }
 
 // GetAllHeaders returns every value of the request header key,
 // or nil when the key is missing.
 func (me *Context) GetAllHeaders(key string) []string {
-	return me.Request.Header.Values(key)
+	return me.request.Header.Values(key)
 }
 
 // SetHeader sets a buffered response header, overwriting any previous values.
 // Buffered until flush: it can be called before or after the status code is
 // set, and after [Context.Next] returns.
 func (me *Context) SetHeader(key, value string) {
-	me.Response.Header().Set(key, value)
+	me.response.Header().Set(key, value)
 }
 
 // AddHeader appends a buffered response header value, keeping previous values.
 // Buffered until flush: it can be called before or after the status code is
 // set, and after [Context.Next] returns.
 func (me *Context) AddHeader(key, value string) {
-	me.Response.Header().Add(key, value)
+	me.response.Header().Add(key, value)
 }
 
 // Read returns the full request body. It is empty when the request has no
@@ -260,7 +274,7 @@ func (me *Context) AddHeader(key, value string) {
 func (me *Context) Read() ([]byte, error) {
 	// TODO: buffer body to allow multiple reads
 	var buffer bytes.Buffer
-	_, err := buffer.ReadFrom(me.Request.Body)
+	_, err := buffer.ReadFrom(me.request.Body)
 	return buffer.Bytes(), err
 }
 
@@ -277,25 +291,25 @@ func (me *Context) ReadAs(codec Codec, out any) error {
 // GetFormValue returns the first form value for key, searching the body
 // before the URL query, or "" when the key is missing.
 func (me *Context) GetFormValue(key string) string {
-	return me.Request.FormValue(key)
+	return me.request.FormValue(key)
 }
 
 // GetAllFormValues returns query and body form values merged by key.
 // Body values come before query values.
 func (me *Context) GetAllFormValues() map[string][]string {
-	me.Request.ParseForm()
-	return me.Request.Form
+	me.request.ParseForm()
+	return me.request.Form
 }
 
 // SetCookie appends a Set-Cookie header to the buffered response.
 func (me *Context) SetCookie(c *http.Cookie) {
-	http.SetCookie(me.Response, c)
+	http.SetCookie(me.response, c)
 }
 
 // GetCookie returns the value of the request cookie key,
 // or "" when the cookie is missing.
 func (me *Context) GetCookie(key string) string {
-	c, err := me.Request.Cookie(key)
+	c, err := me.request.Cookie(key)
 	if err != nil {
 		return ""
 	}
@@ -305,7 +319,7 @@ func (me *Context) GetCookie(key string) string {
 // GetManyCookies returns every value of the request cookies named key,
 // or nil when no cookie with that name was sent.
 func (me *Context) GetManyCookies(key string) []string {
-	cookies := me.Request.CookiesNamed(key)
+	cookies := me.request.CookiesNamed(key)
 	if len(cookies) == 0 {
 		return nil
 	}
@@ -319,7 +333,7 @@ func (me *Context) GetManyCookies(key string) []string {
 // GetAllCookies returns every request cookie value grouped by name,
 // or nil when the request has no cookies.
 func (me *Context) GetAllCookies() map[string][]string {
-	cookies := me.Request.Cookies()
+	cookies := me.request.Cookies()
 	if len(cookies) == 0 {
 		return nil
 	}
@@ -334,13 +348,13 @@ func (me *Context) GetAllCookies() map[string][]string {
 // cookie with Max-Age=0 and a past Expires date. It buffers nothing when no
 // cookie with that name was sent.
 func (me *Context) ClearCookie(name string) {
-	cookies := me.Request.Cookies()
+	cookies := me.request.Cookies()
 	for _, c := range cookies {
 		if c.Name == name {
 			c.Value = ""
 			c.MaxAge = -1
 			c.Expires = time.Unix(0, 0)
-			http.SetCookie(me.Response, c)
+			http.SetCookie(me.response, c)
 		}
 	}
 }
@@ -348,7 +362,7 @@ func (me *Context) ClearCookie(name string) {
 // GetStatusCode returns the response status code recorded so far, shared by
 // the buffered and raw paths, or 0 when nothing was written yet.
 func (me *Context) GetStatusCode() int {
-	return me.Response.statusCode
+	return me.response.statusCode
 }
 
 // SetStatusCode records the response status code; it is sent at flush.
@@ -358,14 +372,14 @@ func (me *Context) GetStatusCode() int {
 // The status code starts at 0 (unwritten); if the handler chain finishes
 // without writing anything, 200 is sent on the wire automatically.
 func (me *Context) SetStatusCode(statusCode int) {
-	me.Response.WriteHeader(statusCode)
+	me.response.WriteHeader(statusCode)
 }
 
 // Write buffers the status code with the raw string or bytes body; both are
 // sent at flush. It returns the buffer write error (always nil).
 func (me *Context) Write[T ~[]byte | ~string](statusCode int, raw T) error {
-	me.Response.WriteHeader(statusCode)
-	_, err := me.Response.Write([]byte(raw))
+	me.response.WriteHeader(statusCode)
+	_, err := me.response.Write([]byte(raw))
 	return err
 }
 
@@ -390,7 +404,7 @@ func (me *Context) WriteAs(statusCode int, codec Codec, value any) error {
 // Next invokes the next handler in the chain and returns its error.
 // It returns nil when the chain is exhausted.
 func (me *Context) Next() error {
-	if me.nextHandlerIndex == len(me.handlers) {
+	if me.IsFinal() {
 		return nil
 	}
 	index := me.nextHandlerIndex
@@ -398,26 +412,33 @@ func (me *Context) Next() error {
 	return me.handlers[index](me)
 }
 
+// IsFinal reports whether no handlers remain in the chain. It is true inside
+// the last handler and after the chain is exhausted; [Context.Next] then
+// returns nil without invoking anything.
+func (me *Context) IsFinal() bool {
+	return me.nextHandlerIndex == len(me.handlers)
+}
+
 var _ context.Context = new(Context)
 
 // Deadline implements [context.Context].
 func (me *Context) Deadline() (deadline time.Time, ok bool) {
-	return me.Request.Context().Deadline()
+	return me.request.Context().Deadline()
 }
 
 // Done implements [context.Context].
 func (me *Context) Done() <-chan struct{} {
-	return me.Request.Context().Done()
+	return me.request.Context().Done()
 }
 
 // Err implements [context.Context].
 func (me *Context) Err() error {
-	return me.Request.Context().Err()
+	return me.request.Context().Err()
 }
 
 // Value implements [context.Context].
 func (me *Context) Value(key any) any {
-	return me.Request.Context().Value(key)
+	return me.request.Context().Value(key)
 }
 
 // SetLocal stores a per-request value. It panics on an empty key or a nil
@@ -428,7 +449,7 @@ func (me *Context) SetLocal(key string, value any) {
 	Assert(value != nil, "value cannot be nil")
 	me.locals[key] = value
 	if me.app.passLocalsToContext {
-		me.Request = me.Request.WithContext(context.WithValue(me.Request.Context(), key, value))
+		me.request = me.request.WithContext(context.WithValue(me.request.Context(), key, value))
 	}
 }
 
@@ -451,7 +472,7 @@ func (me *Context) GetLocal[T any](key string) (T, bool) {
 func (me *Context) DeleteLocal(key string) {
 	delete(me.locals, key)
 	if me.app.passLocalsToContext {
-		me.Request = me.Request.WithContext(context.WithValue(me.Request.Context(), key, nil))
+		me.request = me.request.WithContext(context.WithValue(me.request.Context(), key, nil))
 	}
 }
 

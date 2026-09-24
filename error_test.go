@@ -52,7 +52,7 @@ func TestError_WithDetailsCopy(t *testing.T) {
 func testErrorHandlerResponse(t *testing.T, handlerErr error) (int, map[string]any) {
 	t.Helper()
 
-	app := New(WithRequestLogging(false))
+	app := New()
 	app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
 		return handlerErr
 	})

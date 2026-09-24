@@ -62,7 +62,7 @@ func newStubB() *stubServiceB { return &stubServiceB{&stubBase{name: "b"}} }
 
 func TestService_AddGet(t *testing.T) {
 	t.Run("nil panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var nilSvc *stubServiceA
 		require.PanicsWithValue(t, "service cannot be nil", func() {
 			app.AddService(nilSvc)
@@ -70,7 +70,7 @@ func TestService_AddGet(t *testing.T) {
 	})
 
 	t.Run("replace same type", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		first, second := newStubA(), newStubA()
 		app.AddService(first)
 		app.AddService(second)
@@ -84,7 +84,7 @@ func TestService_AddGet(t *testing.T) {
 	})
 
 	t.Run("get before start panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.AddService(newStubA())
 
 		app.Use("/", func(ctx *Context) error {
@@ -95,7 +95,7 @@ func TestService_AddGet(t *testing.T) {
 	})
 
 	t.Run("get after start returns instance", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		svc := newStubA()
 		app.AddService(svc)
 		require.NoError(t, app.StartServices())
@@ -108,7 +108,7 @@ func TestService_AddGet(t *testing.T) {
 	})
 
 	t.Run("missing type panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.Use("/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetService[*stubServiceA]() })
 			return nil
@@ -119,7 +119,7 @@ func TestService_AddGet(t *testing.T) {
 
 func TestService_StartStop(t *testing.T) {
 	t.Run("sequential happy path", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		a, b := newStubA(), newStubB()
 		app.AddService(a)
 		app.AddService(b)
@@ -139,7 +139,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("parallel happy path", func(t *testing.T) {
-		app := New(WithRequestLogging(false), WithParallelServiceStart(), WithParallelServiceStop())
+		app := New(WithParallelServiceStart(), WithParallelServiceStop())
 		a, b := newStubA(), newStubB()
 		app.AddService(a)
 		app.AddService(b)
@@ -155,7 +155,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("start failure aborts and discards", func(t *testing.T) {
 		startBoom := errors.New("start boom")
-		app := New(WithRequestLogging(false))
+		app := New()
 		a, b := newStubA(), newStubB()
 		b.startErr = startBoom
 		app.AddService(a)
@@ -182,7 +182,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("parallel start failure", func(t *testing.T) {
 		startBoom := errors.New("start boom")
-		app := New(WithRequestLogging(false), WithParallelServiceStart())
+		app := New(WithParallelServiceStart())
 		a, b := newStubA(), newStubB()
 		b.startErr = startBoom
 		app.AddService(a)
@@ -194,7 +194,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("start timeout", func(t *testing.T) {
-		app := New(WithRequestLogging(false), WithServiceStartTimeout(50*time.Millisecond))
+		app := New(WithServiceStartTimeout(50 * time.Millisecond))
 		a := newStubA()
 		a.startBlock = time.Second
 		app.AddService(a)
@@ -210,7 +210,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("stop failure swallowed", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		a := newStubA()
 		a.stopErr = errors.New("stop boom")
 		app.AddService(a)
@@ -221,7 +221,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("parallel stop failure swallowed", func(t *testing.T) {
-		app := New(WithRequestLogging(false), WithParallelServiceStop())
+		app := New(WithParallelServiceStop())
 		a, b := newStubA(), newStubB()
 		a.stopErr = errors.New("stop a")
 		b.stopErr = errors.New("stop b")
@@ -235,7 +235,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("stop timeout enforced", func(t *testing.T) {
-		app := New(WithRequestLogging(false), WithServiceStopTimeout(50*time.Millisecond))
+		app := New(WithServiceStopTimeout(50 * time.Millisecond))
 		a := newStubA()
 		a.stopBlock = time.Second
 		app.AddService(a)
@@ -249,7 +249,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("stop without start is clean", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		a := newStubA()
 		app.AddService(a)
 
@@ -259,7 +259,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("prefork parent starts nothing", func(t *testing.T) {
 		t.Setenv(preforkChildEnv, "")
-		app := New(WithRequestLogging(false), WithPrefork(true))
+		app := New(WithPrefork(true))
 		a := newStubA()
 		app.AddService(a)
 
@@ -270,7 +270,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("shutdown tolerates stop error", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		a := newStubA()
 		a.stopErr = errors.New("stop boom")
 		app.AddService(a)
@@ -281,7 +281,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("shutdown clean", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		a := newStubA()
 		app.AddService(a)
 		require.NoError(t, app.StartServices())

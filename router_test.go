@@ -247,25 +247,102 @@ func TestRouter_HandlePanics(t *testing.T) {
 	dummy := func(ctx *Context) error { return nil }
 
 	t.Run("invalid method", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() { app.Handle("GETX", "/api", dummy) })
 	})
 
 	t.Run("invalid pattern", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() { app.Handle(http.MethodGet, "/api/", dummy) })
 	})
 
 	t.Run("duplicate param names", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() { app.Handle(http.MethodGet, "/api/:id/api/:id", dummy) })
 	})
 
 	t.Run("method already registered", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		app.Handle(http.MethodGet, "/api/users", dummy)
 		require.Panics(t, func() { app.Handle(http.MethodGet, "/api/users", dummy) })
 	})
+}
+
+// Each method shortcut must register exactly its own method via Handle.
+func TestRouter_MethodShortcuts(t *testing.T) {
+	testCases := []struct {
+		name     string
+		register func(app *App, pattern string, handlers ...Handler)
+		method   string
+	}{
+		{"Get", func(app *App, p string, h ...Handler) { app.Get(p, h...) }, http.MethodGet},
+		{"Head", func(app *App, p string, h ...Handler) { app.Head(p, h...) }, http.MethodHead},
+		{"Post", func(app *App, p string, h ...Handler) { app.Post(p, h...) }, http.MethodPost},
+		{"Put", func(app *App, p string, h ...Handler) { app.Put(p, h...) }, http.MethodPut},
+		{"Patch", func(app *App, p string, h ...Handler) { app.Patch(p, h...) }, http.MethodPatch},
+		{"Delete", func(app *App, p string, h ...Handler) { app.Delete(p, h...) }, http.MethodDelete},
+		{"Connect", func(app *App, p string, h ...Handler) { app.Connect(p, h...) }, http.MethodConnect},
+		{"Options", func(app *App, p string, h ...Handler) { app.Options(p, h...) }, http.MethodOptions},
+		{"Trace", func(app *App, p string, h ...Handler) { app.Trace(p, h...) }, http.MethodTrace},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := New()
+			tc.register(app, "/api/users", func(ctx *Context) error {
+				return ctx.Write(http.StatusOK, "ok")
+			})
+
+			resp := app.Test(httptest.NewRequest(tc.method, "/api/users", nil))
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			// an unregistered method on the same pattern is not routed
+			other := http.MethodGet
+			if tc.method == http.MethodGet {
+				other = http.MethodPost
+			}
+			resp = app.Test(httptest.NewRequest(other, "/api/users", nil))
+			require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+			// duplicate registration on the same method panics
+			require.Panics(t, func() {
+				tc.register(app, "/api/users", func(ctx *Context) error { return nil })
+			})
+		})
+	}
+}
+
+// All registers the handlers for every valid HTTP method.
+func TestRouter_All(t *testing.T) {
+	app := New()
+	app.All("/api/users", func(ctx *Context) error {
+		return ctx.Write(http.StatusOK, "ok")
+	})
+
+	methods := []string{
+		http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodConnect,
+		http.MethodOptions, http.MethodTrace,
+	}
+	for _, method := range methods {
+		resp := app.Test(httptest.NewRequest(method, "/api/users", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode, method)
+	}
+
+	// All panics once any method on the pattern is taken
+	require.Panics(t, func() {
+		app.All("/api/users", func(ctx *Context) error { return nil })
+	})
+	require.Panics(t, func() {
+		app.Get("/api/users", func(ctx *Context) error { return nil })
+	})
+}
+
+// All with no handlers does nothing, like Handle.
+func TestRouter_All_NoHandlers(t *testing.T) {
+	app := New()
+	require.NotPanics(t, func() { app.All("/api/users") })
+	require.NotPanics(t, func() { app.Get("/api/users") })
 }
 
 func TestRouter_UsePanics(t *testing.T) {
@@ -284,7 +361,7 @@ func TestRouter_UsePanics(t *testing.T) {
 
 	for _, prefix := range invalidPrefixes {
 		t.Run("invalid prefix "+prefix, func(t *testing.T) {
-			app := New(WithRequestLogging(false))
+			app := New()
 			require.Panics(t, func() { app.Use(prefix, dummy) })
 		})
 	}
@@ -517,7 +594,7 @@ func TestRouter_Dispatch(t *testing.T) {
 
 	t.Run("Use() is order-sensitive", func(t *testing.T) {
 		t.Run("use before handle", func(t *testing.T) {
-			app := New(WithRequestLogging(false))
+			app := New()
 			var called []string
 
 			app.Use("/api", newHandler("middleware", &called))
@@ -529,7 +606,7 @@ func TestRouter_Dispatch(t *testing.T) {
 		})
 
 		t.Run("use after handle", func(t *testing.T) {
-			app := New(WithRequestLogging(false))
+			app := New()
 			var called []string
 
 			app.Handle(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
@@ -542,7 +619,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("nested prefixes", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Use("/api", newHandler("api", &called))
@@ -555,7 +632,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("use merges parent prefixes", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Use("/api", newHandler("api", &called))
@@ -569,7 +646,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("middleware applies to each method", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Use("/api", newHandler("middleware", &called))
@@ -588,7 +665,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("raw string prefix matching", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Use("/api", newHandler("middleware", &called))
@@ -606,7 +683,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("subsequent prefixes inherit parent middleware", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Use("/x", newHandler("x", &called))
@@ -619,7 +696,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("middleware-only route handles request", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Use("/x", newHandler("middleware", &called))
@@ -630,7 +707,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("wildcard matches", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Handle(http.MethodGet, "/files/*", newHandler("handler", &called))
@@ -644,7 +721,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("trailing slash is trimmed", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 
 		app.Handle(http.MethodGet, "/", newHandler("root", &called))
@@ -659,7 +736,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("unknown path returns 404 invalid_endpoint", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 		app.Handle(http.MethodGet, "/users", newHandler("handler", &called))
 
@@ -677,7 +754,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("wrong method returns 405 method_not_allowed", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		var called []string
 		app.Handle(http.MethodGet, "/users", newHandler("handler", &called))
 
@@ -699,7 +776,6 @@ func TestRouter_Dispatch(t *testing.T) {
 		var pattern string
 
 		app := New(
-			WithRequestLogging(false),
 			WithErrorHandler(func(ctx *Context, err error) {
 				captured = err
 				pattern = ctx.GetPattern()
@@ -719,7 +795,6 @@ func TestRouter_Dispatch(t *testing.T) {
 		var pattern string
 
 		app := New(
-			WithRequestLogging(false),
 			WithErrorHandler(func(ctx *Context, err error) {
 				captured = err
 				pattern = ctx.GetPattern()
@@ -740,7 +815,6 @@ func TestRouter_Dispatch(t *testing.T) {
 		var captured error
 
 		app := New(
-			WithRequestLogging(false),
 			WithErrorHandler(func(ctx *Context, err error) {
 				captured = err
 				ctx.WriteStatus(http.StatusTeapot)
@@ -798,7 +872,7 @@ func loggedStatus(t *testing.T, h *captureLogHandler) any {
 func TestRouter_RequestLoggingStatus(t *testing.T) {
 	t.Run("defaults to 200 when nothing written", func(t *testing.T) {
 		logs := &captureLogHandler{}
-		app := New(WithLogger(slog.New(logs)))
+		app := New(WithLogger(slog.New(logs)), WithRequestLogging(true))
 		app.Handle(http.MethodGet, "/x", func(ctx *Context) error { return nil })
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
@@ -808,7 +882,7 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 
 	t.Run("logs written status", func(t *testing.T) {
 		logs := &captureLogHandler{}
-		app := New(WithLogger(slog.New(logs)))
+		app := New(WithLogger(slog.New(logs)), WithRequestLogging(true))
 		app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
 			return ctx.Write(http.StatusCreated, "hello")
 		})

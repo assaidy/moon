@@ -28,28 +28,28 @@ func testLoggedApp(logs *captureLogHandler) *App {
 
 func TestRegisterRequestLoggingEntry(t *testing.T) {
 	t.Run("empty key panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() {
 			app.RegisterRequestLoggingEntry(RequestLoggingEntry{Key: "", ValueFunc: func(ctx *Context) string { return "" }})
 		})
 	})
 
 	t.Run("whitespace key panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() {
 			app.RegisterRequestLoggingEntry(RequestLoggingEntry{Key: "   ", ValueFunc: func(ctx *Context) string { return "" }})
 		})
 	})
 
 	t.Run("nil value func panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() {
 			app.RegisterRequestLoggingEntry(RequestLoggingEntry{Key: "custom", ValueFunc: nil})
 		})
 	})
 
 	t.Run("duplicate key panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		valueFunc := func(ctx *Context) string { return "" }
 		app.RegisterRequestLoggingEntry(RequestLoggingEntry{Key: "custom", ValueFunc: valueFunc})
 		require.Panics(t, func() {
@@ -58,7 +58,7 @@ func TestRegisterRequestLoggingEntry(t *testing.T) {
 	})
 
 	t.Run("reserved key panics", func(t *testing.T) {
-		app := New(WithRequestLogging(false))
+		app := New()
 		require.Panics(t, func() {
 			app.RegisterRequestLoggingEntry(RequestLoggingEntry{Key: "status", ValueFunc: func(ctx *Context) string { return "" }})
 		})
@@ -76,7 +76,7 @@ func TestRegisterRequestLoggingEntry(t *testing.T) {
 }
 
 func TestRegisterRequestLoggingEntry_Concurrent(t *testing.T) {
-	app := New(WithRequestLogging(false))
+	app := New()
 
 	var wg sync.WaitGroup
 	for i := range 8 {
