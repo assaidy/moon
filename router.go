@@ -271,9 +271,10 @@ func isValidHttpMethod(method string) bool {
 // successfully, or a non-nil error to abort and invoke the app
 // [ErrorHandler]. Use the [Context] Write methods to buffer a response.
 //
-// Responses are buffered until the chain finishes, so headers or status set
-// after [Context.Next] returns still apply. Do not mix buffered writes with
-// the raw writer from Unwrap in one request; raw use discards the buffer.
+// Status and body are buffered until the chain finishes, so headers or
+// status set after [Context.Next] returns still apply. Do not mix buffered
+// writes with the raw writer from Unwrap in one request; raw use discards
+// the buffer.
 type Handler func(ctx *Context) error
 
 // Route is a handler route (pattern + per-method handlers) or a

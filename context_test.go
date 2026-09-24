@@ -739,6 +739,44 @@ func TestContext_RawWriter(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, raw)
 	})
+
+	t.Run("raw headers only defaults status to 200", func(t *testing.T) {
+		var captured *Context
+
+		app := New()
+		app.Use("/", func(ctx *Context) error {
+			captured = ctx
+			ctx.response.Unwrap().Header().Set("X-Raw", "yes")
+			return nil
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "yes", resp.Header.Get("X-Raw"))
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Empty(t, raw)
+		require.NotNil(t, captured)
+		require.Equal(t, http.StatusOK, captured.GetStatusCode())
+	})
+}
+
+func TestContext_HeadersSetBeforeRawWriteArePreserved(t *testing.T) {
+	app := New()
+	app.Use("/", func(ctx *Context) error {
+		ctx.SetHeader("Content-Type", "text/event-stream")
+		ctx.SetHeader("Cache-Control", "no-cache")
+		_, err := ctx.GetHttpResponseWriter().Unwrap().Write([]byte("data: hi\n\n"))
+		require.NoError(t, err)
+		return nil
+	})
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+	require.Equal(t, "no-cache", resp.Header.Get("Cache-Control"))
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "data: hi\n\n", string(raw))
 }
 
 func TestContext_Forms(t *testing.T) {

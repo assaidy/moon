@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,9 +21,10 @@ import (
 type Context struct {
 	// request is the incoming HTTP request.
 	request *http.Request
-	// response buffers status, headers and body until the handler chain
-	// finishes, then flushes them to the client. This lets middleware set
-	// headers or status after calling [Context.Next] (e.g. response-time).
+	// response buffers status and body until the handler chain finishes,
+	// then flushes them to the client. Headers go directly to the underlying
+	// writer. This lets middleware set headers or status after calling
+	// [Context.Next] (e.g. response-time).
 	//
 	// Do not mix buffered writes with the raw writer from Unwrap (including
 	// via [http.NewResponseController]): any use of the raw writer marks the
@@ -49,9 +49,8 @@ func newContext(
 ) *Context {
 	ctx := new(Context)
 	ctx.response = new(httpResponseWriterWrapper{
-		// TODO: consider using memory pools for buffers and maps
-		headers: make(http.Header),
-		body:    new(bytes.Buffer),
+		// TODO: consider using a memory pool for buffer
+		body: new(bytes.Buffer),
 	})
 	ctx.response.tracker = new(httpResponseWriterTracker{
 		writer:     w,
@@ -69,17 +68,17 @@ func newContext(
 type httpResponseWriterWrapper struct {
 	tracker    *httpResponseWriterTracker
 	statusCode int
-	headers    http.Header
 	body       *bytes.Buffer
 }
 
 var _ http.ResponseWriter = new(httpResponseWriterWrapper)
 
-// Header implements [http.ResponseWriter]. It returns the buffered headers;
-// mutations apply at flush, even after [Context.Next] returns or the status
-// code was set.
+// Header implements [http.ResponseWriter]. It writes directly to the
+// underlying writer; headers alone never flush, so it is safe to set them
+// before or after the status code, after [Context.Next] returns, or before
+// switching to the raw path (e.g. SSE via [http.NewResponseController]).
 func (me *httpResponseWriterWrapper) Header() http.Header {
-	return me.headers
+	return me.tracker.writer.Header()
 }
 
 // Write implements [http.ResponseWriter]. It buffers data and defaults the
@@ -105,15 +104,17 @@ func (me *httpResponseWriterWrapper) Unwrap() http.ResponseWriter {
 	return me.tracker
 }
 
-// flush sends the buffered response unless the raw writer was used, in which
-// case the buffered response is discarded and the raw one stands.
+// flush sends the buffered status and body unless the raw writer was used,
+// in which case the buffered response is discarded and the raw one stands.
+// Headers were already written directly to the underlying writer. The status
+// defaults to 200 before the raw check so request logging, the only context
+// use after flush, logs 200 for a raw use without an explicit status.
 func (me *httpResponseWriterWrapper) flush() {
-	if me.tracker.used {
-		return
-	}
-	maps.Copy(me.tracker.Header(), me.headers)
 	if me.statusCode == 0 {
 		me.statusCode = 200
+	}
+	if me.tracker.used {
+		return
 	}
 	me.tracker.WriteHeader(me.statusCode)
 	me.tracker.Write(me.body.Bytes())
@@ -177,10 +178,11 @@ func (me *Context) GetHttpRequest() *http.Request {
 	return me.request
 }
 
-// GetHttpResponseWriter returns the buffered response writer. Writes are
-// buffered until flush: headers or status can be set before or after the
-// status code, and after [Context.Next] returns. Use Unwrap on the returned
-// writer for the raw path; any raw use discards the buffer at flush.
+// GetHttpResponseWriter returns the response writer. Status and body are
+// buffered until flush, while headers go directly to the underlying writer:
+// they can be set before or after the status code, and after [Context.Next]
+// returns. Use Unwrap on the returned writer for the raw path; any raw use
+// discards the buffer at flush.
 func (me *Context) GetHttpResponseWriter() *httpResponseWriterWrapper {
 	return me.response
 }
@@ -255,16 +257,18 @@ func (me *Context) GetAllHeaders(key string) []string {
 	return me.request.Header.Values(key)
 }
 
-// SetHeader sets a buffered response header, overwriting any previous values.
-// Buffered until flush: it can be called before or after the status code is
-// set, and after [Context.Next] returns.
+// SetHeader sets a response header directly on the underlying writer,
+// overwriting any previous values. Headers alone never flush, so it can be
+// called before or after the status code is set, and after [Context.Next]
+// returns.
 func (me *Context) SetHeader(key, value string) {
 	me.response.Header().Set(key, value)
 }
 
-// AddHeader appends a buffered response header value, keeping previous values.
-// Buffered until flush: it can be called before or after the status code is
-// set, and after [Context.Next] returns.
+// AddHeader appends a response header value directly on the underlying
+// writer, keeping previous values. Headers alone never flush, so it can be
+// called before or after the status code is set, and after [Context.Next]
+// returns.
 func (me *Context) AddHeader(key, value string) {
 	me.response.Header().Add(key, value)
 }
@@ -301,7 +305,7 @@ func (me *Context) GetAllFormValues() map[string][]string {
 	return me.request.Form
 }
 
-// SetCookie appends a Set-Cookie header to the buffered response.
+// SetCookie appends a Set-Cookie header to the response.
 func (me *Context) SetCookie(c *http.Cookie) {
 	http.SetCookie(me.response, c)
 }
@@ -344,8 +348,8 @@ func (me *Context) GetAllCookies() map[string][]string {
 	return groups
 }
 
-// ClearCookie expires every request cookie named name by buffering an empty
-// cookie with Max-Age=0 and a past Expires date. It buffers nothing when no
+// ClearCookie expires every request cookie named name by setting an empty
+// cookie with Max-Age=0 and a past Expires date. It sets nothing when no
 // cookie with that name was sent.
 func (me *Context) ClearCookie(name string) {
 	cookies := me.request.Cookies()
@@ -390,7 +394,7 @@ func (me *Context) WriteStatus(statusCode int) error {
 }
 
 // WriteAs encodes value with the codec, sets the matching Content-Type
-// header in the buffer, and buffers the status code with the encoded body.
+// header, and buffers the status code with the encoded body.
 // It returns the encode error without buffering anything when encoding fails.
 func (me *Context) WriteAs(statusCode int, codec Codec, value any) error {
 	data, err := codec.Encode(value)
