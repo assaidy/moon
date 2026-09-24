@@ -46,3 +46,15 @@ func TestGenerateSecureToken(t *testing.T) {
 		})
 	}
 }
+
+func TestIgnoreHelpers(t *testing.T) {
+	t.Run("IgnoreFirst returns second", func(t *testing.T) {
+		require.Equal(t, "b", IgnoreFirst("a", "b"))
+		require.Equal(t, 2, IgnoreFirst(1, 2))
+	})
+
+	t.Run("IgnoreSecond returns first", func(t *testing.T) {
+		require.Equal(t, "a", IgnoreSecond("a", "b"))
+		require.Equal(t, 1, IgnoreSecond(1, 2))
+	})
+}

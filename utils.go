@@ -76,3 +76,13 @@ func GenerateSecureToken(length ...int) string {
 	rand.Read(buffer)
 	return base64.RawURLEncoding.EncodeToString(buffer)
 }
+
+// IgnoreFirst returns the second value, dropping the first.
+func IgnoreFirst[T1, T2 any](_ T1, a2 T2) T2 {
+	return a2
+}
+
+// IgnoreSecond returns the first value, dropping the second.
+func IgnoreSecond[T1, T2 any](a1 T1, _ T2) T1 {
+	return a1
+}

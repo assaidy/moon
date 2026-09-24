@@ -104,7 +104,7 @@ func TestNew(t *testing.T) {
 			app := moon.New(moon.WithRequestLogging(false))
 			app.Use("/", New(tc.optionFuncs...))
 			app.Handle(http.MethodGet, "/resource", func(ctx *moon.Context) error {
-				fromCtx = FromContext(ctx)
+				fromCtx = GetFromContext(ctx)
 				return ctx.Write(http.StatusOK, "hello")
 			})
 

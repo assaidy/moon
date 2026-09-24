@@ -16,12 +16,14 @@ import (
 // with [App.Handle] and [App.Use], then serve with [App.Start] and stop
 // with [App.Shutdown]. Use [App.Test] to exercise handlers without listening.
 type App struct {
-	httpServer      *http.Server
-	routes          []Route
-	state           sync.Map
-	dependencies    map[reflect.Type]any
-	services        map[reflect.Type]any
-	startedServices map[reflect.Type]any
+	httpServer                      *http.Server
+	routes                          []Route
+	state                           sync.Map
+	dependencies                    map[reflect.Type]any
+	services                        map[reflect.Type]any
+	startedServices                 map[reflect.Type]any
+	registeredRequestLoggingEntries []RequestLoggingEntry
+	requestLoggingEntriesMutex      sync.RWMutex
 
 	// options
 	listenAddress        string
@@ -61,6 +63,7 @@ func New(optionFuncs ...AppOptionFunc) *App {
 		optFunc(app)
 	}
 
+	app.registerReservedRequestLoggingEntries()
 	app.registerRootHandler()
 
 	return app
