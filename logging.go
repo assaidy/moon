@@ -69,6 +69,10 @@ func (me *App) RegisterRequestLoggingEntry(entry RequestLoggingEntry) {
 
 // RegisterRequestLoggingEntry registers the entry on the current request's
 // app. See [App.RegisterRequestLoggingEntry].
+//
+// Its main use is letting middlewares register their own entries. Register
+// once per middleware (e.g. with [sync.Once]): registering the same key
+// twice panics.
 func (me *Context) RegisterRequestLoggingEntry(entry RequestLoggingEntry) {
 	me.app.RegisterRequestLoggingEntry(entry)
 }

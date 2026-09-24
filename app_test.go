@@ -22,7 +22,7 @@ func TestAppOptions_Defaults(t *testing.T) {
 	require.True(t, app.enableRequestLogging)
 	require.False(t, app.preforkIsEnabled)
 	require.Equal(t, runtime.NumCPU(), app.preforkChildrenCount)
-	require.Equal(t, 5, app.preforkRetriesCount)
+	require.Equal(t, -1, app.preforkRetriesCount)
 	require.False(t, app.useTls)
 	require.Equal(t, "", app.certFile)
 	require.Equal(t, "", app.keyFile)
@@ -140,6 +140,7 @@ func TestAppOptions_WithPreforkRetriesCount(t *testing.T) {
 	require.Equal(t, 0, New(WithPreforkRetriesCount(0)).preforkRetriesCount)
 	require.Equal(t, 7, New(WithPreforkRetriesCount(7)).preforkRetriesCount)
 	require.Panics(t, func() { WithPreforkRetriesCount(-1) })
+	require.Panics(t, func() { WithPreforkRetriesCount(-2) })
 }
 
 func TestAppOptions_WithTls(t *testing.T) {

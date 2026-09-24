@@ -56,7 +56,7 @@ func New(optionFuncs ...AppOptionFunc) *App {
 		errorHandler:         DefaultErrorHandler,
 		enableRequestLogging: true,
 		preforkChildrenCount: runtime.NumCPU(),
-		preforkRetriesCount:  5,
+		preforkRetriesCount:  -1,
 	}
 
 	for _, optFunc := range optionFuncs {
@@ -229,7 +229,7 @@ func WithPreforkChildrenCount(i int) AppOptionFunc {
 // Once this limit is reached, [ErrPreforkRetriesExceeded] is returned from
 // [App.Start].
 //
-// Default: 5
+// Default: infinite retries
 func WithPreforkRetriesCount(i int) AppOptionFunc {
 	Assert(i >= 0)
 	return func(app *App) {
