@@ -67,7 +67,7 @@ func TestContext_GetPath(t *testing.T) {
 }
 
 func TestContext_GetPattern(t *testing.T) {
-	t.Run("with Handle()", func(t *testing.T) {
+	t.Run("with Map()", func(t *testing.T) {
 		testCases := []struct {
 			pattern string
 			path    string
@@ -88,7 +88,7 @@ func TestContext_GetPattern(t *testing.T) {
 
 		app := New()
 		for _, tc := range testCases {
-			app.Handle(http.MethodGet, tc.pattern, func(ctx *Context) error {
+			app.Map(http.MethodGet, tc.pattern, func(ctx *Context) error {
 				acutal = append(acutal, ctx.GetPattern())
 				return nil
 			})
@@ -248,7 +248,7 @@ func TestContext_Params(t *testing.T) {
 
 	app := New()
 	for _, tc := range testCases {
-		app.Handle(http.MethodGet, tc.pattern, func(ctx *Context) error {
+		app.Map(http.MethodGet, tc.pattern, func(ctx *Context) error {
 			for key, value := range tc.params {
 				require.Equal(t, value, ctx.GetParam(key), "pattern: %s path: %s key: %s", tc.pattern, tc.path, key)
 			}
@@ -566,7 +566,7 @@ func TestContext_StatusCode(t *testing.T) {
 
 	t.Run("observed after Next", func(t *testing.T) {
 		app := New()
-		app.Handle(http.MethodGet, "/code",
+		app.Map(http.MethodGet, "/code",
 			func(ctx *Context) error {
 				require.Equal(t, 0, ctx.GetStatusCode())
 				require.NoError(t, ctx.Next())
@@ -585,7 +585,7 @@ func TestContext_StatusCode(t *testing.T) {
 	t.Run("zero means writable", func(t *testing.T) {
 		app := New()
 		var before, after int
-		app.Handle(http.MethodGet, "/writable",
+		app.Map(http.MethodGet, "/writable",
 			func(ctx *Context) error {
 				before = ctx.GetStatusCode()
 				require.NoError(t, ctx.Next())
@@ -633,7 +633,7 @@ func TestContext_StatusCode(t *testing.T) {
 
 	t.Run("header set after Next applies", func(t *testing.T) {
 		app := New()
-		app.Handle(http.MethodGet, "/timed",
+		app.Map(http.MethodGet, "/timed",
 			func(ctx *Context) error {
 				require.NoError(t, ctx.Next())
 				ctx.SetHeader("X-Response-Time", "1ms")
@@ -1211,7 +1211,7 @@ func TestContext_IsFinal(t *testing.T) {
 		var finals []bool
 
 		app := New()
-		app.Handle(http.MethodGet, "/chain",
+		app.Map(http.MethodGet, "/chain",
 			func(ctx *Context) error {
 				finals = append(finals, ctx.IsFinal())
 				require.NoError(t, ctx.Next())

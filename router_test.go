@@ -243,47 +243,48 @@ func TestRouter_AreParamNamesUnique(t *testing.T) {
 	}
 }
 
-func TestRouter_HandlePanics(t *testing.T) {
+func TestRouter_MapPanics(t *testing.T) {
 	dummy := func(ctx *Context) error { return nil }
 
 	t.Run("invalid method", func(t *testing.T) {
 		app := New()
-		require.Panics(t, func() { app.Handle("GETX", "/api", dummy) })
+		require.Panics(t, func() { app.Map("GETX", "/api", dummy) })
 	})
 
 	t.Run("invalid pattern", func(t *testing.T) {
 		app := New()
-		require.Panics(t, func() { app.Handle(http.MethodGet, "/api/", dummy) })
+		require.Panics(t, func() { app.Map(http.MethodGet, "/api/", dummy) })
 	})
 
 	t.Run("duplicate param names", func(t *testing.T) {
 		app := New()
-		require.Panics(t, func() { app.Handle(http.MethodGet, "/api/:id/api/:id", dummy) })
+		require.Panics(t, func() { app.Map(http.MethodGet, "/api/:id/api/:id", dummy) })
 	})
 
 	t.Run("method already registered", func(t *testing.T) {
 		app := New()
-		app.Handle(http.MethodGet, "/api/users", dummy)
-		require.Panics(t, func() { app.Handle(http.MethodGet, "/api/users", dummy) })
+		app.Map(http.MethodGet, "/api/users", dummy)
+		require.Panics(t, func() { app.Map(http.MethodGet, "/api/users", dummy) })
 	})
 }
 
-// Each method shortcut must register exactly its own method via Handle.
+// Each method shortcut must register exactly its own method via Map.
 func TestRouter_MethodShortcuts(t *testing.T) {
 	testCases := []struct {
 		name     string
 		register func(app *App, pattern string, handlers ...Handler)
 		method   string
 	}{
-		{"Get", func(app *App, p string, h ...Handler) { app.Get(p, h...) }, http.MethodGet},
-		{"Head", func(app *App, p string, h ...Handler) { app.Head(p, h...) }, http.MethodHead},
-		{"Post", func(app *App, p string, h ...Handler) { app.Post(p, h...) }, http.MethodPost},
-		{"Put", func(app *App, p string, h ...Handler) { app.Put(p, h...) }, http.MethodPut},
-		{"Patch", func(app *App, p string, h ...Handler) { app.Patch(p, h...) }, http.MethodPatch},
-		{"Delete", func(app *App, p string, h ...Handler) { app.Delete(p, h...) }, http.MethodDelete},
-		{"Connect", func(app *App, p string, h ...Handler) { app.Connect(p, h...) }, http.MethodConnect},
-		{"Options", func(app *App, p string, h ...Handler) { app.Options(p, h...) }, http.MethodOptions},
-		{"Trace", func(app *App, p string, h ...Handler) { app.Trace(p, h...) }, http.MethodTrace},
+		{"MapGet", func(app *App, p string, h ...Handler) { app.MapGet(p, h...) }, http.MethodGet},
+		{"MapHead", func(app *App, p string, h ...Handler) { app.MapHead(p, h...) }, http.MethodHead},
+		{"MapPost", func(app *App, p string, h ...Handler) { app.MapPost(p, h...) }, http.MethodPost},
+		{"MapPut", func(app *App, p string, h ...Handler) { app.MapPut(p, h...) }, http.MethodPut},
+		{"MapPatch", func(app *App, p string, h ...Handler) { app.MapPatch(p, h...) }, http.MethodPatch},
+		{"MapDelete", func(app *App, p string, h ...Handler) { app.MapDelete(p, h...) }, http.MethodDelete},
+		{"MapConnect", func(app *App, p string, h ...Handler) { app.MapConnect(p, h...) }, http.MethodConnect},
+		{"MapOptions", func(app *App, p string, h ...Handler) { app.MapOptions(p, h...) }, http.MethodOptions},
+		{"MapTrace", func(app *App, p string, h ...Handler) { app.MapTrace(p, h...) }, http.MethodTrace},
+		{"MapQuery", func(app *App, p string, h ...Handler) { app.MapQuery(p, h...) }, MethodQuery},
 	}
 
 	for _, tc := range testCases {
@@ -312,37 +313,37 @@ func TestRouter_MethodShortcuts(t *testing.T) {
 	}
 }
 
-// All registers the handlers for every valid HTTP method.
-func TestRouter_All(t *testing.T) {
+// MapAll registers the handlers for every valid HTTP method.
+func TestRouter_MapAll(t *testing.T) {
 	app := New()
-	app.All("/api/users", func(ctx *Context) error {
+	app.MapAll("/api/users", func(ctx *Context) error {
 		return ctx.Write(http.StatusOK, "ok")
 	})
 
 	methods := []string{
 		http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
 		http.MethodPatch, http.MethodDelete, http.MethodConnect,
-		http.MethodOptions, http.MethodTrace,
+		http.MethodOptions, http.MethodTrace, MethodQuery,
 	}
 	for _, method := range methods {
 		resp := app.Test(httptest.NewRequest(method, "/api/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode, method)
 	}
 
-	// All panics once any method on the pattern is taken
+	// MapAll panics once any method on the pattern is taken
 	require.Panics(t, func() {
-		app.All("/api/users", func(ctx *Context) error { return nil })
+		app.MapAll("/api/users", func(ctx *Context) error { return nil })
 	})
 	require.Panics(t, func() {
-		app.Get("/api/users", func(ctx *Context) error { return nil })
+		app.MapGet("/api/users", func(ctx *Context) error { return nil })
 	})
 }
 
-// All with no handlers does nothing, like Handle.
-func TestRouter_All_NoHandlers(t *testing.T) {
+// MapAll with no handlers does nothing, like Map.
+func TestRouter_MapAll_NoHandlers(t *testing.T) {
 	app := New()
-	require.NotPanics(t, func() { app.All("/api/users") })
-	require.NotPanics(t, func() { app.Get("/api/users") })
+	require.NotPanics(t, func() { app.MapAll("/api/users") })
+	require.NotPanics(t, func() { app.MapGet("/api/users") })
 }
 
 func TestRouter_UsePanics(t *testing.T) {
@@ -373,7 +374,7 @@ func TestRouter_IsValidHttpMethod(t *testing.T) {
 		expected bool
 	}{
 		// valid
-		{"HEAD", true},
+		{"GET", true},
 		{"HEAD", true},
 		{"POST", true},
 		{"PUT", true},
@@ -382,6 +383,7 @@ func TestRouter_IsValidHttpMethod(t *testing.T) {
 		{"CONNECT", true},
 		{"OPTIONS", true},
 		{"TRACE", true},
+		{"QUERY", true},
 		// invalid
 		{"", false},
 		{"INVALID", false},
@@ -598,7 +600,7 @@ func TestRouter_Dispatch(t *testing.T) {
 			var called []string
 
 			app.Use("/api", newHandler("middleware", &called))
-			app.Handle(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
+			app.Map(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users/123", nil))
 			require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -609,7 +611,7 @@ func TestRouter_Dispatch(t *testing.T) {
 			app := New()
 			var called []string
 
-			app.Handle(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
+			app.Map(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
 			app.Use("/api", newHandler("middleware", &called))
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users/123", nil))
@@ -624,7 +626,7 @@ func TestRouter_Dispatch(t *testing.T) {
 
 		app.Use("/api", newHandler("api", &called))
 		app.Use("/api/users", newHandler("users", &called))
-		app.Handle(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
+		app.Map(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users/123", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -638,7 +640,7 @@ func TestRouter_Dispatch(t *testing.T) {
 		app.Use("/api", newHandler("api", &called))
 		app.Use("/api/v1", newHandler("v1", &called))
 		app.Use("/api/v1/admin", newHandler("admin", &called))
-		app.Handle(http.MethodGet, "/api/v1/admin/users", newHandler("handler", &called))
+		app.Map(http.MethodGet, "/api/v1/admin/users", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -650,8 +652,8 @@ func TestRouter_Dispatch(t *testing.T) {
 		var called []string
 
 		app.Use("/api", newHandler("middleware", &called))
-		app.Handle(http.MethodGet, "/api/users", newHandler("get", &called))
-		app.Handle(http.MethodPost, "/api/users", newHandler("post", &called))
+		app.Map(http.MethodGet, "/api/users", newHandler("get", &called))
+		app.Map(http.MethodPost, "/api/users", newHandler("post", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -669,8 +671,8 @@ func TestRouter_Dispatch(t *testing.T) {
 		var called []string
 
 		app.Use("/api", newHandler("middleware", &called))
-		app.Handle(http.MethodGet, "/api/users", newHandler("api", &called))
-		app.Handle(http.MethodGet, "/api2/users", newHandler("api2", &called))
+		app.Map(http.MethodGet, "/api/users", newHandler("api", &called))
+		app.Map(http.MethodGet, "/api2/users", newHandler("api2", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -688,7 +690,7 @@ func TestRouter_Dispatch(t *testing.T) {
 
 		app.Use("/x", newHandler("x", &called))
 		app.Use("/x/y", newHandler("x/y", &called))
-		app.Handle(http.MethodGet, "/x/y/users", newHandler("handler", &called))
+		app.Map(http.MethodGet, "/x/y/users", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x/y/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -710,7 +712,7 @@ func TestRouter_Dispatch(t *testing.T) {
 		app := New()
 		var called []string
 
-		app.Handle(http.MethodGet, "/files/*", newHandler("handler", &called))
+		app.Map(http.MethodGet, "/files/*", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/a/b/c.txt", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -724,8 +726,8 @@ func TestRouter_Dispatch(t *testing.T) {
 		app := New()
 		var called []string
 
-		app.Handle(http.MethodGet, "/", newHandler("root", &called))
-		app.Handle(http.MethodGet, "/users", newHandler("users", &called))
+		app.Map(http.MethodGet, "/", newHandler("root", &called))
+		app.Map(http.MethodGet, "/users", newHandler("users", &called))
 
 		for _, path := range []string{"/", "/users", "/users/"} {
 			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
@@ -738,7 +740,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	t.Run("unknown path returns 404 invalid_endpoint", func(t *testing.T) {
 		app := New()
 		var called []string
-		app.Handle(http.MethodGet, "/users", newHandler("handler", &called))
+		app.Map(http.MethodGet, "/users", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 		require.Equal(t, ErrInvalidEndpoint.StatusCode, resp.StatusCode)
@@ -756,7 +758,7 @@ func TestRouter_Dispatch(t *testing.T) {
 	t.Run("wrong method returns 405 method_not_allowed", func(t *testing.T) {
 		app := New()
 		var called []string
-		app.Handle(http.MethodGet, "/users", newHandler("handler", &called))
+		app.Map(http.MethodGet, "/users", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
 		require.Equal(t, ErrMethodNotAllowed.StatusCode, resp.StatusCode)
@@ -782,7 +784,7 @@ func TestRouter_Dispatch(t *testing.T) {
 				ctx.WriteAs(http.StatusNotFound, CodecJson, ErrInvalidEndpoint)
 			}),
 		)
-		app.Handle(http.MethodGet, "/users", newHandler("handler", &[]string{}))
+		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -801,7 +803,7 @@ func TestRouter_Dispatch(t *testing.T) {
 				ctx.WriteAs(http.StatusMethodNotAllowed, CodecJson, ErrMethodNotAllowed)
 			}),
 		)
-		app.Handle(http.MethodGet, "/users", newHandler("handler", &[]string{}))
+		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
 		resp := app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
 		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
@@ -831,7 +833,7 @@ func TestRouter_Dispatch(t *testing.T) {
 			order = append(order, "mw2")
 			return ctx.Next()
 		})
-		app.Handle(http.MethodGet, "/x/y", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/x/y", func(ctx *Context) error {
 			order = append(order, "handler")
 			return sentinel
 		})
@@ -873,7 +875,7 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 	t.Run("defaults to 200 when nothing written", func(t *testing.T) {
 		logs := &captureLogHandler{}
 		app := New(WithLogger(slog.New(logs)), WithRequestLogging(true))
-		app.Handle(http.MethodGet, "/x", func(ctx *Context) error { return nil })
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -883,7 +885,7 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 	t.Run("logs written status", func(t *testing.T) {
 		logs := &captureLogHandler{}
 		app := New(WithLogger(slog.New(logs)), WithRequestLogging(true))
-		app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 			return ctx.Write(http.StatusCreated, "hello")
 		})
 

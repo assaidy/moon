@@ -6,12 +6,12 @@ import (
 	"reflect"
 )
 
-// Map is shorthand for building response bodies (see [Context.WriteAs]).
+// Object is shorthand for building response bodies (see [Context.WriteAs]).
 //
 // Example:
 //
-//	return ctx.WriteAs(http.StatusOK, CodecJson, Map{"hello": "world"})
-type Map map[string]any
+//	return ctx.WriteAs(http.StatusOK, CodecJson, Object{"hello": "world"})
+type Object map[string]any
 
 // Assert panics when condition is false, with message when given.
 func Assert(condition bool, message ...string) {

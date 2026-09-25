@@ -23,7 +23,7 @@ func TestNew_Defaults(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Handle(http.MethodGet, "/healthz", New(WithProbe(func(*moon.Context) bool {
+			app.Map(http.MethodGet, "/healthz", New(WithProbe(func(*moon.Context) bool {
 				return tc.probeOk
 			})))
 
@@ -39,7 +39,7 @@ func TestNew_Defaults(t *testing.T) {
 
 func TestNew_DefaultProbeReportsOk(t *testing.T) {
 	app := moon.New()
-	app.Handle(http.MethodGet, "/healthz", New())
+	app.Map(http.MethodGet, "/healthz", New())
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -48,7 +48,7 @@ func TestNew_DefaultProbeReportsOk(t *testing.T) {
 func TestNew_ProbeReceivesContext(t *testing.T) {
 	app := moon.New()
 	var gotPath string
-	app.Handle(http.MethodGet, "/readyz", New(WithProbe(func(ctx *moon.Context) bool {
+	app.Map(http.MethodGet, "/readyz", New(WithProbe(func(ctx *moon.Context) bool {
 		gotPath = ctx.GetPath()
 		return true
 	})))
@@ -60,7 +60,7 @@ func TestNew_ProbeReceivesContext(t *testing.T) {
 
 func TestNew_CustomResponse(t *testing.T) {
 	app := moon.New()
-	app.Handle(http.MethodGet, "/healthz", New(
+	app.Map(http.MethodGet, "/healthz", New(
 		WithProbe(func(*moon.Context) bool { return false }),
 		WithResponse(func(ctx *moon.Context, ok bool) error {
 			if ok {
@@ -92,7 +92,7 @@ func TestNew_ResponseReceivesProbeResult(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Handle(http.MethodGet, "/healthz", New(
+			app.Map(http.MethodGet, "/healthz", New(
 				WithProbe(func(*moon.Context) bool { return tc.probeOk }),
 				WithResponse(func(ctx *moon.Context, ok bool) error {
 					return ctx.Write(http.StatusOK, map[bool]string{true: "true", false: "false"}[ok])
@@ -114,7 +114,7 @@ func TestNew_ResponseReceivesProbeResult(t *testing.T) {
 func TestNew_DoesNotContinueChain(t *testing.T) {
 	app := moon.New()
 	downstreamRan := false
-	app.Handle(http.MethodGet, "/healthz",
+	app.Map(http.MethodGet, "/healthz",
 		New(),
 		func(ctx *moon.Context) error {
 			downstreamRan = true

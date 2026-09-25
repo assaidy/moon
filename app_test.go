@@ -61,7 +61,7 @@ func TestAppOptions_WithErrorHandler(t *testing.T) {
 		}),
 	)
 	sentinel := errors.New("boom")
-	app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 		return sentinel
 	})
 

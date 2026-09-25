@@ -53,7 +53,7 @@ func testErrorHandlerResponse(t *testing.T, handlerErr error) (int, map[string]a
 	t.Helper()
 
 	app := New()
-	app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 		return handlerErr
 	})
 

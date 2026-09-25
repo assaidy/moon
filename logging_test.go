@@ -68,7 +68,7 @@ func TestRegisterRequestLoggingEntry(t *testing.T) {
 		logs := &captureLogHandler{}
 		app := testLoggedApp(logs)
 		app.RegisterRequestLoggingEntry(RequestLoggingEntry{Key: "  custom  ", ValueFunc: func(ctx *Context) string { return "v" }})
-		app.Handle(http.MethodGet, "/x", func(ctx *Context) error { return nil })
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, "v", loggedAttrs(t, logs)["custom"])
@@ -105,7 +105,7 @@ func TestRegisterRequestLoggingEntry_PerApp(t *testing.T) {
 			Key:       "shared",
 			ValueFunc: func(ctx *Context) string { return value },
 		})
-		app.Handle(http.MethodGet, "/x", func(ctx *Context) error { return nil })
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
 		return app
 	}
 
@@ -129,7 +129,7 @@ func TestLogRequest_Entries(t *testing.T) {
 		Key:       "custom",
 		ValueFunc: func(ctx *Context) string { return "v" },
 	})
-	app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 		return ctx.Write(http.StatusCreated, "hello")
 	})
 
@@ -149,7 +149,7 @@ func TestLogRequest_Entries(t *testing.T) {
 func TestContextRegisterRequestLoggingEntry(t *testing.T) {
 	logs := &captureLogHandler{}
 	app := testLoggedApp(logs)
-	app.Handle(http.MethodGet, "/x", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 		ctx.RegisterRequestLoggingEntry(RequestLoggingEntry{
 			Key:       "from-ctx",
 			ValueFunc: func(ctx *Context) string { return "v" },

@@ -48,7 +48,27 @@ func (me *App) registerRootHandler() {
 	me.httpServer.Handler = mux
 }
 
-// Handle registers one or more handlers for method + pattern.
+// Common HTTP methods.
+//
+// Unless otherwise noted, these are defined in RFC 7231 section 4.3.
+const (
+	MethodGet     = "GET"
+	MethodHead    = "HEAD"
+	MethodPost    = "POST"
+	MethodPut     = "PUT"
+	MethodPatch   = "PATCH" // RFC 5789
+	MethodDelete  = "DELETE"
+	MethodConnect = "CONNECT"
+	MethodOptions = "OPTIONS"
+	MethodTrace   = "TRACE"
+	MethodQuery   = "QUERY" // RFC 10008
+)
+
+// Map registers one or more handlers for method + pattern.
+//
+// method is case sensitive and must be all-caps (e.g. "GET", not "get").
+// Prefer the [MethodGet], [MethodPost], ... constants, or the [App.MapGet],
+// [App.MapPost], ... shortcuts.
 //
 // pattern grammar:
 //
@@ -59,8 +79,8 @@ func (me *App) registerRootHandler() {
 //	name             = (letter | digit | "_" | "-")+
 //
 // Panics on invalid method/pattern, duplicate param names,
-// or if method is already registered
-// for pattern. Does nothing if no handlers are given. Handlers passed
+// or if method is already registered for pattern.
+// Does nothing if no handlers are given. Handlers passed
 // in one call run in order via [Context.Next].
 //
 // Middlewares registered with [App.Use] before this call whose prefix
@@ -69,7 +89,7 @@ func (me *App) registerRootHandler() {
 // [ErrMethodNotAllowed]; no match invokes it with [ErrInvalidEndpoint],
 // so a custom handler can inspect or override them. Both carry an empty
 // [Context.GetPattern] since no route pattern matched.
-func (me *App) Handle(method string, pattern string, handlers ...Handler) {
+func (me *App) Map(method string, pattern string, handlers ...Handler) {
 	Assert(isValidHttpMethod(method), "invalid http method")
 	Assert(isValidRoutePattern(pattern), "invalid route pattern")
 	Assert(areParamNamesUnique(pattern), "duplicate param names are not allowed")
@@ -82,7 +102,7 @@ func (me *App) Handle(method string, pattern string, handlers ...Handler) {
 	if index == -1 {
 		me.routes = append(me.routes, Route{
 			pattern:        pattern,
-			methodHandlers: make(map[string][]Handler, 9),
+			methodHandlers: make(map[string][]Handler, 10),
 		})
 		index = len(me.routes) - 1
 	}
@@ -103,75 +123,81 @@ func areParamNamesUnique(pattern string) bool {
 	return true
 }
 
-// Get registers handlers for the GET method. See [App.Handle].
-func (me *App) Get(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodGet, pattern, handlers...)
+// MapGet registers handlers for the GET method. See [App.Map].
+func (me *App) MapGet(pattern string, handlers ...Handler) {
+	me.Map(MethodGet, pattern, handlers...)
 }
 
-// Head registers handlers for the HEAD method. See [App.Handle].
+// MapHead registers handlers for the HEAD method. See [App.Map].
 //
 // Handlers must not write bytes to the body of a HEAD response.
-func (me *App) Head(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodHead, pattern, handlers...)
+func (me *App) MapHead(pattern string, handlers ...Handler) {
+	me.Map(MethodHead, pattern, handlers...)
 }
 
-// Post registers handlers for the POST method. See [App.Handle].
-func (me *App) Post(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodPost, pattern, handlers...)
+// MapPost registers handlers for the POST method. See [App.Map].
+func (me *App) MapPost(pattern string, handlers ...Handler) {
+	me.Map(MethodPost, pattern, handlers...)
 }
 
-// Put registers handlers for the PUT method. See [App.Handle].
-func (me *App) Put(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodPut, pattern, handlers...)
+// MapPut registers handlers for the PUT method. See [App.Map].
+func (me *App) MapPut(pattern string, handlers ...Handler) {
+	me.Map(MethodPut, pattern, handlers...)
 }
 
-// Patch registers handlers for the PATCH method. See [App.Handle].
-func (me *App) Patch(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodPatch, pattern, handlers...)
+// MapPatch registers handlers for the PATCH method. See [App.Map].
+func (me *App) MapPatch(pattern string, handlers ...Handler) {
+	me.Map(MethodPatch, pattern, handlers...)
 }
 
-// Delete registers handlers for the DELETE method. See [App.Handle].
-func (me *App) Delete(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodDelete, pattern, handlers...)
+// MapDelete registers handlers for the DELETE method. See [App.Map].
+func (me *App) MapDelete(pattern string, handlers ...Handler) {
+	me.Map(MethodDelete, pattern, handlers...)
 }
 
-// Connect registers handlers for the CONNECT method. See [App.Handle].
-func (me *App) Connect(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodConnect, pattern, handlers...)
+// MapConnect registers handlers for the CONNECT method. See [App.Map].
+func (me *App) MapConnect(pattern string, handlers ...Handler) {
+	me.Map(MethodConnect, pattern, handlers...)
 }
 
-// Options registers handlers for the OPTIONS method. See [App.Handle].
-func (me *App) Options(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodOptions, pattern, handlers...)
+// MapOptions registers handlers for the OPTIONS method. See [App.Map].
+func (me *App) MapOptions(pattern string, handlers ...Handler) {
+	me.Map(MethodOptions, pattern, handlers...)
 }
 
-// Trace registers handlers for the TRACE method. See [App.Handle].
-func (me *App) Trace(pattern string, handlers ...Handler) {
-	me.Handle(http.MethodTrace, pattern, handlers...)
+// MapTrace registers handlers for the TRACE method. See [App.Map].
+func (me *App) MapTrace(pattern string, handlers ...Handler) {
+	me.Map(MethodTrace, pattern, handlers...)
 }
 
-// All registers handlers for every HTTP method on pattern, calling
-// [App.Handle] once per method. A request whose method has no dedicated
+// MapQuery registers handlers for the QUERY method. See [App.Map].
+func (me *App) MapQuery(pattern string, handlers ...Handler) {
+	me.Map(MethodQuery, pattern, handlers...)
+}
+
+// MapAll registers handlers for every HTTP method on pattern, calling
+// [App.Map] once per method. A request whose method has no dedicated
 // registration still reaches these handlers.
 //
 // Panics if any method is already registered for pattern. Does nothing if
-// no handlers are given. See [App.Handle] for the pattern grammar.
-func (me *App) All(pattern string, handlers ...Handler) {
+// no handlers are given. See [App.Map] for the pattern grammar.
+func (me *App) MapAll(pattern string, handlers ...Handler) {
 	if len(handlers) == 0 {
 		return
 	}
 	for _, method := range []string{
-		http.MethodGet,
-		http.MethodHead,
-		http.MethodPost,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete,
-		http.MethodConnect,
-		http.MethodOptions,
-		http.MethodTrace,
+		MethodGet,
+		MethodHead,
+		MethodPost,
+		MethodPut,
+		MethodPatch,
+		MethodDelete,
+		MethodConnect,
+		MethodOptions,
+		MethodTrace,
+		MethodQuery,
 	} {
-		me.Handle(method, pattern, handlers...)
+		me.Map(method, pattern, handlers...)
 	}
 }
 
@@ -185,11 +211,11 @@ func (me *App) All(pattern string, handlers ...Handler) {
 //	segment = (letter | digit | "_" | "-")+
 //
 // Panics on invalid prefix. Does nothing if no middlewares are given.
-// Registration order matters: only [App.Handle] routes registered after
+// Registration order matters: only [App.Map] routes registered after
 // this call observe it, in registration order. If no route matches but a
 // prefix does, the collected middlewares still run with an empty
 // [Context.GetPattern]: the pattern is only set for routes registered
-// by [App.Handle].
+// by [App.Map].
 //
 // Each middleware must call [Context.Next] to continue the chain; a
 // returned error from the chain is passed to the app's [ErrorHandler].
@@ -250,15 +276,16 @@ func (me *App) processRequest(
 
 func isValidHttpMethod(method string) bool {
 	switch method {
-	case http.MethodGet,
-		http.MethodHead,
-		http.MethodPost,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete,
-		http.MethodConnect,
-		http.MethodOptions,
-		http.MethodTrace:
+	case MethodGet,
+		MethodHead,
+		MethodPost,
+		MethodPut,
+		MethodPatch,
+		MethodDelete,
+		MethodConnect,
+		MethodOptions,
+		MethodTrace,
+		MethodQuery:
 		return true
 	}
 	return false
@@ -278,13 +305,13 @@ func isValidHttpMethod(method string) bool {
 type Handler func(ctx *Context) error
 
 // Route is a handler route (pattern + per-method handlers) or a
-// middleware prefix entry. See [App.Handle] and [App.Use].
+// middleware prefix entry. See [App.Map] and [App.Use].
 type Route struct {
 	// TODO: add support for route metadata to generate apenapi spec
 	// TODO: use a route per method: struct Route {pattern, method, handlers}
 	// middlewares don't have a pattern or a method.
 	// OR use a separate `Prefix` type, but think about its metadata support.
-	// TODO: find a way to distinguish between a handler registered as middleware [App.Use] or as a route [App.Handle]
+	// TODO: find a way to distinguish between a handler registered as middleware [App.Use] or as a route [App.Map]
 	// this enables a new context mehtod `Context.IsMiddleware()`
 	pattern            string
 	methodHandlers     map[string][]Handler

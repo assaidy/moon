@@ -103,7 +103,7 @@ func TestNew(t *testing.T) {
 
 			app := moon.New()
 			app.Use("/", New(tc.optionFuncs...))
-			app.Handle(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				fromCtx = GetFromContext(ctx)
 				return ctx.Write(http.StatusOK, "hello")
 			})
@@ -142,7 +142,7 @@ func TestRegistersLoggingEntryOnce(t *testing.T) {
 		WithRequestLoggingEntry(true),
 		WithRequestLoggingEntryKey("test-request-id-once"),
 	))
-	app.Handle(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		return ctx.Write(http.StatusOK, "hello")
 	})
 
@@ -185,7 +185,7 @@ func TestLogsRequestIdEntry(t *testing.T) {
 		WithRequestLoggingEntry(true),
 		WithRequestLoggingEntryKey(entryKey),
 	))
-	app.Handle(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		return ctx.Write(http.StatusOK, "hello")
 	})
 

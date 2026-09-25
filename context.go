@@ -192,7 +192,8 @@ func (me *Context) GetRemoteAddress() string {
 	return me.request.RemoteAddr
 }
 
-// TODO: implement ctx.RealIp() with trusted proxies and IP validations
+// TODO: add ctx.RealIp() with trusted proxies and IP validations
+// TODO: add ctx.Bind() to bind request payload elements(param,query,header,body), services, and dependencies
 
 // GetMethod returns the request HTTP method (GET, POST, ...).
 func (me *Context) GetMethod() string {
@@ -202,7 +203,7 @@ func (me *Context) GetMethod() string {
 // GetPattern returns the route pattern that matched the request
 // (e.g. "/users/:id"). It is empty for middleware-only requests and for
 // unmatched requests ([ErrInvalidEndpoint], [ErrMethodNotAllowed]),
-// since the pattern is only set for routes registered by [App.Handle].
+// since the pattern is only set for routes registered by [App.Map].
 func (me *Context) GetPattern() string {
 	return me.pattern
 }

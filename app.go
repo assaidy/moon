@@ -13,7 +13,7 @@ import (
 
 // App is the HTTP server, router and owner of shared state, typed
 // dependencies and managed services. Build it with [New], register routes
-// with [App.Handle] and [App.Use], then serve with [App.Start] and stop
+// with [App.Map] and [App.Use], then serve with [App.Start] and stop
 // with [App.Shutdown]. Use [App.Test] to exercise handlers without listening.
 type App struct {
 	httpServer                      *http.Server

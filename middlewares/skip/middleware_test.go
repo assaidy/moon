@@ -59,7 +59,7 @@ func TestNew(t *testing.T) {
 			)
 
 			app.Use("/", wrapped)
-			app.Handle(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "downstream")
 			})
 

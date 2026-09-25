@@ -8,13 +8,13 @@
 //
 // The most common usage is registering the built-in endpoints:
 //
-//	app.Get(health_check.LivenessEndpoint, health_check.New())
-//	app.Get(health_check.ReadinessEndpoint, health_check.New())
-//	app.Get(health_check.StartupEndpoint, health_check.New())
+//	app.MapGet(health_check.LivenessEndpoint, health_check.New())
+//	app.MapGet(health_check.ReadinessEndpoint, health_check.New())
+//	app.MapGet(health_check.StartupEndpoint, health_check.New())
 //
 // with a probe config deciding when the endpoint reports unhealthy:
 //
-//	app.Get(health_check.ReadinessEndpoint, health_check.New(
+//	app.MapGet(health_check.ReadinessEndpoint, health_check.New(
 //		health_check.WithProbe(func(ctx *moon.Context) bool {
 //			err := db.Ping()
 //			return err == nil

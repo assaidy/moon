@@ -80,7 +80,7 @@ func TestNew(t *testing.T) {
 
 			app := moon.New()
 			app.Use("/", New(tc.optionFuncs...))
-			app.Handle(http.MethodGet, "/timed", handler)
+			app.Map(http.MethodGet, "/timed", handler)
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/timed", nil))
 			require.Equal(t, tc.wantStatus, resp.StatusCode)
