@@ -295,8 +295,8 @@ func TestContext_Headers(t *testing.T) {
 		require.Equal(t, "req-val", ctx.GetHeader("X-Req"))
 		require.Equal(t, "", ctx.GetHeader("X-Missing"))
 		require.Equal(t, "a", ctx.GetHeader("X-Multi"))
-		require.Equal(t, []string{"a", "b"}, ctx.GetAllHeaders("X-Multi"))
-		require.Empty(t, ctx.GetAllHeaders("X-Missing"))
+		require.Equal(t, []string{"a", "b"}, ctx.GetAllHeaders()["X-Multi"])
+		require.Empty(t, ctx.GetAllHeaders()["X-Missing"])
 
 		ctx.SetHeader("X-Resp", "c")
 		require.Equal(t, "c", ctx.response.Header().Get("X-Resp"))
@@ -1242,5 +1242,74 @@ func TestContext_IsFinal(t *testing.T) {
 		})
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+	})
+}
+
+func TestContext_Redirect(t *testing.T) {
+	t.Run("absolute path", func(t *testing.T) {
+		app := New()
+		app.Map(http.MethodGet, "/old", func(ctx *Context) error {
+			return ctx.Redirect(http.StatusFound, "/new")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/old", nil))
+		require.Equal(t, http.StatusFound, resp.StatusCode)
+		require.Equal(t, "/new", resp.Header.Get("Location"))
+	})
+
+	t.Run("relative path resolved against request dir", func(t *testing.T) {
+		app := New()
+		app.Map(http.MethodGet, "/a/b/c", func(ctx *Context) error {
+			return ctx.Redirect(http.StatusFound, "d")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/a/b/c", nil))
+		require.Equal(t, http.StatusFound, resp.StatusCode)
+		require.Equal(t, "/a/b/d", resp.Header.Get("Location"))
+	})
+
+	t.Run("dot segments cleaned query kept", func(t *testing.T) {
+		app := New()
+		app.Map(http.MethodGet, "/a/b/c", func(ctx *Context) error {
+			return ctx.Redirect(http.StatusFound, "../e?x=1")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/a/b/c", nil))
+		require.Equal(t, http.StatusFound, resp.StatusCode)
+		require.Equal(t, "/a/e?x=1", resp.Header.Get("Location"))
+	})
+
+	t.Run("non-ASCII escaped", func(t *testing.T) {
+		app := New()
+		app.Map(http.MethodGet, "/old", func(ctx *Context) error {
+			return ctx.Redirect(http.StatusMovedPermanently, "/café")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/old", nil))
+		require.Equal(t, http.StatusMovedPermanently, resp.StatusCode)
+		require.Equal(t, "/caf%c3%a9", resp.Header.Get("Location"))
+	})
+
+	t.Run("absolute URL passthrough", func(t *testing.T) {
+		app := New()
+		app.Map(http.MethodGet, "/old", func(ctx *Context) error {
+			return ctx.Redirect(http.StatusPermanentRedirect, "https://example.com/x")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/old", nil))
+		require.Equal(t, http.StatusPermanentRedirect, resp.StatusCode)
+		require.Equal(t, "https://example.com/x", resp.Header.Get("Location"))
+	})
+
+	t.Run("invalid URL errors", func(t *testing.T) {
+		app := New()
+		app.Map(http.MethodGet, "/bad", func(ctx *Context) error {
+			err := ctx.Redirect(http.StatusFound, "http://[::1")
+			require.Error(t, err)
+			return err
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/bad", nil))
+		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 	})
 }

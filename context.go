@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"path"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
-
-// TODO: add redirection
 
 // Context is the per-request handle passed to every [Handler].
 // It carries the request and response, the matched route pattern and
@@ -252,10 +255,9 @@ func (me *Context) GetHeader(key string) string {
 	return me.request.Header.Get(key)
 }
 
-// GetAllHeaders returns every value of the request header key,
-// or nil when the key is missing.
-func (me *Context) GetAllHeaders(key string) []string {
-	return me.request.Header.Values(key)
+// GetAllHeaders returns every request header value grouped by key.
+func (me *Context) GetAllHeaders() map[string][]string {
+	return me.request.Header
 }
 
 // SetHeader sets a response header directly on the underlying writer,
@@ -509,4 +511,90 @@ func (me *Context) GetState[T any](key string) (T, bool) {
 // DeleteState removes the app-shared value for key.
 func (me *Context) DeleteState(key string) {
 	me.app.state.Delete(key)
+}
+
+// Redirect responds with a redirection to location using statusCode.
+// It sets the Location header (resolving relative locations against the
+// request path and percent-encoding non-ASCII bytes).
+// It returns an error when location is not a valid URL.
+//
+// Permanent redirections tell the client to replace the original URL:
+//   - 301 Moved Permanently: GET stays GET, others may become GET.
+//   - 308 Permanent Redirect: method and body are unchanged.
+//
+// Temporary redirections keep the original URL valid:
+//   - 302 Found: GET stays GET, others may become GET.
+//   - 303 See Other: other methods become GET, body is lost.
+//   - 307 Temporary Redirect: method and body are unchanged.
+//
+// In most cases you will use 302 Found. It's the default for most servers.
+//
+// See https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Redirections
+func (me *Context) Redirect(statusCode int, location string) error {
+	u, err := url.Parse(location)
+	if err != nil {
+		return fmt.Errorf("invalid redirect location url: %w", err)
+	}
+
+	// If url was relative, make its path absolute by
+	// combining with request path.
+	// The client would probably do this for us,
+	// but doing it ourselves is more reliable.
+	// See RFC 7231, section 7.1.2
+	if u.Scheme == "" && u.Host == "" {
+		oldpath := me.request.URL.EscapedPath()
+		if oldpath == "" { // should not happen, but avoid a crash if it does
+			oldpath = "/"
+		}
+
+		if location == "" || location[0] != '/' {
+			// make relative path absolute
+			olddir, _ := path.Split(oldpath)
+			location = olddir + location
+		}
+
+		var query string
+		if i := strings.Index(location, "?"); i != -1 {
+			location, query = location[:i], location[i:]
+		}
+
+		// clean up
+		location = path.Clean(location) + query
+	}
+
+	me.SetHeader("Location", hexEscapeNonAscii(location))
+	me.SetStatusCode(statusCode)
+	return nil
+}
+
+// hexEscapeNonAscii percent-encodes bytes >= [utf8.RuneSelf], matching
+// [http.Redirect] so non-ASCII Location values stay valid header bytes.
+func hexEscapeNonAscii(s string) string {
+	newLen := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			newLen += 3
+		} else {
+			newLen++
+		}
+	}
+	if newLen == len(s) {
+		return s
+	}
+	b := make([]byte, 0, newLen)
+	var pos int
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			if pos < i {
+				b = append(b, s[pos:i]...)
+			}
+			b = append(b, '%')
+			b = strconv.AppendInt(b, int64(s[i]), 16)
+			pos = i + 1
+		}
+	}
+	if pos < len(s) {
+		b = append(b, s[pos:]...)
+	}
+	return string(b)
 }
