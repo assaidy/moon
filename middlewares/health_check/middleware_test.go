@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew_Defaults(t *testing.T) {
+func TestHandle_Defaults(t *testing.T) {
 	testCases := []struct {
 		name       string
 		probeOk    bool
@@ -23,9 +23,9 @@ func TestNew_Defaults(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Map(http.MethodGet, "/healthz", New(WithProbe(func(*moon.Context) bool {
+			app.Map(http.MethodGet, "/healthz", New().WithProbe(func(*moon.Context) bool {
 				return tc.probeOk
-			})))
+			}).Handle)
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 			require.Equal(t, tc.wantStatus, resp.StatusCode)
@@ -37,38 +37,37 @@ func TestNew_Defaults(t *testing.T) {
 	}
 }
 
-func TestNew_DefaultProbeReportsOk(t *testing.T) {
+func TestHandle_DefaultProbeReportsOk(t *testing.T) {
 	app := moon.New()
-	app.Map(http.MethodGet, "/healthz", New())
+	app.Map(http.MethodGet, "/healthz", New().Handle)
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func TestNew_ProbeReceivesContext(t *testing.T) {
+func TestHandle_ProbeReceivesContext(t *testing.T) {
 	app := moon.New()
 	var gotPath string
-	app.Map(http.MethodGet, "/readyz", New(WithProbe(func(ctx *moon.Context) bool {
+	app.Map(http.MethodGet, "/readyz", New().WithProbe(func(ctx *moon.Context) bool {
 		gotPath = ctx.GetPath()
 		return true
-	})))
+	}).Handle)
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "/readyz", gotPath)
 }
 
-func TestNew_CustomResponse(t *testing.T) {
+func TestHandle_CustomResponse(t *testing.T) {
 	app := moon.New()
-	app.Map(http.MethodGet, "/healthz", New(
-		WithProbe(func(*moon.Context) bool { return false }),
+	app.Map(http.MethodGet, "/healthz", New().
+		WithProbe(func(*moon.Context) bool { return false }).
 		WithResponse(func(ctx *moon.Context, ok bool) error {
 			if ok {
 				return ctx.Write(http.StatusOK, "up")
 			}
 			return ctx.Write(http.StatusServiceUnavailable, "down")
-		}),
-	))
+		}).Handle)
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
@@ -79,7 +78,7 @@ func TestNew_CustomResponse(t *testing.T) {
 }
 
 // The probe result flows into the response func.
-func TestNew_ResponseReceivesProbeResult(t *testing.T) {
+func TestHandle_ResponseReceivesProbeResult(t *testing.T) {
 	testCases := []struct {
 		name    string
 		probeOk bool
@@ -92,12 +91,11 @@ func TestNew_ResponseReceivesProbeResult(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Map(http.MethodGet, "/healthz", New(
-				WithProbe(func(*moon.Context) bool { return tc.probeOk }),
+			app.Map(http.MethodGet, "/healthz", New().
+				WithProbe(func(*moon.Context) bool { return tc.probeOk }).
 				WithResponse(func(ctx *moon.Context, ok bool) error {
 					return ctx.Write(http.StatusOK, map[bool]string{true: "true", false: "false"}[ok])
-				}),
-			))
+				}).Handle)
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 			require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -111,11 +109,11 @@ func TestNew_ResponseReceivesProbeResult(t *testing.T) {
 
 // Terminal: the handler never calls Next, so a following handler in the
 // chain must not run.
-func TestNew_DoesNotContinueChain(t *testing.T) {
+func TestHandle_DoesNotContinueChain(t *testing.T) {
 	app := moon.New()
 	downstreamRan := false
 	app.Map(http.MethodGet, "/healthz",
-		New(),
+		New().Handle,
 		func(ctx *moon.Context) error {
 			downstreamRan = true
 			return ctx.Write(http.StatusOK, "downstream")
@@ -131,12 +129,12 @@ func TestNew_DoesNotContinueChain(t *testing.T) {
 	require.Empty(t, body)
 }
 
-func TestNew_NilProbePanics(t *testing.T) {
-	require.Panics(t, func() { New(WithProbe(nil)) })
+func TestWithProbe_NilPanics(t *testing.T) {
+	require.Panics(t, func() { New().WithProbe(nil) })
 }
 
-func TestNew_NilResponsePanics(t *testing.T) {
-	require.Panics(t, func() { New(WithResponse(nil)) })
+func TestWithResponse_NilPanics(t *testing.T) {
+	require.Panics(t, func() { New().WithResponse(nil) })
 }
 
 func TestEndpoints(t *testing.T) {

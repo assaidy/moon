@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
+func TestHandle(t *testing.T) {
 	errWrapped := errors.New("boom")
 
 	testCases := []struct {
@@ -44,7 +44,7 @@ func TestNew(t *testing.T) {
 			predicateRan := false
 			wrappedRan := false
 
-			wrapped := New(
+			mw := New(
 				func(ctx *moon.Context) error {
 					wrappedRan = true
 					if tc.wantErr != nil {
@@ -58,7 +58,7 @@ func TestNew(t *testing.T) {
 				},
 			)
 
-			app.Use("/", wrapped)
+			app.Use("/", mw.Handle)
 			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "downstream")
 			})

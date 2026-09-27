@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
+func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name        string
-		optionFuncs []OptionFunc
+		middleware  *Middleware
 		handler     moon.Handler
 		header      string
 		wantStatus  int
@@ -23,7 +23,7 @@ func TestNew(t *testing.T) {
 	}{
 		{
 			name:        "default header",
-			optionFuncs: nil,
+			middleware:  nil,
 			handler:     nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,
@@ -31,7 +31,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name:        "custom header",
-			optionFuncs: []OptionFunc{WithHeader("X-Took")},
+			middleware:  New().WithHeader("X-Took"),
 			handler:     nil,
 			header:      "X-Took",
 			wantStatus:  http.StatusOK,
@@ -39,9 +39,9 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "skipped request omits header",
-			optionFuncs: []OptionFunc{WithSkip(func(ctx *moon.Context) bool {
+			middleware: New().WithSkip(func(ctx *moon.Context) bool {
 				return true
-			})},
+			}),
 			handler:     nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,
@@ -49,17 +49,17 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "non-skipped request keeps header",
-			optionFuncs: []OptionFunc{WithSkip(func(ctx *moon.Context) bool {
+			middleware: New().WithSkip(func(ctx *moon.Context) bool {
 				return false
-			})},
+			}),
 			handler:     nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,
 			wantPresent: true,
 		},
 		{
-			name:        "header set on error",
-			optionFuncs: nil,
+			name:       "header set on error",
+			middleware: nil,
 			handler: func(ctx *moon.Context) error {
 				return errors.New("boom")
 			},
@@ -78,8 +78,13 @@ func TestNew(t *testing.T) {
 				}
 			}
 
+			mw := tc.middleware
+			if mw == nil {
+				mw = New()
+			}
+
 			app := moon.New()
-			app.Use("/", New(tc.optionFuncs...))
+			app.Use("/", mw.Handle)
 			app.Map(http.MethodGet, "/timed", handler)
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/timed", nil))

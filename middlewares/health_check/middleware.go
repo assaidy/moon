@@ -8,18 +8,18 @@
 //
 // The most common usage is registering the built-in endpoints:
 //
-//	app.MapGet(health_check.LivenessEndpoint, health_check.New())
-//	app.MapGet(health_check.ReadinessEndpoint, health_check.New())
-//	app.MapGet(health_check.StartupEndpoint, health_check.New())
+//	app.Map(http.MethodGet, health_check.LivenessEndpoint, health_check.New().Handle)
+//	app.Map(http.MethodGet, health_check.ReadinessEndpoint, health_check.New().Handle)
+//	app.Map(http.MethodGet, health_check.StartupEndpoint, health_check.New().Handle)
 //
 // with a probe config deciding when the endpoint reports unhealthy:
 //
-//	app.MapGet(health_check.ReadinessEndpoint, health_check.New(
-//		health_check.WithProbe(func(ctx *moon.Context) bool {
+//	app.Map(http.MethodGet, health_check.ReadinessEndpoint, health_check.New().WithProbe(
+//		func(ctx *moon.Context) bool {
 //			err := db.Ping()
 //			return err == nil
-//		}),
-//	))
+//		},
+//	).Handle)
 package health_check
 
 import (
@@ -28,44 +28,41 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// New returns a handler that runs a probe and renders its result. It runs
-// the probe (see [WithProbe]) and passes the outcome to the response func
-// (see [WithResponse]).
-//
-// Default behavior: the probe reports ok, and the response writes
-// 200 OK when it succeeds or 503 Service Unavailable when it fails.
-func New(optionFuncs ...OptionFunc) moon.Handler {
-	opts := options{
-		probe:    defaultProbe,
-		response: defaultResponse,
-	}
-	for _, of := range optionFuncs {
-		of(&opts)
-	}
-
-	return func(ctx *moon.Context) error {
-		return opts.response(ctx, opts.probe(ctx))
-	}
-}
-
-type options struct {
+// Middleware runs a probe and renders its result. Use [New] to construct it
+// with defaults, chain [Middleware.WithProbe] and [Middleware.WithResponse]
+// to configure it, then register [Middleware.Handle] as a terminal endpoint.
+type Middleware struct {
 	probe    func(ctx *moon.Context) bool
 	response func(ctx *moon.Context, ok bool) error
 }
 
-// OptionFunc configures the middleware. Pass option funcs to [New].
-type OptionFunc func(opts *options)
+// New returns a middleware that runs a probe and renders its result. Chain
+// [Middleware.WithProbe] and [Middleware.WithResponse] to configure it, then
+// register [Middleware.Handle] as a terminal endpoint:
+//
+//	app.Map(http.MethodGet, "/healthz", New().Handle)
+//
+// It runs the probe (see [Middleware.WithProbe]) and passes the outcome to
+// the response func (see [Middleware.WithResponse]).
+//
+// Default behavior: the probe reports ok, and the response writes
+// 200 OK when it succeeds or 503 Service Unavailable when it fails.
+func New() *Middleware {
+	return &Middleware{
+		probe:    defaultProbe,
+		response: defaultResponse,
+	}
+}
 
 // WithProbe sets the probe deciding whether the endpoint reports healthy:
-// true means ok, false means unhealthy. It panics if f is nil.
+// true means ok, false means unhealthy. It panics if f is nil. It returns
+// the same middleware for chaining.
 //
 // Default: always reports ok (true).
-func WithProbe(f func(ctx *moon.Context) bool) OptionFunc {
+func (me *Middleware) WithProbe(f func(ctx *moon.Context) bool) *Middleware {
 	moon.Assert(f != nil, "probe func cannot be nil")
-
-	return func(opts *options) {
-		opts.probe = f
-	}
+	me.probe = f
+	return me
 }
 
 // defaultProbe always reports ok (true).
@@ -75,16 +72,14 @@ func defaultProbe(_ *moon.Context) bool {
 
 // WithResponse sets the func rendering the probe result; ok is what the
 // probe returned. Returning an error hands it to the error handler.
-// It panics if f is nil.
+// It panics if f is nil. It returns the same middleware for chaining.
 //
 // Default: 200 OK when ok, 503 Service Unavailable otherwise. When writing
 // your own response, never write body bytes if the request method is HEAD.
-func WithResponse(f func(ctx *moon.Context, ok bool) error) OptionFunc {
+func (me *Middleware) WithResponse(f func(ctx *moon.Context, ok bool) error) *Middleware {
 	moon.Assert(f != nil, "response func cannot be nil")
-
-	return func(opts *options) {
-		opts.response = f
-	}
+	me.response = f
+	return me
 }
 
 // defaultResponse writes 200 OK when ok, 503 Service Unavailable otherwise.
@@ -95,6 +90,11 @@ func defaultResponse(ctx *moon.Context, ok bool) error {
 		ctx.SetStatusCode(http.StatusServiceUnavailable)
 	}
 	return nil
+}
+
+// Handle runs the probe and renders its result with the response func.
+func (me *Middleware) Handle(ctx *moon.Context) error {
+	return me.response(ctx, me.probe(ctx))
 }
 
 // Built-in endpoint paths for the common probe registrations.

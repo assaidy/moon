@@ -67,16 +67,6 @@ func (me *App) RegisterRequestLoggingEntry(entry RequestLoggingEntry) {
 	me.registeredRequestLoggingEntries = append(me.registeredRequestLoggingEntries, entry)
 }
 
-// RegisterRequestLoggingEntry registers the entry on the current request's
-// app. See [App.RegisterRequestLoggingEntry].
-//
-// Its main use is letting middlewares register their own entries. Register
-// once per middleware (e.g. with [sync.Once]): registering the same key
-// twice panics.
-func (me *Context) RegisterRequestLoggingEntry(entry RequestLoggingEntry) {
-	me.app.RegisterRequestLoggingEntry(entry)
-}
-
 const requestHandlingStartTimeLocalKey = "moon.request_handling_start_time"
 
 func setRequestHandlingStartTimeLocal(ctx *Context) {

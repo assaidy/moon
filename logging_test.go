@@ -145,18 +145,3 @@ func TestLogRequest_Entries(t *testing.T) {
 	require.Equal(t, "201", attrs["status"])
 	require.Equal(t, "v", attrs["custom"])
 }
-
-func TestContextRegisterRequestLoggingEntry(t *testing.T) {
-	logs := &captureLogHandler{}
-	app := testLoggedApp(logs)
-	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
-		ctx.RegisterRequestLoggingEntry(RequestLoggingEntry{
-			Key:       "from-ctx",
-			ValueFunc: func(ctx *Context) string { return "v" },
-		})
-		return nil
-	})
-
-	app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
-	require.Equal(t, "v", loggedAttrs(t, logs)["from-ctx"])
-}

@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNew(t *testing.T) {
+func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name         string
-		optionFuncs  []OptionFunc
+		middleware   *Middleware
 		incoming     string
 		sendHeader   bool
 		header       string
@@ -26,7 +26,7 @@ func TestNew(t *testing.T) {
 	}{
 		{
 			name:         "reuses valid incoming",
-			optionFuncs:  nil,
+			middleware:   nil,
 			incoming:     "abc-123",
 			sendHeader:   true,
 			header:       "X-Request-ID",
@@ -34,7 +34,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name:         "accepts inside spaces",
-			optionFuncs:  nil,
+			middleware:   nil,
 			incoming:     "ab cd",
 			sendHeader:   true,
 			header:       "X-Request-ID",
@@ -52,34 +52,34 @@ func TestNew(t *testing.T) {
 			wantGenLen: 43,
 		},
 		{
-			name:        "generates when incoming invalid",
-			optionFuncs: nil,
-			incoming:    "a\x7fb",
-			sendHeader:  true,
-			header:      "X-Request-ID",
-			wantGenLen:  43,
+			name:       "generates when incoming invalid",
+			middleware: nil,
+			incoming:   "a\x7fb",
+			sendHeader: true,
+			header:     "X-Request-ID",
+			wantGenLen: 43,
 		},
 		{
 			name:         "trims generated value",
-			optionFuncs:  []OptionFunc{WithGenerator(func() string { return "  xyz  " })},
+			middleware:   New().WithGenerator(func() string { return "  xyz  " }),
 			header:       "X-Request-ID",
 			wantResponse: "xyz",
 		},
 		{
 			name:         "custom generator",
-			optionFuncs:  []OptionFunc{WithGenerator(func() string { return "fixed-id" })},
+			middleware:   New().WithGenerator(func() string { return "fixed-id" }),
 			header:       "X-Request-ID",
 			wantResponse: "fixed-id",
 		},
 		{
-			name:        "falls back after invalid generator",
-			optionFuncs: []OptionFunc{WithGenerator(func() string { return "\x01" })},
-			header:      "X-Request-ID",
-			wantGenLen:  43,
+			name:       "falls back after invalid generator",
+			middleware: New().WithGenerator(func() string { return "\x01" }),
+			header:     "X-Request-ID",
+			wantGenLen: 43,
 		},
 		{
 			name:         "custom header",
-			optionFuncs:  []OptionFunc{WithHeader("X-Correlation-ID")},
+			middleware:   New().WithHeader("X-Correlation-ID"),
 			incoming:     "corr-1",
 			sendHeader:   true,
 			header:       "X-Correlation-ID",
@@ -87,9 +87,9 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "skipped request sets nothing",
-			optionFuncs: []OptionFunc{WithSkip(func(ctx *moon.Context) bool {
+			middleware: New().WithSkip(func(ctx *moon.Context) bool {
 				return true
-			})},
+			}),
 			incoming:    "abc-123",
 			sendHeader:  true,
 			header:      "X-Request-ID",
@@ -101,8 +101,13 @@ func TestNew(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var fromCtx string
 
+			mw := tc.middleware
+			if mw == nil {
+				mw = New()
+			}
+
 			app := moon.New()
-			app.Use("/", New(tc.optionFuncs...))
+			app.Use("/", mw.Handle)
 			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				fromCtx = GetFromContext(ctx)
 				return ctx.Write(http.StatusOK, "hello")
@@ -135,23 +140,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-// The entry registers once no matter how many requests one instance serves.
-func TestRegistersLoggingEntryOnce(t *testing.T) {
-	app := moon.New()
-	app.Use("/", New(
-		WithRequestLoggingEntry(true),
-		WithRequestLoggingEntryKey("test-request-id-once"),
-	))
-	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
-		return ctx.Write(http.StatusOK, "hello")
-	})
-
-	require.NotPanics(t, func() {
-		app.Test(httptest.NewRequest(http.MethodGet, "/resource", nil))
-		app.Test(httptest.NewRequest(http.MethodGet, "/resource", nil))
-	})
-}
-
 // The middleware does not trim the incoming header itself: the HTTP server
 // strips edge whitespace while parsing. Pinned here so the premise in [New]
 // stays true.
@@ -176,15 +164,25 @@ func (h *captureLogHandler) Handle(_ context.Context, r slog.Record) error {
 func (h *captureLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *captureLogHandler) WithGroup(string) slog.Handler      { return h }
 
-func TestLogsRequestIdEntry(t *testing.T) {
-	const entryKey = "test-request-id-logged"
+func TestGetRequestLoggingEntry(t *testing.T) {
+	entry := New().GetRequestLoggingEntry()
+	require.Equal(t, "request_id", entry.Key)
+	require.NotNil(t, entry.ValueFunc)
 
+	custom := New().
+		WithRequestLoggingEntryKey("correlation_id").
+		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context) string { return "v" }).
+		GetRequestLoggingEntry()
+	require.Equal(t, "correlation_id", custom.Key)
+	require.NotNil(t, custom.ValueFunc)
+}
+
+func TestLogsRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
 	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
-	app.Use("/", New(
-		WithRequestLoggingEntry(true),
-		WithRequestLoggingEntryKey(entryKey),
-	))
+	mw := New()
+	app.RegisterRequestLoggingEntry(mw.GetRequestLoggingEntry())
+	app.Use("/", mw.Handle)
 	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		return ctx.Write(http.StatusOK, "hello")
 	})
@@ -199,7 +197,7 @@ func TestLogsRequestIdEntry(t *testing.T) {
 	var logged string
 	found := false
 	logs.records[0].Attrs(func(a slog.Attr) bool {
-		if a.Key == entryKey {
+		if a.Key == "request_id" {
 			logged, found = a.Value.Any().(string), true
 			return false
 		}
