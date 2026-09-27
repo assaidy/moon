@@ -425,7 +425,7 @@ func TestContext_Body(t *testing.T) {
 		app.Test(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello world")))
 	})
 
-	t.Run("Read twice second empty", func(t *testing.T) {
+	t.Run("Read twice returns same bytes", func(t *testing.T) {
 		app := New()
 		app.Use("/", func(ctx *Context) error {
 			first, err := ctx.Read()
@@ -434,11 +434,50 @@ func TestContext_Body(t *testing.T) {
 
 			second, err := ctx.Read()
 			require.NoError(t, err)
-			require.Empty(t, second)
+			require.Equal(t, "hello", string(second))
 			return nil
 		})
 
 		app.Test(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello")))
+	})
+
+	t.Run("Read over limit errors", func(t *testing.T) {
+		app := New().WithReadLimit(5)
+		app.Use("/", func(ctx *Context) error {
+			_, err := ctx.Read()
+			require.Error(t, err)
+			return nil
+		})
+
+		app.Test(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello world")))
+	})
+
+	t.Run("Declared over limit rejected without running handlers", func(t *testing.T) {
+		app := New().WithReadLimit(5)
+		ran := false
+		app.Use("/", func(ctx *Context) error {
+			ran = true
+			return nil
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hi"))
+		req.ContentLength = 100
+		resp := app.Test(req)
+		require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+		require.False(t, ran)
+	})
+
+	t.Run("Declared at limit passes to handlers", func(t *testing.T) {
+		app := New().WithReadLimit(5)
+		app.Use("/", func(ctx *Context) error {
+			raw, err := ctx.Read()
+			require.NoError(t, err)
+			require.Equal(t, "hello", string(raw))
+			return nil
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello")))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
 	t.Run("ReadAs json ok", func(t *testing.T) {
@@ -525,6 +564,55 @@ func TestContext_Body(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
 		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	})
+}
+
+type stubReadCloser struct {
+	data []byte
+	err  error
+}
+
+func (s *stubReadCloser) Read(p []byte) (int, error) {
+	if len(s.data) == 0 {
+		if s.err != nil {
+			return 0, s.err
+		}
+		return 0, io.EOF
+	}
+	n := copy(p, s.data)
+	s.data = s.data[n:]
+	return n, nil
+}
+
+func (s *stubReadCloser) Close() error { return nil }
+
+func TestRequestBodyWrapper(t *testing.T) {
+	t.Run("limit error maps to 413", func(t *testing.T) {
+		w := httpRequestBodyReaderWrapper{body: &stubReadCloser{err: &http.MaxBytesError{Limit: 5}}}
+		_, err := w.Read(make([]byte, 8))
+		require.ErrorIs(t, err, ErrRequestEntityTooLarge)
+	})
+
+	t.Run("other errors pass through", func(t *testing.T) {
+		boom := errors.New("boom")
+		w := httpRequestBodyReaderWrapper{body: &stubReadCloser{err: boom}}
+		_, err := w.Read(make([]byte, 8))
+		require.ErrorIs(t, err, boom)
+	})
+
+	t.Run("clean reads pass through", func(t *testing.T) {
+		w := httpRequestBodyReaderWrapper{body: &stubReadCloser{data: []byte("hello")}}
+		raw, err := io.ReadAll(w)
+		require.NoError(t, err)
+		require.Equal(t, "hello", string(raw))
+	})
+
+	t.Run("Read allocates nothing", func(t *testing.T) {
+		w := httpRequestBodyReaderWrapper{body: &stubReadCloser{data: []byte("hello world hello world")}}
+		buf := make([]byte, 8)
+		require.Zero(t, testing.AllocsPerRun(100, func() {
+			_, _ = w.Read(buf)
+		}))
 	})
 }
 

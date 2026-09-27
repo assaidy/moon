@@ -32,6 +32,7 @@ func TestAppOptions_Defaults(t *testing.T) {
 	require.False(t, app.serviceStopParallel)
 	require.Equal(t, time.Duration(0), app.shutdownTimeout)
 	require.False(t, app.passLocalsToContext)
+	require.Equal(t, 4*1024*1024, app.readLimit)
 	require.NotNil(t, app.httpServer)
 	require.NotNil(t, app.dependencies)
 	require.Empty(t, app.services)
@@ -201,6 +202,13 @@ func TestAppOptions_WithShutdownTimeout(t *testing.T) {
 	require.Equal(t, time.Second, app.shutdownTimeout)
 	require.Panics(t, func() { New().WithShutdownTimeout(0) })
 	require.Panics(t, func() { New().WithShutdownTimeout(-time.Second) })
+}
+
+func TestAppOptions_WithReadLimit(t *testing.T) {
+	app := New().WithReadLimit(1024)
+	require.Equal(t, 1024, app.readLimit)
+	require.Panics(t, func() { New().WithReadLimit(0) })
+	require.Panics(t, func() { New().WithReadLimit(-1) })
 }
 
 func TestAppOptions_WithPassLocalsToContext(t *testing.T) {

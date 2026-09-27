@@ -156,7 +156,7 @@ func (me *Middleware) Handle(ctx *moon.Context) error {
 // GetFromContext returns the request ID assigned by the middleware,
 // or "" when the middleware was skipped or never ran.
 func GetFromContext(ctx *moon.Context) string {
-	return moon.IgnoreSecond(ctx.GetLocal[string](localKey))
+	return moon.TakeFirst(ctx.GetLocal[string](localKey))
 }
 
 // sanitizeRequestId returns requestId when valid; otherwise it trims and

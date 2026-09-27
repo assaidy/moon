@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -34,12 +37,15 @@ type Context struct {
 	// request as raw and the buffered response is discarded at flush.
 	response *httpResponseWriterWrapper
 
-	params           map[string]string
-	handlers         []Handler
-	nextHandlerIndex int
-	pattern          string
-	locals           map[string]any
-	app              *App
+	readRequestBodyOnce  sync.Once
+	requestBodyReadError error
+	requestBodyBuffer    *bytes.Buffer
+	params               map[string]string
+	handlers             []Handler
+	nextHandlerIndex     int
+	pattern              string
+	locals               map[string]any
+	app                  *App
 }
 
 func newContext(
@@ -51,15 +57,11 @@ func newContext(
 	app *App,
 ) *Context {
 	ctx := new(Context)
-	ctx.response = new(httpResponseWriterWrapper{
-		// TODO: consider using a memory pool for buffer
-		body: new(bytes.Buffer),
-	})
-	ctx.response.tracker = new(httpResponseWriterTracker{
-		writer:     w,
-		statusCode: &ctx.response.statusCode,
-	})
+	ctx.response = &httpResponseWriterWrapper{bodyBuffer: bodyBufferPool.Get().(*bytes.Buffer)}
+	ctx.response.tracker = &httpResponseWriterTracker{writer: w, statusCode: &ctx.response.statusCode}
 	ctx.request = r
+	ctx.request.Body = httpRequestBodyReaderWrapper{body: http.MaxBytesReader(w, r.Body, int64(app.readLimit))}
+	ctx.requestBodyBuffer = bodyBufferPool.Get().(*bytes.Buffer)
 	ctx.pattern = pattern
 	ctx.params = params
 	ctx.handlers = handlers
@@ -68,13 +70,33 @@ func newContext(
 	return ctx
 }
 
+var bodyBufferPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+type httpRequestBodyReaderWrapper struct {
+	body io.ReadCloser
+}
+
+var _ io.ReadCloser = httpRequestBodyReaderWrapper{}
+
+func (me httpRequestBodyReaderWrapper) Close() error {
+	return me.body.Close()
+}
+
+func (me httpRequestBodyReaderWrapper) Read(p []byte) (n int, err error) {
+	n, err = me.body.Read(p)
+	if err != nil && TakeSecond(errors.AsType[*http.MaxBytesError](err)) {
+		err = ErrRequestEntityTooLarge
+	}
+	return n, err
+}
+
 type httpResponseWriterWrapper struct {
 	tracker    *httpResponseWriterTracker
 	statusCode int
-	body       *bytes.Buffer
+	bodyBuffer *bytes.Buffer
 }
 
-var _ http.ResponseWriter = new(httpResponseWriterWrapper)
+var _ http.ResponseWriter = (*httpResponseWriterWrapper)(nil)
 
 // Header implements [http.ResponseWriter]. It writes directly to the
 // underlying writer; headers alone never flush, so it is safe to set them
@@ -90,7 +112,7 @@ func (me *httpResponseWriterWrapper) Write(data []byte) (int, error) {
 	if me.statusCode == 0 {
 		me.statusCode = 200
 	}
-	return me.body.Write(data)
+	return me.bodyBuffer.Write(data)
 }
 
 // WriteHeader implements [http.ResponseWriter]. It records the status code
@@ -120,7 +142,7 @@ func (me *httpResponseWriterWrapper) flush() {
 		return
 	}
 	me.tracker.WriteHeader(me.statusCode)
-	me.tracker.Write(me.body.Bytes())
+	me.tracker.Write(me.bodyBuffer.Bytes())
 }
 
 type httpResponseWriterTracker struct {
@@ -129,9 +151,9 @@ type httpResponseWriterTracker struct {
 	statusCode *int
 }
 
-var _ http.ResponseWriter = new(httpResponseWriterTracker)
-var _ http.Flusher = new(httpResponseWriterTracker)
-var _ http.Hijacker = new(httpResponseWriterTracker)
+var _ http.ResponseWriter = (*httpResponseWriterTracker)(nil)
+var _ http.Flusher = (*httpResponseWriterTracker)(nil)
+var _ http.Hijacker = (*httpResponseWriterTracker)(nil)
 
 // Header implements [http.ResponseWriter] on the raw path. Any call marks the
 // request as raw and the buffered response is discarded at flush.
@@ -276,23 +298,54 @@ func (me *Context) AddHeader(key, value string) {
 	me.response.Header().Add(key, value)
 }
 
-// Read returns the full request body. It is empty when the request has no
-// body, and a second call returns empty because the body is consumed.
+// Read returns the full request body. Unlike a raw read of the request body,
+// it consumes the entire body and caches it, so repeated calls return the
+// same bytes. It is empty when the request has no body. This is enough for
+// most cases.
+//
+// Because the whole body is buffered in memory, do not use it for unbounded
+// or very large bodies: an infinite stream hangs forever waiting for EOF,
+// and a large upload spikes memory. Stream such bodies directly from the
+// raw request body instead (see [Context.GetHttpRequest]).
+//
+// Bodies larger than [App.WithReadLimit] fail with [ErrRequestEntityTooLarge].
+//
+// The returned slice aliases a pooled buffer that is recycled after the
+// handler chain finishes: copy it first if you need it afterwards.
 func (me *Context) Read() ([]byte, error) {
-	// TODO: buffer body to allow multiple reads
-	var buffer bytes.Buffer
-	_, err := buffer.ReadFrom(me.request.Body)
-	return buffer.Bytes(), err
+	me.readRequestBodyOnce.Do(func() {
+		me.requestBodyReadError = TakeSecond(me.requestBodyBuffer.ReadFrom(me.request.Body))
+	})
+	return me.requestBodyBuffer.Bytes(), me.requestBodyReadError
 }
 
 // ReadAs reads the body and decodes it into out. It returns the decode
-// error when the body does not match the codec.
+// error when the body does not match the codec, or [ErrRequestEntityTooLarge]
+// when the body exceeds [App.WithReadLimit].
 func (me *Context) ReadAs(codec Codec, out any) error {
 	raw, err := me.Read()
 	if err != nil {
 		return err
 	}
 	return codec.Decode(raw, out)
+}
+
+// ReadJson reads the body and decodes it from JSON into out.
+// See [Context.ReadAs].
+func (me *Context) ReadJson(out any) error {
+	return me.ReadAs(CodecJson, out)
+}
+
+// ReadXml reads the body and decodes it from XML into out.
+// See [Context.ReadAs].
+func (me *Context) ReadXml(out any) error {
+	return me.ReadAs(CodecXml, out)
+}
+
+// ReadMessagePack reads the body and decodes it from MessagePack into out.
+// See [Context.ReadAs].
+func (me *Context) ReadMessagePack(out any) error {
+	return me.ReadAs(CodecMessagePack, out)
 }
 
 // GetFormValue returns the first form value for key, searching the body
@@ -408,6 +461,27 @@ func (me *Context) WriteAs(statusCode int, codec Codec, value any) error {
 	return me.Write(statusCode, data)
 }
 
+// WriteJson encodes value as JSON, sets the matching Content-Type header,
+// and buffers the status code with the encoded body.
+// See [Context.WriteAs].
+func (me *Context) WriteJson(statusCode int, value any) error {
+	return me.WriteAs(statusCode, CodecJson, value)
+}
+
+// WriteXml encodes value as XML, sets the matching Content-Type header,
+// and buffers the status code with the encoded body.
+// See [Context.WriteAs].
+func (me *Context) WriteXml(statusCode int, value any) error {
+	return me.WriteAs(statusCode, CodecXml, value)
+}
+
+// WriteMessagePack encodes value as MessagePack, sets the matching
+// Content-Type header, and buffers the status code with the encoded body.
+// See [Context.WriteAs].
+func (me *Context) WriteMessagePack(statusCode int, value any) error {
+	return me.WriteAs(statusCode, CodecMessagePack, value)
+}
+
 // Next invokes the next handler in the chain and returns its error.
 // It returns nil when the chain is exhausted.
 func (me *Context) Next() error {
@@ -426,7 +500,7 @@ func (me *Context) IsFinal() bool {
 	return me.nextHandlerIndex == len(me.handlers)
 }
 
-var _ context.Context = new(Context)
+var _ context.Context = (*Context)(nil)
 
 // Deadline implements [context.Context].
 func (me *Context) Deadline() (deadline time.Time, ok bool) {

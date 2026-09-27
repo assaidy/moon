@@ -42,6 +42,7 @@ type App struct {
 	serviceStopParallel  bool
 	shutdownTimeout      time.Duration
 	passLocalsToContext  bool
+	readLimit            int
 }
 
 // New creates an App with sensible defaults and registers the root handler.
@@ -57,6 +58,7 @@ func New() *App {
 		errorHandler:         DefaultErrorHandler,
 		preforkChildrenCount: runtime.NumCPU(),
 		preforkRetriesCount:  -1,
+		readLimit:            4 << 20, // 4MB
 	}
 
 	app.registerReservedRequestLoggingEntries()
@@ -173,7 +175,7 @@ func (me *App) WithIdleTimeout(d time.Duration) *App {
 // It does not limit the size of the request body.
 // It returns the same app for chaining.
 //
-// Default: [http.DefaultMaxHeaderBytes]
+// Default: [http.DefaultMaxHeaderBytes] (1MB)
 func (me *App) WithMaxHeaderBytes(i int) *App {
 	Assert(i > 0)
 	me.httpServer.MaxHeaderBytes = i
@@ -186,7 +188,7 @@ func (me *App) WithMaxHeaderBytes(i int) *App {
 // header lines are counted separately.
 // It returns the same app for chaining.
 //
-// Default: [http.DefaultMaxHeaderValueCount]
+// Default: [http.DefaultMaxHeaderValueCount] (500)
 func (me *App) WithMaxHeaderValueCount(i int) *App {
 	Assert(i > 0)
 	me.httpServer.MaxHeaderValueCount = i
@@ -334,6 +336,19 @@ func (me *App) WithParallelServiceStop() *App {
 func (me *App) WithShutdownTimeout(d time.Duration) *App {
 	Assert(d > 0)
 	me.shutdownTimeout = d
+	return me
+}
+
+// WithReadLimit sets the maximum number of bytes accepted for a request
+// body. Reads past the limit fail, both via [Context.Read] and raw reads of
+// the request body. Bodies declaring more than the limit are rejected without
+// reading them. Over-limit failures are reported as [ErrRequestEntityTooLarge] (413).
+// It returns the same app for chaining.
+//
+// Default: 4MB
+func (me *App) WithReadLimit(n int) *App {
+	Assert(n > 0)
+	me.readLimit = n
 	return me
 }
 

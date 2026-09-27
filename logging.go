@@ -74,7 +74,7 @@ func setRequestHandlingStartTimeLocal(ctx *Context) {
 }
 
 func getRequestHandlingStartTimeLocal(ctx *Context) time.Time {
-	return IgnoreSecond(ctx.GetLocal[time.Time](requestHandlingStartTimeLocalKey))
+	return TakeFirst(ctx.GetLocal[time.Time](requestHandlingStartTimeLocalKey))
 }
 
 const requestHandlingErrorLocalKey = "moon.request_handling_error"
@@ -86,5 +86,5 @@ func setRequestHandlingErrorLocal(ctx *Context, err error) {
 }
 
 func getRequestHandlingErrorLocal(ctx *Context) error {
-	return IgnoreSecond(ctx.GetLocal[error](requestHandlingErrorLocalKey))
+	return TakeFirst(ctx.GetLocal[error](requestHandlingErrorLocalKey))
 }

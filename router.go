@@ -261,8 +261,15 @@ func (me *App) processRequest(
 	ctx := newContext(w, r, pattern, params, handlers, me)
 	setRequestHandlingStartTimeLocal(ctx)
 
-	// first handler/middleware that will execute all handlers
-	err := ctx.Next()
+	// Bodies declaring more than the read limit are rejected without reading
+	// them. Unknown sizes are enforced while reading instead.
+	var err error
+	if r.ContentLength > int64(me.readLimit) {
+		err = ErrRequestEntityTooLarge
+	} else {
+		// first handler/middleware that will execute all handlers
+		err = ctx.Next()
+	}
 	if err != nil {
 		me.errorHandler(ctx, err)
 		setRequestHandlingErrorLocal(ctx, err)
@@ -272,6 +279,11 @@ func (me *App) processRequest(
 	if me.enableRequestLogging {
 		me.logRequest(ctx)
 	}
+
+	ctx.requestBodyBuffer.Reset()
+	bodyBufferPool.Put(ctx.requestBodyBuffer)
+	ctx.response.bodyBuffer.Reset()
+	bodyBufferPool.Put(ctx.response.bodyBuffer)
 }
 
 func isValidHttpMethod(method string) bool {
