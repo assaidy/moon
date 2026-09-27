@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -598,6 +599,12 @@ func TestRequestBodyWrapper(t *testing.T) {
 		w := httpRequestBodyReaderWrapper{body: &stubReadCloser{err: boom}}
 		_, err := w.Read(make([]byte, 8))
 		require.ErrorIs(t, err, boom)
+	})
+
+	t.Run("timeout error maps to 408", func(t *testing.T) {
+		w := httpRequestBodyReaderWrapper{body: &stubReadCloser{err: &net.DNSError{Err: "timeout", IsTimeout: true}}}
+		_, err := w.Read(make([]byte, 8))
+		require.ErrorIs(t, err, ErrRequestTimeout)
 	})
 
 	t.Run("clean reads pass through", func(t *testing.T) {

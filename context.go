@@ -84,8 +84,14 @@ func (me httpRequestBodyReaderWrapper) Close() error {
 
 func (me httpRequestBodyReaderWrapper) Read(p []byte) (n int, err error) {
 	n, err = me.body.Read(p)
-	if err != nil && TakeSecond(errors.AsType[*http.MaxBytesError](err)) {
-		err = ErrRequestEntityTooLarge
+	if err == nil || err == io.EOF {
+		return n, err
+	}
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		return n, ErrRequestEntityTooLarge
+	}
+	if err, ok := errors.AsType[net.Error](err); ok && err.Timeout() {
+		return n, ErrRequestTimeout
 	}
 	return n, err
 }
@@ -309,6 +315,7 @@ func (me *Context) AddHeader(key, value string) {
 // raw request body instead (see [Context.GetHttpRequest]).
 //
 // Bodies larger than [App.WithReadLimit] fail with [ErrRequestEntityTooLarge].
+// Reads that time out fail with [ErrRequestTimeout].
 //
 // The returned slice aliases a pooled buffer that is recycled after the
 // handler chain finishes: copy it first if you need it afterwards.
@@ -320,8 +327,9 @@ func (me *Context) Read() ([]byte, error) {
 }
 
 // ReadAs reads the body and decodes it into out. It returns the decode
-// error when the body does not match the codec, or [ErrRequestEntityTooLarge]
-// when the body exceeds [App.WithReadLimit].
+// error when the body does not match the codec, [ErrRequestEntityTooLarge]
+// when the body exceeds [App.WithReadLimit], or [ErrRequestTimeout] when
+// the read times out.
 func (me *Context) ReadAs(codec Codec, out any) error {
 	raw, err := me.Read()
 	if err != nil {
