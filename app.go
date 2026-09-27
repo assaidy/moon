@@ -21,8 +21,7 @@ type App struct {
 	routes                          []Route
 	state                           sync.Map
 	dependencies                    map[reflect.Type]any
-	services                        map[reflect.Type]any
-	startedServices                 map[reflect.Type]any
+	services                        []serviceInfo
 	registeredRequestLoggingEntries []RequestLoggingEntry
 	requestLoggingEntriesMutex      sync.RWMutex
 
@@ -54,8 +53,6 @@ func New() *App {
 	app := &App{
 		httpServer:           new(http.Server),
 		dependencies:         make(map[reflect.Type]any),
-		services:             make(map[reflect.Type]any),
-		startedServices:      make(map[reflect.Type]any),
 		logger:               slog.Default(),
 		errorHandler:         DefaultErrorHandler,
 		preforkChildrenCount: runtime.NumCPU(),

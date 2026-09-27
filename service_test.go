@@ -69,18 +69,12 @@ func TestService_AddGet(t *testing.T) {
 		})
 	})
 
-	t.Run("replace same type", func(t *testing.T) {
+	t.Run("duplicate type panics", func(t *testing.T) {
 		app := New()
-		first, second := newStubA(), newStubA()
-		app.AddService(first)
-		app.AddService(second)
-		require.NoError(t, app.StartServices())
-
-		app.Use("/", func(ctx *Context) error {
-			require.Same(t, second, ctx.GetService[*stubServiceA]())
-			return nil
+		app.AddService(newStubA())
+		require.PanicsWithValue(t, "service of type: *moon.stubServiceA is already registered", func() {
+			app.AddService(newStubA())
 		})
-		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
 	})
 
 	t.Run("get before start panics", func(t *testing.T) {

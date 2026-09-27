@@ -2,8 +2,10 @@ package moon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -29,16 +31,25 @@ type Service interface {
 	// TODO: create a utility to track availability inside services.
 }
 
-// TODO: add per-service settings overriding the global ones (e.g. start/stop timeouts)
+type serviceInfo struct {
+	type_   reflect.Type
+	started bool
+	value   any
+}
 
 // AddService registers a service that becomes retrievable through
 // [Context.GetService] only after it has been successfully started
 // (see [App.StartServices]).
-// If a service of the same type is already registered, it is replaced.
+// It panics if a service of the same type is already registered.
 // The service must not be nil.
 func (me *App) AddService[T Service](s T) {
 	Assert(!isNil(s), "service cannot be nil")
-	me.services[reflect.TypeOf(s)] = s
+	t := reflect.TypeOf(s)
+	Assert(
+		slices.IndexFunc(me.services, func(s serviceInfo) bool { return s.type_ == t }) == -1,
+		fmt.Sprintf("service of type: %s is already registered", t.String()),
+	)
+	me.services = append(me.services, serviceInfo{type_: t, value: s})
 }
 
 // GetService returns the started service for T (see [App.AddService] and
@@ -47,9 +58,11 @@ func (me *App) AddService[T Service](s T) {
 // registered but never successfully started.
 func (me *Context) GetService[T Service]() T {
 	t := reflect.TypeFor[T]()
-	s, ok := me.app.startedServices[t].(T)
-	Assert(ok, "service not found: "+t.String())
-	return s
+	i := slices.IndexFunc(me.app.services, func(s serviceInfo) bool { return s.type_ == t })
+	Assert(i != -1, "service not found: "+t.String())
+	s := me.app.services[i]
+	Assert(s.started, "service didn't start: "+t.String())
+	return s.value.(T)
 }
 
 // StartServices starts all registered services according to the configured
@@ -80,12 +93,12 @@ func (me *App) StartServices() error {
 }
 
 func (me *App) startServicesSequential() error {
-	for t, s := range me.services {
-		if err := me.startOneService(s.(Service)); err != nil {
+	for i, s := range me.services {
+		if err := me.startOneService(s.value.(Service)); err != nil {
 			me.StopServices()
 			return err
 		}
-		me.startedServices[t] = s
+		me.services[i].started = true
 	}
 
 	me.logger.Info("all services started")
@@ -96,13 +109,13 @@ func (me *App) startServicesParallel() error {
 	var wg errgroup.Group
 	var mu sync.Mutex
 
-	for t, s := range me.services {
+	for i, s := range me.services {
 		wg.Go(func() error {
-			if err := me.startOneService(s.(Service)); err != nil {
+			if err := me.startOneService(s.value.(Service)); err != nil {
 				return err
 			}
 			mu.Lock()
-			me.startedServices[t] = s
+			me.services[i].started = true
 			mu.Unlock()
 			return nil
 		})
@@ -153,22 +166,33 @@ func (me *App) StopServices() {
 	} else {
 		me.stopServicesSequential()
 	}
-
-	me.startedServices = make(map[reflect.Type]any, len(me.services))
 }
 
 func (me *App) stopServicesSequential() {
-	for _, s := range me.startedServices {
-		me.stopOneService(s.(Service))
+	for i, s := range me.services {
+		if s.started {
+			me.stopOneService(s.value.(Service))
+			me.services[i].started = false
+		}
 	}
 	me.logger.Info("all services stopped")
 }
 
 func (me *App) stopServicesParallel() {
 	var wg sync.WaitGroup
-	for _, s := range me.startedServices {
-		wg.Go(func() { me.stopOneService(s.(Service)) })
+	var mu sync.Mutex
+
+	for i, s := range me.services {
+		if s.started {
+			wg.Go(func() {
+				me.stopOneService(s.value.(Service))
+				mu.Lock()
+				me.services[i].started = false
+				mu.Unlock()
+			})
+		}
 	}
+
 	wg.Wait()
 	me.logger.Info("all services stopped")
 }
