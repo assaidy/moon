@@ -179,7 +179,7 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 
 func TestLogsRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
-	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
+	app := moon.New().WithLogger(slog.New(logs)).WithRequestLogging(true)
 	mw := New()
 	app.RegisterRequestLoggingEntry(mw.GetRequestLoggingEntry())
 	app.Use("/", mw.Handle)

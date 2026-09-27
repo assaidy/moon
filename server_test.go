@@ -47,7 +47,7 @@ func TestServer_IsPreforkChild(t *testing.T) {
 }
 
 func TestServer_StartServiceFailure(t *testing.T) {
-	app := New(WithListenAddress("127.0.0.1:0"))
+	app := New().WithListenAddress("127.0.0.1:0")
 	svc := newStubA()
 	svc.startErr = errors.New("start boom")
 	app.AddService(svc)
@@ -58,7 +58,7 @@ func TestServer_StartServiceFailure(t *testing.T) {
 
 func TestServer_StartShutdownLifecycle(t *testing.T) {
 	addr := freePort(t)
-	app := New(WithListenAddress(addr))
+	app := New().WithListenAddress(addr)
 	svc := newStubA()
 	app.AddService(svc)
 
@@ -87,7 +87,7 @@ func TestServer_GetListener(t *testing.T) {
 	})
 
 	t.Run("prefork binds", func(t *testing.T) {
-		app := New(WithPrefork(true))
+		app := New().WithPrefork(true)
 		l, err := app.getListener("127.0.0.1:0")
 		require.NoError(t, err)
 		require.NoError(t, l.Close())
@@ -121,7 +121,7 @@ func TestServer_Shutdown(t *testing.T) {
 	})
 
 	t.Run("with shutdown timeout", func(t *testing.T) {
-		app := New(WithShutdownTimeout(time.Second))
+		app := New().WithShutdownTimeout(time.Second)
 		svc := newStubA()
 		app.AddService(svc)
 		require.NoError(t, app.StartServices())
@@ -132,7 +132,7 @@ func TestServer_Shutdown(t *testing.T) {
 
 	t.Run("prefork child takes server path", func(t *testing.T) {
 		t.Setenv(preforkChildEnv, "1")
-		app := New(WithPrefork(true))
+		app := New().WithPrefork(true)
 		require.NoError(t, app.Shutdown())
 	})
 }

@@ -100,8 +100,8 @@ var (
 // [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
 // inspect or override them.
 // Use the [Context] Write methods to send the response.
-// Set it via [WithErrorHandler]. Request logging, when enabled via
-// [WithRequestLogging], runs after the handler and logs the error.
+// Set it via [App.WithErrorHandler]. Request logging, when enabled via
+// [App.WithRequestLogging], runs after the handler and logs the error.
 type ErrorHandler func(ctx *Context, err error)
 
 // DefaultErrorHandler writes an [Error] as JSON with its status code,

@@ -41,25 +41,23 @@ func TestAppOptions_Defaults(t *testing.T) {
 }
 
 func TestAppOptions_WithListenAddress(t *testing.T) {
-	app := New(WithListenAddress(":8080"))
+	app := New().WithListenAddress(":8080")
 	require.Equal(t, ":8080", app.listenAddress)
 }
 
 func TestAppOptions_WithLogger(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
-	app := New(WithLogger(logger))
+	app := New().WithLogger(logger)
 	require.Same(t, logger, app.logger)
-	require.Panics(t, func() { WithLogger(nil) })
+	require.Panics(t, func() { New().WithLogger(nil) })
 }
 
 func TestAppOptions_WithErrorHandler(t *testing.T) {
 	var captured error
-	app := New(
-		WithErrorHandler(func(ctx *Context, err error) {
-			captured = err
-			ctx.SetStatusCode(http.StatusTeapot)
-		}),
-	)
+	app := New().WithErrorHandler(func(ctx *Context, err error) {
+		captured = err
+		ctx.SetStatusCode(http.StatusTeapot)
+	})
 	sentinel := errors.New("boom")
 	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 		return sentinel
@@ -68,145 +66,145 @@ func TestAppOptions_WithErrorHandler(t *testing.T) {
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 	require.Equal(t, http.StatusTeapot, resp.StatusCode)
 	require.Equal(t, sentinel, captured)
-	require.Panics(t, func() { WithErrorHandler(nil) })
+	require.Panics(t, func() { New().WithErrorHandler(nil) })
 }
 
 func TestAppOptions_WithRequestLogging(t *testing.T) {
-	require.True(t, New(WithRequestLogging(true)).enableRequestLogging)
+	require.True(t, New().WithRequestLogging(true).enableRequestLogging)
 	require.False(t, New().enableRequestLogging)
 }
 
 func TestAppOptions_WithGeneralOptionsHandler(t *testing.T) {
-	require.False(t, New(WithGeneralOptionsHandler(true)).httpServer.DisableGeneralOptionsHandler)
-	require.True(t, New(WithGeneralOptionsHandler(false)).httpServer.DisableGeneralOptionsHandler)
+	require.False(t, New().WithGeneralOptionsHandler(true).httpServer.DisableGeneralOptionsHandler)
+	require.True(t, New().WithGeneralOptionsHandler(false).httpServer.DisableGeneralOptionsHandler)
 }
 
 func TestAppOptions_WithReadTimeout(t *testing.T) {
-	app := New(WithReadTimeout(time.Second))
+	app := New().WithReadTimeout(time.Second)
 	require.Equal(t, time.Second, app.httpServer.ReadTimeout)
-	require.Panics(t, func() { WithReadTimeout(0) })
-	require.Panics(t, func() { WithReadTimeout(-time.Second) })
+	require.Panics(t, func() { New().WithReadTimeout(0) })
+	require.Panics(t, func() { New().WithReadTimeout(-time.Second) })
 }
 
 func TestAppOptions_WithReadHeaderTimeout(t *testing.T) {
-	app := New(WithReadHeaderTimeout(time.Second))
+	app := New().WithReadHeaderTimeout(time.Second)
 	require.Equal(t, time.Second, app.httpServer.ReadHeaderTimeout)
-	require.Panics(t, func() { WithReadHeaderTimeout(0) })
-	require.Panics(t, func() { WithReadHeaderTimeout(-time.Second) })
+	require.Panics(t, func() { New().WithReadHeaderTimeout(0) })
+	require.Panics(t, func() { New().WithReadHeaderTimeout(-time.Second) })
 }
 
 func TestAppOptions_WithWriteTimeout(t *testing.T) {
-	app := New(WithWriteTimeout(time.Second))
+	app := New().WithWriteTimeout(time.Second)
 	require.Equal(t, time.Second, app.httpServer.WriteTimeout)
-	require.Panics(t, func() { WithWriteTimeout(0) })
-	require.Panics(t, func() { WithWriteTimeout(-time.Second) })
+	require.Panics(t, func() { New().WithWriteTimeout(0) })
+	require.Panics(t, func() { New().WithWriteTimeout(-time.Second) })
 }
 
 func TestAppOptions_WithIdleTimeout(t *testing.T) {
-	app := New(WithIdleTimeout(time.Second))
+	app := New().WithIdleTimeout(time.Second)
 	require.Equal(t, time.Second, app.httpServer.IdleTimeout)
-	require.Panics(t, func() { New(WithIdleTimeout(0)) })
-	require.Panics(t, func() { New(WithIdleTimeout(-time.Second)) })
+	require.Panics(t, func() { New().WithIdleTimeout(0) })
+	require.Panics(t, func() { New().WithIdleTimeout(-time.Second) })
 }
 
 func TestAppOptions_WithMaxHeaderBytes(t *testing.T) {
-	app := New(WithMaxHeaderBytes(1024))
+	app := New().WithMaxHeaderBytes(1024)
 	require.Equal(t, 1024, app.httpServer.MaxHeaderBytes)
-	require.Panics(t, func() { WithMaxHeaderBytes(0) })
-	require.Panics(t, func() { WithMaxHeaderBytes(-1) })
+	require.Panics(t, func() { New().WithMaxHeaderBytes(0) })
+	require.Panics(t, func() { New().WithMaxHeaderBytes(-1) })
 }
 
 func TestAppOptions_WithMaxHeaderValueCount(t *testing.T) {
-	app := New(WithMaxHeaderValueCount(10))
+	app := New().WithMaxHeaderValueCount(10)
 	require.Equal(t, 10, app.httpServer.MaxHeaderValueCount)
-	require.Panics(t, func() { WithMaxHeaderValueCount(0) })
-	require.Panics(t, func() { WithMaxHeaderValueCount(-1) })
+	require.Panics(t, func() { New().WithMaxHeaderValueCount(0) })
+	require.Panics(t, func() { New().WithMaxHeaderValueCount(-1) })
 }
 
 func TestAppOptions_WithPrefork(t *testing.T) {
-	require.True(t, New(WithPrefork(true)).preforkIsEnabled)
-	require.False(t, New(WithPrefork(false)).preforkIsEnabled)
+	require.True(t, New().WithPrefork(true).preforkIsEnabled)
+	require.False(t, New().WithPrefork(false).preforkIsEnabled)
 }
 
 func TestAppOptions_WithPreforkChildrenCount(t *testing.T) {
-	app := New(WithPreforkChildrenCount(3))
+	app := New().WithPreforkChildrenCount(3)
 	require.Equal(t, 3, app.preforkChildrenCount)
-	require.Panics(t, func() { WithPreforkChildrenCount(0) })
-	require.Panics(t, func() { WithPreforkChildrenCount(-1) })
+	require.Panics(t, func() { New().WithPreforkChildrenCount(0) })
+	require.Panics(t, func() { New().WithPreforkChildrenCount(-1) })
 }
 
 func TestAppOptions_WithPreforkRetriesCount(t *testing.T) {
-	require.Equal(t, 0, New(WithPreforkRetriesCount(0)).preforkRetriesCount)
-	require.Equal(t, 7, New(WithPreforkRetriesCount(7)).preforkRetriesCount)
-	require.Panics(t, func() { WithPreforkRetriesCount(-1) })
-	require.Panics(t, func() { WithPreforkRetriesCount(-2) })
+	require.Equal(t, 0, New().WithPreforkRetriesCount(0).preforkRetriesCount)
+	require.Equal(t, 7, New().WithPreforkRetriesCount(7).preforkRetriesCount)
+	require.Panics(t, func() { New().WithPreforkRetriesCount(-1) })
+	require.Panics(t, func() { New().WithPreforkRetriesCount(-2) })
 }
 
 func TestAppOptions_WithTls(t *testing.T) {
-	app := New(WithTls("cert.pem", "key.pem"))
+	app := New().WithTls("cert.pem", "key.pem")
 	require.True(t, app.useTls)
 	require.Equal(t, "cert.pem", app.certFile)
 	require.Equal(t, "key.pem", app.keyFile)
-	require.Panics(t, func() { WithTls("", "key.pem") })
-	require.Panics(t, func() { WithTls("cert.pem", "") })
+	require.Panics(t, func() { New().WithTls("", "key.pem") })
+	require.Panics(t, func() { New().WithTls("cert.pem", "") })
 }
 
 func TestAppOptions_WithTlsConfig(t *testing.T) {
 	cfg := &tls.Config{}
-	app := New(WithTlsConfig(cfg))
+	app := New().WithTlsConfig(cfg)
 	require.Same(t, cfg, app.httpServer.TLSConfig)
-	require.Panics(t, func() { WithTlsConfig(nil) })
+	require.Panics(t, func() { New().WithTlsConfig(nil) })
 }
 
 func TestAppOptions_WithHttp2Config(t *testing.T) {
 	cfg := &http.HTTP2Config{}
-	app := New(WithHttp2Config(cfg))
+	app := New().WithHttp2Config(cfg)
 	require.Same(t, cfg, app.httpServer.HTTP2)
-	require.Panics(t, func() { WithHttp2Config(nil) })
+	require.Panics(t, func() { New().WithHttp2Config(nil) })
 }
 
 func TestAppOptions_WithProtocols(t *testing.T) {
 	p := &http.Protocols{}
-	app := New(WithProtocols(p))
+	app := New().WithProtocols(p)
 	require.Same(t, p, app.httpServer.Protocols)
-	require.Panics(t, func() { WithProtocols(nil) })
+	require.Panics(t, func() { New().WithProtocols(nil) })
 }
 
 func TestAppOptions_WithClientPriority(t *testing.T) {
-	require.False(t, New(WithClientPriority(true)).httpServer.DisableClientPriority)
-	require.True(t, New(WithClientPriority(false)).httpServer.DisableClientPriority)
+	require.False(t, New().WithClientPriority(true).httpServer.DisableClientPriority)
+	require.True(t, New().WithClientPriority(false).httpServer.DisableClientPriority)
 }
 
 func TestAppOptions_WithServiceStartTimeout(t *testing.T) {
-	app := New(WithServiceStartTimeout(time.Second))
+	app := New().WithServiceStartTimeout(time.Second)
 	require.Equal(t, time.Second, app.serviceStartTimeout)
-	require.Panics(t, func() { WithServiceStartTimeout(0) })
-	require.Panics(t, func() { WithServiceStartTimeout(-time.Second) })
+	require.Panics(t, func() { New().WithServiceStartTimeout(0) })
+	require.Panics(t, func() { New().WithServiceStartTimeout(-time.Second) })
 }
 
 func TestAppOptions_WithServiceStopTimeout(t *testing.T) {
-	app := New(WithServiceStopTimeout(time.Second))
+	app := New().WithServiceStopTimeout(time.Second)
 	require.Equal(t, time.Second, app.serviceStopTimeout)
-	require.Panics(t, func() { WithServiceStopTimeout(0) })
-	require.Panics(t, func() { WithServiceStopTimeout(-time.Second) })
+	require.Panics(t, func() { New().WithServiceStopTimeout(0) })
+	require.Panics(t, func() { New().WithServiceStopTimeout(-time.Second) })
 }
 
 func TestAppOptions_WithParallelServiceStart(t *testing.T) {
-	require.True(t, New(WithParallelServiceStart()).serviceStartParallel)
+	require.True(t, New().WithParallelServiceStart().serviceStartParallel)
 }
 
 func TestAppOptions_WithParallelServiceStop(t *testing.T) {
-	require.True(t, New(WithParallelServiceStop()).serviceStopParallel)
+	require.True(t, New().WithParallelServiceStop().serviceStopParallel)
 }
 
 func TestAppOptions_WithShutdownTimeout(t *testing.T) {
-	app := New(WithShutdownTimeout(time.Second))
+	app := New().WithShutdownTimeout(time.Second)
 	require.Equal(t, time.Second, app.shutdownTimeout)
-	require.Panics(t, func() { WithShutdownTimeout(0) })
-	require.Panics(t, func() { WithShutdownTimeout(-time.Second) })
+	require.Panics(t, func() { New().WithShutdownTimeout(0) })
+	require.Panics(t, func() { New().WithShutdownTimeout(-time.Second) })
 }
 
 func TestAppOptions_WithPassLocalsToContext(t *testing.T) {
-	require.True(t, New(WithPassLocalsToContext(true)).passLocalsToContext)
-	require.False(t, New(WithPassLocalsToContext(false)).passLocalsToContext)
+	require.True(t, New().WithPassLocalsToContext(true).passLocalsToContext)
+	require.False(t, New().WithPassLocalsToContext(false).passLocalsToContext)
 }

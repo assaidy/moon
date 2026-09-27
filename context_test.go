@@ -1099,7 +1099,7 @@ func TestContext_Locals(t *testing.T) {
 	})
 
 	t.Run("passLocalsToContext true mirrors and delete shadows nil", func(t *testing.T) {
-		app := New(WithPassLocalsToContext(true))
+		app := New().WithPassLocalsToContext(true)
 		app.Use("/", func(ctx *Context) error {
 			ctx.SetLocal("k", "v")
 			require.Equal(t, "v", ctx.Value("k"))

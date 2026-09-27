@@ -449,7 +449,7 @@ func (me *Context) Value(key any) any {
 }
 
 // SetLocal stores a per-request value. It panics on an empty key or a nil
-// value. When the [WithPassLocalsToContext] app option is enabled the value
+// value. When the [App.WithPassLocalsToContext] app option is enabled the value
 // is also mirrored into the request context readable via [Context.Value].
 func (me *Context) SetLocal(key string, value any) {
 	Assert(key != "", "key cannot be empty")
@@ -474,7 +474,7 @@ func (me *Context) GetLocal[T any](key string) (T, bool) {
 }
 
 // DeleteLocal removes the per-request value for key. Deleting a missing key
-// is a no-op. When the [WithPassLocalsToContext] app option is enabled the
+// is a no-op. When the [App.WithPassLocalsToContext] app option is enabled the
 // key is shadowed with nil in the request context.
 func (me *Context) DeleteLocal(key string) {
 	delete(me.locals, key)

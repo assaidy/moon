@@ -29,6 +29,8 @@ type Service interface {
 	// TODO: create a utility to track availability inside services.
 }
 
+// TODO: add per-service settings overriding the global ones (e.g. start/stop timeouts)
+
 // AddService registers a service that becomes retrievable through
 // [Context.GetService] only after it has been successfully started
 // (see [App.StartServices]).
@@ -51,7 +53,7 @@ func (me *Context) GetService[T Service]() T {
 }
 
 // StartServices starts all registered services according to the configured
-// start timeout ([WithServiceStartTimeout]) and mode ([WithParallelServiceStart]).
+// start timeout ([App.WithServiceStartTimeout]) and mode ([App.WithParallelServiceStart]).
 // If any service fails to start, already-started services are stopped and
 // discarded; the start error is returned.
 //
@@ -133,7 +135,7 @@ func (me *App) startOneService(service Service) error {
 }
 
 // StopServices stops all started services according to the configured
-// stop timeout ([WithServiceStopTimeout]) and mode ([WithParallelServiceStop]).
+// stop timeout ([App.WithServiceStopTimeout]) and mode ([App.WithParallelServiceStop]).
 //
 // It is called automatically by [App.Shutdown]. It is exported so tests that
 // started services via [App.StartServices] can stop them without ever

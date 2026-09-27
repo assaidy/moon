@@ -18,14 +18,14 @@ import (
 const preforkChildEnv = "PREFORK_CHILD"
 
 // IsPreforkChild reports whether the current process is a prefork child
-// (see [WithPrefork]). Services are started only in child processes.
+// (see [App.WithPrefork]). Services are started only in child processes.
 func IsPreforkChild() bool {
 	return os.Getenv(preforkChildEnv) == "1"
 }
 
 // Start starts all registered services (see [App.StartServices]), then
 // listens and serves HTTP. With prefork enabled it forks child processes
-// instead (see [WithPrefork]). It returns [ErrFailedToStartServices] when
+// instead (see [App.WithPrefork]). It returns [ErrFailedToStartServices] when
 // any service fails to start, and nil after a graceful [App.Shutdown].
 func (me *App) Start() error {
 	if me.preforkIsEnabled && !IsPreforkChild() {
