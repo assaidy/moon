@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,7 +19,9 @@ import (
 // to exercise handlers without listening.
 type App struct {
 	httpServer                      *http.Server
-	routes                          []Route
+	routesPerMethod                 map[string][]RouteEntry // method -> routes
+	middlewares                     []MiddlewareEntry
+	nextOrder                       atomic.Int64
 	state                           sync.Map
 	dependencies                    map[reflect.Type]any
 	services                        []serviceInfo
@@ -52,6 +55,7 @@ type App struct {
 //	app := New().WithLogger(logger).WithRequestLogging(true)
 func New() *App {
 	app := &App{
+		routesPerMethod:      make(map[string][]RouteEntry),
 		httpServer:           new(http.Server),
 		dependencies:         make(map[reflect.Type]any),
 		logger:               slog.Default(),

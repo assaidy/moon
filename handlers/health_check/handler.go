@@ -2,19 +2,19 @@
 // used for liveness, readiness and startup probes.
 //
 // This is a terminal endpoint: it doesn't continue the chain (it never calls
-// [moon.Context.Next]). Register it with an explicit endpoint method rather
-// than as a middleware prefix via [moon.App.Use]. If you register it for
+// [moon.Context.Next]). It must be registered as a route via [moon.App.Map]
+// rather than as a middleware via [moon.App.Use]. If you register it for
 // HEAD, never write bytes to the body (HEAD responses must not carry a body).
 //
 // The most common usage is registering the built-in endpoints:
 //
-//	app.Map(http.MethodGet, health_check.LivenessEndpoint, health_check.New().Handle)
-//	app.Map(http.MethodGet, health_check.ReadinessEndpoint, health_check.New().Handle)
-//	app.Map(http.MethodGet, health_check.StartupEndpoint, health_check.New().Handle)
+//	app.MapGet(health_check.LivenessEndpoint, health_check.New().Handle)
+//	app.MapGet(health_check.ReadinessEndpoint, health_check.New().Handle)
+//	app.MapGet(health_check.StartupEndpoint, health_check.New().Handle)
 //
 // with a probe config deciding when the endpoint reports unhealthy:
 //
-//	app.Map(http.MethodGet, health_check.ReadinessEndpoint, health_check.New().WithProbe(
+//	app.MapGet(health_check.ReadinessEndpoint, health_check.New().WithProbe(
 //		func(ctx *moon.Context) bool {
 //			err := db.Ping()
 //			return err == nil
@@ -28,27 +28,27 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Middleware runs a probe and renders its result. Use [New] to construct it
-// with defaults, chain [Middleware.WithProbe] and [Middleware.WithResponse]
-// to configure it, then register [Middleware.Handle] as a terminal endpoint.
-type Middleware struct {
+// Handler runs a probe and renders its result. Use [New] to construct it
+// with defaults, chain [Handler.WithProbe] and [Handler.WithResponse]
+// to configure it, then register [Handler.Handle] as a terminal endpoint.
+type Handler struct {
 	probe    func(ctx *moon.Context) bool
 	response func(ctx *moon.Context, ok bool) error
 }
 
-// New returns a middleware that runs a probe and renders its result. Chain
-// [Middleware.WithProbe] and [Middleware.WithResponse] to configure it, then
-// register [Middleware.Handle] as a terminal endpoint:
+// New returns a handler that runs a probe and renders its result. Chain
+// [Handler.WithProbe] and [Handler.WithResponse] to configure it, then
+// register [Handler.Handle] as a terminal endpoint:
 //
 //	app.Map(http.MethodGet, "/healthz", New().Handle)
 //
-// It runs the probe (see [Middleware.WithProbe]) and passes the outcome to
-// the response func (see [Middleware.WithResponse]).
+// It runs the probe (see [Handler.WithProbe]) and passes the outcome to
+// the response func (see [Handler.WithResponse]).
 //
 // Default behavior: the probe reports ok, and the response writes
 // 200 OK when it succeeds or 503 Service Unavailable when it fails.
-func New() *Middleware {
-	return &Middleware{
+func New() *Handler {
+	return &Handler{
 		probe:    defaultProbe,
 		response: defaultResponse,
 	}
@@ -56,10 +56,10 @@ func New() *Middleware {
 
 // WithProbe sets the probe deciding whether the endpoint reports healthy:
 // true means ok, false means unhealthy. It panics if f is nil. It returns
-// the same middleware for chaining.
+// the same handler for chaining.
 //
 // Default: always reports ok (true).
-func (me *Middleware) WithProbe(f func(ctx *moon.Context) bool) *Middleware {
+func (me *Handler) WithProbe(f func(ctx *moon.Context) bool) *Handler {
 	moon.Assert(f != nil, "probe func cannot be nil")
 	me.probe = f
 	return me
@@ -72,11 +72,11 @@ func defaultProbe(_ *moon.Context) bool {
 
 // WithResponse sets the func rendering the probe result; ok is what the
 // probe returned. Returning an error hands it to the error handler.
-// It panics if f is nil. It returns the same middleware for chaining.
+// It panics if f is nil. It returns the same handler for chaining.
 //
 // Default: 200 OK when ok, 503 Service Unavailable otherwise. When writing
 // your own response, never write body bytes if the request method is HEAD.
-func (me *Middleware) WithResponse(f func(ctx *moon.Context, ok bool) error) *Middleware {
+func (me *Handler) WithResponse(f func(ctx *moon.Context, ok bool) error) *Handler {
 	moon.Assert(f != nil, "response func cannot be nil")
 	me.response = f
 	return me
@@ -93,7 +93,7 @@ func defaultResponse(ctx *moon.Context, ok bool) error {
 }
 
 // Handle runs the probe and renders its result with the response func.
-func (me *Middleware) Handle(ctx *moon.Context) error {
+func (me *Handler) Handle(ctx *moon.Context) error {
 	return me.response(ctx, me.probe(ctx))
 }
 

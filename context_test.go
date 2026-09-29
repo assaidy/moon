@@ -29,7 +29,7 @@ func TestContext_GetMethod(t *testing.T) {
 	var acutal []string
 
 	app := New()
-	app.Use("/", func(ctx *Context) error {
+	app.MapAll("/", func(ctx *Context) error {
 		acutal = append(acutal, ctx.GetMethod())
 		return nil
 	})
@@ -55,7 +55,7 @@ func TestContext_GetPath(t *testing.T) {
 	var acutal []string
 
 	app := New()
-	app.Use("/", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/*", func(ctx *Context) error {
 		acutal = append(acutal, ctx.GetPath())
 		return nil
 	})
@@ -102,30 +102,40 @@ func TestContext_GetPattern(t *testing.T) {
 		require.Equal(t, expected, acutal)
 	})
 
-	t.Run("with Use() pattern is empty", func(t *testing.T) {
-		paths := []string{
-			"/",
-			"/api",
-			"/api/v1/users",
-			"/users/123",
-			"/files/a/b/c.txt",
+	t.Run("pattern visible in middleware", func(t *testing.T) {
+		testCases := []struct {
+			pattern string
+			path    string
+		}{
+			{pattern: "/", path: "/"},
+			{pattern: "/api", path: "/api"},
+			{pattern: "/api/v1/users", path: "/api/v1/users"},
+			{pattern: "/users/:id", path: "/users/123"},
+			{pattern: "/files/*", path: "/files/a/b/c.txt"},
 		}
 		var actualPatterns []string
 		var actualPaths []string
 
 		useApp := New()
-		useApp.Use("/", func(ctx *Context) error {
+		useApp.Use("/*", func(ctx *Context) error {
 			actualPatterns = append(actualPatterns, ctx.GetPattern())
 			actualPaths = append(actualPaths, ctx.GetPath())
-			return nil
+			return ctx.Next()
 		})
-
-		for _, path := range paths {
-			useApp.Test(httptest.NewRequest(http.MethodGet, path, nil))
+		for _, tc := range testCases {
+			useApp.Map(http.MethodGet, tc.pattern, func(ctx *Context) error { return nil })
 		}
 
-		require.Equal(t, []string{"", "", "", "", ""}, actualPatterns)
-		require.Equal(t, paths, actualPaths)
+		var expectedPatterns []string
+		var expectedPaths []string
+		for _, tc := range testCases {
+			expectedPatterns = append(expectedPatterns, tc.pattern)
+			expectedPaths = append(expectedPaths, tc.path)
+			useApp.Test(httptest.NewRequest(http.MethodGet, tc.path, nil))
+		}
+
+		require.Equal(t, expectedPatterns, actualPatterns)
+		require.Equal(t, expectedPaths, actualPaths)
 	})
 }
 
@@ -142,7 +152,7 @@ func TestContext_GetUrl(t *testing.T) {
 	var actual []string
 
 	app := New()
-	app.Use("/", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/*", func(ctx *Context) error {
 		actual = append(actual, ctx.GetUrl().String())
 		return nil
 	})
@@ -194,7 +204,7 @@ func TestContext_Queries(t *testing.T) {
 
 	app := New()
 	index := 0
-	app.Use("/", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/*", func(ctx *Context) error {
 		tc := testCases[index]
 		index++
 
@@ -273,7 +283,7 @@ func TestContext_GetRemoteAddress(t *testing.T) {
 	var actual []string
 
 	app := New()
-	app.Use("/", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/", func(ctx *Context) error {
 		actual = append(actual, ctx.GetRemoteAddress())
 		return nil
 	})
@@ -290,7 +300,7 @@ func TestContext_GetRemoteAddress(t *testing.T) {
 func TestContext_Headers(t *testing.T) {
 	app := New()
 	var ran bool
-	app.Use("/", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/", func(ctx *Context) error {
 		ran = true
 
 		require.Equal(t, "req-val", ctx.GetHeader("X-Req"))
@@ -329,7 +339,7 @@ func TestContext_ContextMirror(t *testing.T) {
 		const key ctxKey = "k"
 
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Equal(t, "v", ctx.Value(key))
 			require.Equal(t, ctx.request.Context().Value(key), ctx.Value(key))
 			require.Nil(t, ctx.Value("missing"))
@@ -346,7 +356,7 @@ func TestContext_ContextMirror(t *testing.T) {
 			deadline := time.Now().Add(time.Hour)
 
 			app := New()
-			app.Use("/", func(ctx *Context) error {
+			app.Map(http.MethodGet, "/", func(ctx *Context) error {
 				gotDeadline, gotOK := ctx.Deadline()
 				wantDeadline, wantOK := ctx.request.Context().Deadline()
 				require.Equal(t, wantOK, gotOK)
@@ -364,7 +374,7 @@ func TestContext_ContextMirror(t *testing.T) {
 
 		t.Run("without deadline", func(t *testing.T) {
 			app := New()
-			app.Use("/", func(ctx *Context) error {
+			app.Map(http.MethodGet, "/", func(ctx *Context) error {
 				_, ok := ctx.Deadline()
 				require.False(t, ok)
 				require.NoError(t, ctx.Err())
@@ -376,7 +386,7 @@ func TestContext_ContextMirror(t *testing.T) {
 
 	t.Run("cancelled context mirrors done and err", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.NotNil(t, ctx.Done())
 			require.Equal(t, context.Canceled, ctx.Err())
 			require.Equal(t, ctx.request.Context().Err(), ctx.Err())
@@ -404,7 +414,7 @@ func (failCodec) ContentType() string        { return "application/fail" }
 func TestContext_Body(t *testing.T) {
 	t.Run("Read empty", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			raw, err := ctx.Read()
 			require.NoError(t, err)
 			require.Empty(t, raw)
@@ -416,7 +426,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("Read plain", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			raw, err := ctx.Read()
 			require.NoError(t, err)
 			require.Equal(t, "hello world", string(raw))
@@ -428,7 +438,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("Read twice returns same bytes", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			first, err := ctx.Read()
 			require.NoError(t, err)
 			require.Equal(t, "hello", string(first))
@@ -444,7 +454,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("Read over limit errors", func(t *testing.T) {
 		app := New().WithReadLimit(5)
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			_, err := ctx.Read()
 			require.Error(t, err)
 			return nil
@@ -456,7 +466,7 @@ func TestContext_Body(t *testing.T) {
 	t.Run("Declared over limit rejected without running handlers", func(t *testing.T) {
 		app := New().WithReadLimit(5)
 		ran := false
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			ran = true
 			return nil
 		})
@@ -470,7 +480,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("Declared at limit passes to handlers", func(t *testing.T) {
 		app := New().WithReadLimit(5)
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			raw, err := ctx.Read()
 			require.NoError(t, err)
 			require.Equal(t, "hello", string(raw))
@@ -483,7 +493,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("ReadAs json ok", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			var out map[string]string
 			require.NoError(t, ctx.ReadAs(CodecJson, &out))
 			require.Equal(t, map[string]string{"hello": "world"}, out)
@@ -495,7 +505,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("ReadAs invalid err", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			var out map[string]string
 			require.Error(t, ctx.ReadAs(CodecJson, &out))
 			return nil
@@ -506,7 +516,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("Write string", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			return ctx.Write(http.StatusCreated, "hello")
 		})
 
@@ -519,7 +529,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("Write bytes", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			return ctx.Write(http.StatusOK, []byte("raw-bytes"))
 		})
 
@@ -532,7 +542,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("WriteStatus", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			return ctx.WriteStatus(http.StatusNotFound)
 		})
 
@@ -545,7 +555,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("WriteAs json", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			return ctx.WriteAs(http.StatusOK, CodecJson, map[string]string{"hello": "world"})
 		})
 
@@ -559,7 +569,7 @@ func TestContext_Body(t *testing.T) {
 
 	t.Run("WriteAs encode err", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			return ctx.WriteAs(http.StatusOK, failCodec{}, map[string]string{"hello": "world"})
 		})
 
@@ -626,7 +636,7 @@ func TestRequestBodyWrapper(t *testing.T) {
 func TestContext_StatusCode(t *testing.T) {
 	t.Run("unwritten is 0, wire is 200", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Equal(t, 0, ctx.GetStatusCode())
 			return nil
 		})
@@ -637,7 +647,7 @@ func TestContext_StatusCode(t *testing.T) {
 
 	t.Run("after Write", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.NoError(t, ctx.Write(http.StatusCreated, "hello"))
 			require.Equal(t, http.StatusCreated, ctx.GetStatusCode())
 			return nil
@@ -649,7 +659,7 @@ func TestContext_StatusCode(t *testing.T) {
 
 	t.Run("after WriteStatus", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.NoError(t, ctx.WriteStatus(http.StatusTeapot))
 			require.Equal(t, http.StatusTeapot, ctx.GetStatusCode())
 			return nil
@@ -698,7 +708,7 @@ func TestContext_StatusCode(t *testing.T) {
 
 	t.Run("SetStatusCode sets code without body", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetStatusCode(http.StatusNoContent)
 			require.Equal(t, http.StatusNoContent, ctx.GetStatusCode())
 			return nil
@@ -713,7 +723,7 @@ func TestContext_StatusCode(t *testing.T) {
 
 	t.Run("SetStatusCode buffers, headers before and after apply", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetHeader("X-Custom", "yes")
 			ctx.SetStatusCode(http.StatusAccepted)
 			ctx.SetHeader("X-Custom", "no")
@@ -749,7 +759,7 @@ func TestContext_StatusCode(t *testing.T) {
 
 	t.Run("last status wins", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.NoError(t, ctx.Write(http.StatusCreated, "hello"))
 			ctx.SetStatusCode(http.StatusAccepted)
 			require.Equal(t, http.StatusAccepted, ctx.GetStatusCode())
@@ -764,7 +774,7 @@ func TestContext_StatusCode(t *testing.T) {
 func TestContext_RawWriter(t *testing.T) {
 	t.Run("pure raw path skips buffered flush", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			raw := ctx.response.Unwrap()
 			raw.Header().Set("X-Raw", "yes")
 			raw.WriteHeader(http.StatusCreated)
@@ -784,7 +794,7 @@ func TestContext_RawWriter(t *testing.T) {
 
 	t.Run("raw flush marks raw without panic", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			raw := ctx.response.Unwrap()
 			raw.Header().Set("X-Flush", "yes")
 			http.NewResponseController(raw).Flush()
@@ -802,7 +812,7 @@ func TestContext_RawWriter(t *testing.T) {
 
 	t.Run("mixed raw wins over buffered", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.NoError(t, ctx.Write(http.StatusOK, "buffered"))
 			_, err := ctx.response.Unwrap().Write([]byte("raw"))
 			require.NoError(t, err)
@@ -820,7 +830,7 @@ func TestContext_RawWriter(t *testing.T) {
 
 	t.Run("raw header use discards buffered write", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.response.Unwrap().Header().Set("X-Raw", "yes")
 			return ctx.Write(http.StatusOK, "buffered")
 		})
@@ -839,7 +849,7 @@ func TestContext_RawWriter(t *testing.T) {
 		var captured *Context
 
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			captured = ctx
 			ctx.response.Unwrap().Header().Set("X-Raw", "yes")
 			return nil
@@ -858,7 +868,7 @@ func TestContext_RawWriter(t *testing.T) {
 
 func TestContext_HeadersSetBeforeRawWriteArePreserved(t *testing.T) {
 	app := New()
-	app.Use("/", func(ctx *Context) error {
+	app.Map(http.MethodGet, "/", func(ctx *Context) error {
 		ctx.SetHeader("Content-Type", "text/event-stream")
 		ctx.SetHeader("Cache-Control", "no-cache")
 		_, err := ctx.GetHttpResponseWriter().Unwrap().Write([]byte("data: hi\n\n"))
@@ -883,7 +893,7 @@ func TestContext_Forms(t *testing.T) {
 
 	t.Run("GetFormValue from query", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Equal(t, "ann", ctx.GetFormValue("name"))
 			return nil
 		})
@@ -893,7 +903,7 @@ func TestContext_Forms(t *testing.T) {
 
 	t.Run("GetFormValue from body", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Equal(t, "bob", ctx.GetFormValue("name"))
 			return nil
 		})
@@ -903,7 +913,7 @@ func TestContext_Forms(t *testing.T) {
 
 	t.Run("GetFormValue multiple query values first wins", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Equal(t, "q1", ctx.GetFormValue("tag"))
 			require.Equal(t, []string{"q1", "q2"}, map[string][]string(ctx.GetAllFormValues())["tag"])
 			return nil
@@ -914,7 +924,7 @@ func TestContext_Forms(t *testing.T) {
 
 	t.Run("GetFormValue multiple body values first wins", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Equal(t, "b1", ctx.GetFormValue("tag"))
 			require.Equal(t, []string{"b1", "b2"}, map[string][]string(ctx.GetAllFormValues())["tag"])
 			return nil
@@ -925,7 +935,7 @@ func TestContext_Forms(t *testing.T) {
 
 	t.Run("GetFormValue body values before query values", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Equal(t, "b1", ctx.GetFormValue("tag"))
 			require.Equal(t, []string{"b1", "b2", "q1", "q2"}, map[string][]string(ctx.GetAllFormValues())["tag"])
 			return nil
@@ -935,7 +945,7 @@ func TestContext_Forms(t *testing.T) {
 	})
 	t.Run("GetFormValue missing", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Equal(t, "", ctx.GetFormValue("missing"))
 			return nil
 		})
@@ -945,7 +955,7 @@ func TestContext_Forms(t *testing.T) {
 
 	t.Run("GetAllFormValues merged query and body", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Equal(t,
 				map[string][]string{"a": {"1"}, "b": {"3", "2"}, "c": {"4"}},
 				map[string][]string(ctx.GetAllFormValues()),
@@ -958,7 +968,7 @@ func TestContext_Forms(t *testing.T) {
 
 	t.Run("GetAllFormValues empty", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.MapAll("/", func(ctx *Context) error {
 			require.Empty(t, ctx.GetAllFormValues())
 			return nil
 		})
@@ -970,7 +980,7 @@ func TestContext_Forms(t *testing.T) {
 func TestContext_Cookies(t *testing.T) {
 	t.Run("SetCookie header", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetCookie(&http.Cookie{Name: "sess", Value: "abc", Path: "/"})
 			return nil
 		})
@@ -989,7 +999,7 @@ func TestContext_Cookies(t *testing.T) {
 
 	t.Run("GetCookie hit and miss", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Equal(t, "abc", ctx.GetCookie("sess"))
 			require.Equal(t, "", ctx.GetCookie("missing"))
 			return nil
@@ -1014,7 +1024,7 @@ func TestContext_Cookies(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				app := New()
-				app.Use("/", func(ctx *Context) error {
+				app.Map(http.MethodGet, "/", func(ctx *Context) error {
 					require.Equal(t, tc.want, ctx.GetManyCookies("sess"))
 					return nil
 				})
@@ -1031,7 +1041,7 @@ func TestContext_Cookies(t *testing.T) {
 	t.Run("GetAllCookies grouped and nil", func(t *testing.T) {
 		t.Run("grouped", func(t *testing.T) {
 			app := New()
-			app.Use("/", func(ctx *Context) error {
+			app.Map(http.MethodGet, "/", func(ctx *Context) error {
 				require.Equal(t,
 					map[string][]string{"sess": {"a", "b"}, "other": {"c"}},
 					ctx.GetAllCookies(),
@@ -1048,7 +1058,7 @@ func TestContext_Cookies(t *testing.T) {
 
 		t.Run("nil", func(t *testing.T) {
 			app := New()
-			app.Use("/", func(ctx *Context) error {
+			app.Map(http.MethodGet, "/", func(ctx *Context) error {
 				require.Nil(t, ctx.GetAllCookies())
 				return nil
 			})
@@ -1059,7 +1069,7 @@ func TestContext_Cookies(t *testing.T) {
 
 	t.Run("ClearCookie expired output", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.ClearCookie("sess")
 			return nil
 		})
@@ -1076,7 +1086,7 @@ func TestContext_Cookies(t *testing.T) {
 
 	t.Run("ClearCookie missing no output", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.ClearCookie("nope")
 			return nil
 		})
@@ -1089,7 +1099,7 @@ func TestContext_Cookies(t *testing.T) {
 func TestContext_Locals(t *testing.T) {
 	t.Run("set get hit", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetLocal("user", "ann")
 
 			v, ok := ctx.GetLocal[string]("user")
@@ -1107,7 +1117,7 @@ func TestContext_Locals(t *testing.T) {
 
 	t.Run("wrong type miss", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetLocal("n", 42)
 
 			v, ok := ctx.GetLocal[string]("n")
@@ -1121,7 +1131,7 @@ func TestContext_Locals(t *testing.T) {
 
 	t.Run("missing miss", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			v, ok := ctx.GetLocal[string]("nope")
 			require.False(t, ok)
 			require.Equal(t, "", v)
@@ -1137,7 +1147,7 @@ func TestContext_Locals(t *testing.T) {
 
 	t.Run("empty key nil value panic", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.SetLocal("", "x") })
 			require.Panics(t, func() { ctx.SetLocal("k", nil) })
 			return nil
@@ -1148,7 +1158,7 @@ func TestContext_Locals(t *testing.T) {
 
 	t.Run("delete and double delete", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetLocal("user", "ann")
 			ctx.DeleteLocal("user")
 
@@ -1170,7 +1180,7 @@ func TestContext_Locals(t *testing.T) {
 		var seen []bool
 
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			_, ok := ctx.GetLocal[string]("user")
 			seen = append(seen, ok)
 			ctx.SetLocal("user", "ann")
@@ -1184,7 +1194,7 @@ func TestContext_Locals(t *testing.T) {
 
 	t.Run("passLocalsToContext false hides from Value", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetLocal("k", "v")
 			require.Nil(t, ctx.Value("k"))
 			return nil
@@ -1195,7 +1205,7 @@ func TestContext_Locals(t *testing.T) {
 
 	t.Run("passLocalsToContext true mirrors and delete shadows nil", func(t *testing.T) {
 		app := New().WithPassLocalsToContext(true)
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetLocal("k", "v")
 			require.Equal(t, "v", ctx.Value("k"))
 
@@ -1213,7 +1223,7 @@ func TestContext_Locals(t *testing.T) {
 func TestContext_State(t *testing.T) {
 	t.Run("set get hit", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetState("count", 42)
 
 			v, ok := ctx.GetState[int]("count")
@@ -1231,7 +1241,7 @@ func TestContext_State(t *testing.T) {
 
 	t.Run("wrong type miss", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetState("count", 42)
 
 			v, ok := ctx.GetState[string]("count")
@@ -1245,7 +1255,7 @@ func TestContext_State(t *testing.T) {
 
 	t.Run("missing miss", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			v, ok := ctx.GetState[int]("nope")
 			require.False(t, ok)
 			require.Equal(t, 0, v)
@@ -1261,7 +1271,7 @@ func TestContext_State(t *testing.T) {
 
 	t.Run("delete", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetState("count", 42)
 			ctx.DeleteState("count")
 
@@ -1278,7 +1288,7 @@ func TestContext_State(t *testing.T) {
 		var seen []string
 
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			if len(seen) == 0 {
 				ctx.SetState("shared", "s1")
 			} else {
@@ -1327,7 +1337,7 @@ func TestContext_IsFinal(t *testing.T) {
 
 	t.Run("single handler is final Next returns nil", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.True(t, ctx.IsFinal())
 			require.NoError(t, ctx.Next())
 			require.True(t, ctx.IsFinal())
@@ -1337,6 +1347,50 @@ func TestContext_IsFinal(t *testing.T) {
 		})
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+	})
+}
+
+func TestContext_IsMiddleware(t *testing.T) {
+	t.Run("middleware true route false", func(t *testing.T) {
+		var mids []bool
+
+		app := New()
+		app.Use("/*", func(ctx *Context) error {
+			mids = append(mids, ctx.IsMiddleware())
+			require.NoError(t, ctx.Next())
+			mids = append(mids, ctx.IsMiddleware())
+			return nil
+		})
+		app.Map(http.MethodGet, "/x",
+			func(ctx *Context) error {
+				mids = append(mids, ctx.IsMiddleware())
+				return ctx.Next()
+			},
+			func(ctx *Context) error {
+				mids = append(mids, ctx.IsMiddleware())
+				return nil
+			},
+		)
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, []bool{true, false, false, false}, mids)
+	})
+
+	t.Run("route only and unmatched are not middleware", func(t *testing.T) {
+		var mids []bool
+
+		app := New().WithErrorHandler(func(ctx *Context, err error) {
+			mids = append(mids, ctx.IsMiddleware())
+			ctx.WriteStatus(http.StatusNotFound)
+		})
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+			mids = append(mids, ctx.IsMiddleware())
+			return nil
+		})
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		app.Test(httptest.NewRequest(http.MethodGet, "/missing", nil))
+		require.Equal(t, []bool{false, false}, mids)
 	})
 }
 

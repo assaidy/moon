@@ -81,7 +81,7 @@ func TestService_AddGet(t *testing.T) {
 		app := New()
 		app.AddService(newStubA())
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetService[*stubServiceA]() })
 			return nil
 		})
@@ -94,7 +94,7 @@ func TestService_AddGet(t *testing.T) {
 		app.AddService(svc)
 		require.NoError(t, app.StartServices())
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Same(t, svc, ctx.GetService[*stubServiceA]())
 			return nil
 		})
@@ -103,7 +103,7 @@ func TestService_AddGet(t *testing.T) {
 
 	t.Run("missing type panics", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetService[*stubServiceA]() })
 			return nil
 		})
@@ -124,7 +124,7 @@ func TestService_StartStop(t *testing.T) {
 		require.Equal(t, int32(0), a.stopCalls.Load())
 		require.Equal(t, int32(0), b.stopCalls.Load())
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Same(t, a, ctx.GetService[*stubServiceA]())
 			require.Same(t, b, ctx.GetService[*stubServiceB]())
 			return nil
@@ -166,7 +166,7 @@ func TestService_StartStop(t *testing.T) {
 		// stopped and discarded along the abort
 		require.Equal(t, a.startCalls.Load(), a.stopCalls.Load())
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetService[*stubServiceA]() })
 			require.Panics(t, func() { ctx.GetService[*stubServiceB]() })
 			return nil

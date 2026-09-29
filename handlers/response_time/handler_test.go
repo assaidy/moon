@@ -15,52 +15,52 @@ import (
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name        string
-		middleware  *Middleware
-		handler     moon.Handler
+		handler     *Handler
+		route       moon.Handler
 		header      string
 		wantStatus  int
 		wantPresent bool
 	}{
 		{
 			name:        "default header",
-			middleware:  nil,
 			handler:     nil,
+			route:       nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,
 			wantPresent: true,
 		},
 		{
 			name:        "custom header",
-			middleware:  New().WithHeader("X-Took"),
-			handler:     nil,
+			handler:     New().WithHeader("X-Took"),
+			route:       nil,
 			header:      "X-Took",
 			wantStatus:  http.StatusOK,
 			wantPresent: true,
 		},
 		{
 			name: "skipped request omits header",
-			middleware: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New().WithSkip(func(ctx *moon.Context) bool {
 				return true
 			}),
-			handler:     nil,
+			route:       nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,
 			wantPresent: false,
 		},
 		{
 			name: "non-skipped request keeps header",
-			middleware: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New().WithSkip(func(ctx *moon.Context) bool {
 				return false
 			}),
-			handler:     nil,
+			route:       nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,
 			wantPresent: true,
 		},
 		{
-			name:       "header set on error",
-			middleware: nil,
-			handler: func(ctx *moon.Context) error {
+			name:    "header set on error",
+			handler: nil,
+			route: func(ctx *moon.Context) error {
 				return errors.New("boom")
 			},
 			header:      "X-Response-Time",
@@ -71,21 +71,21 @@ func TestHandle(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			handler := tc.handler
-			if handler == nil {
-				handler = func(ctx *moon.Context) error {
+			route := tc.route
+			if route == nil {
+				route = func(ctx *moon.Context) error {
 					return ctx.Write(http.StatusOK, "hello")
 				}
 			}
 
-			mw := tc.middleware
-			if mw == nil {
-				mw = New()
+			h := tc.handler
+			if h == nil {
+				h = New()
 			}
 
 			app := moon.New()
-			app.Use("/", mw.Handle)
-			app.Map(http.MethodGet, "/timed", handler)
+			app.Use("/*", h.Handle)
+			app.Map(http.MethodGet, "/timed", route)
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/timed", nil))
 			require.Equal(t, tc.wantStatus, resp.StatusCode)

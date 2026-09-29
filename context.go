@@ -40,33 +40,27 @@ type Context struct {
 	readRequestBodyOnce  sync.Once
 	requestBodyReadError error
 	requestBodyBuffer    *bytes.Buffer
+	pattern              string
 	params               map[string]string
 	handlers             []Handler
 	nextHandlerIndex     int
-	pattern              string
+	middlewareCount      int
 	locals               map[string]any
 	app                  *App
 }
 
-func newContext(
+func (me *App) newContext(
 	w http.ResponseWriter,
 	r *http.Request,
-	pattern string,
-	params map[string]string,
-	handlers []Handler,
-	app *App,
 ) *Context {
 	ctx := new(Context)
+	ctx.app = me
 	ctx.response = &httpResponseWriterWrapper{bodyBuffer: bodyBufferPool.Get().(*bytes.Buffer)}
 	ctx.response.tracker = &httpResponseWriterTracker{writer: w, statusCode: &ctx.response.statusCode}
 	ctx.request = r
-	ctx.request.Body = httpRequestBodyReaderWrapper{body: http.MaxBytesReader(w, r.Body, int64(app.readLimit))}
+	ctx.request.Body = httpRequestBodyReaderWrapper{body: http.MaxBytesReader(w, r.Body, int64(me.readLimit))}
 	ctx.requestBodyBuffer = bodyBufferPool.Get().(*bytes.Buffer)
-	ctx.pattern = pattern
-	ctx.params = params
-	ctx.handlers = handlers
 	ctx.locals = make(map[string]any)
-	ctx.app = app
 	return ctx
 }
 
@@ -224,7 +218,6 @@ func (me *Context) GetRemoteAddress() string {
 }
 
 // TODO: add ctx.RealIp() with trusted proxies and IP validations
-// TODO: add ctx.Bind() to bind request payload elements(param,query,header,body), services, and dependencies
 
 // GetMethod returns the request HTTP method (GET, POST, ...).
 func (me *Context) GetMethod() string {
@@ -321,7 +314,8 @@ func (me *Context) AddHeader(key, value string) {
 // handler chain finishes: copy it first if you need it afterwards.
 func (me *Context) Read() ([]byte, error) {
 	me.readRequestBodyOnce.Do(func() {
-		me.requestBodyReadError = TakeSecond(me.requestBodyBuffer.ReadFrom(me.request.Body))
+		_, err := me.requestBodyBuffer.ReadFrom(me.request.Body)
+		me.requestBodyReadError = err
 	})
 	return me.requestBodyBuffer.Bytes(), me.requestBodyReadError
 }
@@ -496,6 +490,7 @@ func (me *Context) Next() error {
 	if me.IsFinal() {
 		return nil
 	}
+
 	index := me.nextHandlerIndex
 	me.nextHandlerIndex += 1
 	return me.handlers[index](me)
@@ -506,6 +501,12 @@ func (me *Context) Next() error {
 // returns nil without invoking anything.
 func (me *Context) IsFinal() bool {
 	return me.nextHandlerIndex == len(me.handlers)
+}
+
+// IsMiddleware reports whether the current handler runs as a middleware.
+// It is true inside handlers registered via [App.Use].
+func (me *Context) IsMiddleware() bool {
+	return me.middlewareCount > 0 && me.nextHandlerIndex <= me.middlewareCount
 }
 
 var _ context.Context = (*Context)(nil)

@@ -17,7 +17,7 @@ func TestDependency(t *testing.T) {
 		app.AddDependency(42)
 		app.AddDependency(&testDB{dsn: "postgres://localhost"})
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Equal(t, "hello", ctx.GetDependency[string]())
 			require.Equal(t, 42, ctx.GetDependency[int]())
 			require.Equal(t, &testDB{dsn: "postgres://localhost"}, ctx.GetDependency[*testDB]())
@@ -32,7 +32,7 @@ func TestDependency(t *testing.T) {
 		app.AddDependency("shared")
 
 		var seen []string
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			seen = append(seen, ctx.GetDependency[string]())
 			return nil
 		})
@@ -47,7 +47,7 @@ func TestDependency(t *testing.T) {
 		app.AddDependency("a")
 		app.AddDependency("b")
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Equal(t, "b", ctx.GetDependency[string]())
 			return nil
 		})
@@ -60,7 +60,7 @@ func TestDependency(t *testing.T) {
 		db := &testDB{dsn: "postgres://localhost"}
 		app.AddDependency(db)
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Same(t, db, ctx.GetDependency[*testDB]())
 			return nil
 		})
@@ -70,7 +70,7 @@ func TestDependency(t *testing.T) {
 
 	t.Run("missing panics", func(t *testing.T) {
 		app := New()
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetDependency[string]() })
 			return nil
 		})
@@ -82,7 +82,7 @@ func TestDependency(t *testing.T) {
 		app := New()
 		app.AddDependency(42)
 
-		app.Use("/", func(ctx *Context) error {
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetDependency[string]() })
 			return nil
 		})

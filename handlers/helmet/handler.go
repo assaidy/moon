@@ -1,13 +1,11 @@
-// Package helmet provides a middleware that sets security-related response
-// headers.
+// Package helmet provides a handler that sets security-related response
+// headers. Register [Handler.Handle] as a middleware or a route handler:
 //
-// Register [Middleware.Handle] as a middleware:
-//
-//	app.Use("/", helmet.New().Handle)
+//	app.Use("/*", helmet.New().Handle)
 //
 // Customize or disable individual headers:
 //
-//	app.Use("/", helmet.New().WithXFrameOptions("DENY").WithHstsMaxAge(31536000).Handle)
+//	app.Use("/*", helmet.New().WithXFrameOptions("DENY").WithHstsMaxAge(31536000).Handle)
 package helmet
 
 import (
@@ -17,10 +15,10 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Middleware sets security-related response headers. Use [New] to construct
+// Handler sets security-related response headers. Use [New] to construct
 // it with defaults, chain the With* methods to configure it, then register
-// [Middleware.Handle] in the chain.
-type Middleware struct {
+// [Handler.Handle] in the chain.
+type Handler struct {
 	skip                      func(*moon.Context) bool
 	xssProtection             string
 	contentTypeNoSniff        string
@@ -41,19 +39,19 @@ type Middleware struct {
 	xPermittedCrossDomain     string
 }
 
-// New returns a middleware with default options. Chain the With* methods to
-// configure it, then register [Middleware.Handle] in the chain:
+// New returns a handler with default options. Chain the With* methods to
+// configure it, then register [Handler.Handle] in the chain:
 //
-//	app.Use("/", New().Handle)
-//	app.Use("/", New().WithXFrameOptions("DENY").Handle)
+//	app.Use("/*", New().Handle)
+//	app.Use("/*", New().WithXFrameOptions("DENY").Handle)
 //
 // HSTS, Content-Security-Policy and Permissions-Policy are disabled by
-// default (see [Middleware.WithHstsMaxAge],
-// [Middleware.WithContentSecurityPolicy] and [Middleware.WithPermissionPolicy]).
-// Requests for which the [Middleware.WithSkip] predicate returns true run the
+// default (see [Handler.WithHstsMaxAge],
+// [Handler.WithContentSecurityPolicy] and [Handler.WithPermissionPolicy]).
+// Requests for which the [Handler.WithSkip] predicate returns true run the
 // chain untouched: no headers are set.
-func New() *Middleware {
-	return &Middleware{
+func New() *Handler {
+	return &Handler{
 		xssProtection:             "0",
 		contentTypeNoSniff:        "nosniff",
 		xFrameOptions:             "SAMEORIGIN",
@@ -71,50 +69,50 @@ func New() *Middleware {
 
 // WithSkip skips setting headers for requests where f returns true.
 // The chain still runs; only the headers are omitted. It returns the same
-// middleware for chaining.
+// handler for chaining.
 //
 // Default: nil (nothing is skipped)
-func (me *Middleware) WithSkip(f func(*moon.Context) bool) *Middleware {
+func (me *Handler) WithSkip(f func(*moon.Context) bool) *Handler {
 	me.skip = f
 	return me
 }
 
 // WithXssProtection sets the X-XSS-Protection header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "0"
-func (me *Middleware) WithXssProtection(s string) *Middleware {
+func (me *Handler) WithXssProtection(s string) *Handler {
 	me.xssProtection = strings.TrimSpace(s)
 	return me
 }
 
 // WithContentTypeNoSniff sets the X-Content-Type-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "nosniff"
-func (me *Middleware) WithContentTypeNoSniff(s string) *Middleware {
+func (me *Handler) WithContentTypeNoSniff(s string) *Handler {
 	me.contentTypeNoSniff = strings.TrimSpace(s)
 	return me
 }
 
 // WithXFrameOptions sets the X-Frame-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "SAMEORIGIN"
-func (me *Middleware) WithXFrameOptions(s string) *Middleware {
+func (me *Handler) WithXFrameOptions(s string) *Handler {
 	me.xFrameOptions = strings.TrimSpace(s)
 	return me
 }
 
 // WithHstsMaxAge sets the max-age (in seconds) of the
 // Strict-Transport-Security header. It panics on a negative value.
-// Zero disables the header. It returns the same middleware for chaining.
+// Zero disables the header. It returns the same handler for chaining.
 //
 // Default: 0 (disabled)
-func (me *Middleware) WithHstsMaxAge(seconds int) *Middleware {
+func (me *Handler) WithHstsMaxAge(seconds int) *Handler {
 	moon.Assert(seconds >= 0, "hsts max age cannot be negative")
 	me.hstsMaxAge = seconds
 	return me
@@ -122,122 +120,122 @@ func (me *Middleware) WithHstsMaxAge(seconds int) *Middleware {
 
 // WithHstsIncludeSubdomains controls whether the includeSubDomains directive
 // is added to the Strict-Transport-Security header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: true
-func (me *Middleware) WithHstsIncludeSubdomains(b bool) *Middleware {
+func (me *Handler) WithHstsIncludeSubdomains(b bool) *Handler {
 	me.hstsIncludeSubdomains = b
 	return me
 }
 
 // WithHstsPreloadEnabled controls whether the preload directive is added to
 // the Strict-Transport-Security header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: false
-func (me *Middleware) WithHstsPreloadEnabled(b bool) *Middleware {
+func (me *Handler) WithHstsPreloadEnabled(b bool) *Handler {
 	me.hstsPreloadEnabled = b
 	return me
 }
 
 // WithContentSecurityPolicy sets the Content-Security-Policy header value
 // (or the Content-Security-Policy-Report-Only header when
-// [Middleware.WithCspReportOnly] is enabled).
+// [Handler.WithCspReportOnly] is enabled).
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "" (disabled)
-func (me *Middleware) WithContentSecurityPolicy(s string) *Middleware {
+func (me *Handler) WithContentSecurityPolicy(s string) *Handler {
 	me.contentSecurityPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCspReportOnly switches the Content-Security-Policy header to
 // Content-Security-Policy-Report-Only.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: false
-func (me *Middleware) WithCspReportOnly(reportOnly bool) *Middleware {
+func (me *Handler) WithCspReportOnly(reportOnly bool) *Handler {
 	me.cspReportOnly = reportOnly
 	return me
 }
 
 // WithReferrerPolicy sets the Referrer-Policy header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "no-referrer"
-func (me *Middleware) WithReferrerPolicy(s string) *Middleware {
+func (me *Handler) WithReferrerPolicy(s string) *Handler {
 	me.referrerPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithPermissionPolicy sets the Permissions-Policy header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "" (disabled)
-func (me *Middleware) WithPermissionPolicy(s string) *Middleware {
+func (me *Handler) WithPermissionPolicy(s string) *Handler {
 	me.permissionPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCrossOriginEmbedderPolicy sets the Cross-Origin-Embedder-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same middleware for chaining.
+// header. It returns the same handler for chaining.
 //
 // Default: "require-corp"
-func (me *Middleware) WithCrossOriginEmbedderPolicy(s string) *Middleware {
+func (me *Handler) WithCrossOriginEmbedderPolicy(s string) *Handler {
 	me.crossOriginEmbedderPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCrossOriginOpenerPolicy sets the Cross-Origin-Opener-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same middleware for chaining.
+// header. It returns the same handler for chaining.
 //
 // Default: "same-origin"
-func (me *Middleware) WithCrossOriginOpenerPolicy(s string) *Middleware {
+func (me *Handler) WithCrossOriginOpenerPolicy(s string) *Handler {
 	me.crossOriginOpenerPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCrossOriginResourcePolicy sets the Cross-Origin-Resource-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same middleware for chaining.
+// header. It returns the same handler for chaining.
 //
 // Default: "same-origin"
-func (me *Middleware) WithCrossOriginResourcePolicy(s string) *Middleware {
+func (me *Handler) WithCrossOriginResourcePolicy(s string) *Handler {
 	me.crossOriginResourcePolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithOriginAgentCluster sets the Origin-Agent-Cluster header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "?1"
-func (me *Middleware) WithOriginAgentCluster(s string) *Middleware {
+func (me *Handler) WithOriginAgentCluster(s string) *Handler {
 	me.originAgentCluster = strings.TrimSpace(s)
 	return me
 }
 
 // WithXDnsPrefetchControl sets the X-DNS-Prefetch-Control header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "off"
-func (me *Middleware) WithXDnsPrefetchControl(s string) *Middleware {
+func (me *Handler) WithXDnsPrefetchControl(s string) *Handler {
 	me.xDnsPrefetchControl = strings.TrimSpace(s)
 	return me
 }
 
 // WithXDownloadOptions sets the X-Download-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "noopen"
-func (me *Middleware) WithXDownloadOptions(s string) *Middleware {
+func (me *Handler) WithXDownloadOptions(s string) *Handler {
 	me.xDownloadOptions = strings.TrimSpace(s)
 	return me
 }
@@ -245,10 +243,10 @@ func (me *Middleware) WithXDownloadOptions(s string) *Middleware {
 // WithXPermittedCrossDomainPolicies sets the
 // X-Permitted-Cross-Domain-Policies header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same middleware for chaining.
+// It returns the same handler for chaining.
 //
 // Default: "none"
-func (me *Middleware) WithXPermittedCrossDomainPolicies(s string) *Middleware {
+func (me *Handler) WithXPermittedCrossDomainPolicies(s string) *Handler {
 	me.xPermittedCrossDomain = strings.TrimSpace(s)
 	return me
 }
@@ -256,8 +254,8 @@ func (me *Middleware) WithXPermittedCrossDomainPolicies(s string) *Middleware {
 // Handle sets the configured security headers, then runs the chain.
 // Headers with empty values are omitted, and Strict-Transport-Security is
 // only set when a positive max-age is configured (see
-// [Middleware.WithHstsMaxAge]).
-func (me *Middleware) Handle(ctx *moon.Context) error {
+// [Handler.WithHstsMaxAge]).
+func (me *Handler) Handle(ctx *moon.Context) error {
 	if me.skip != nil && me.skip(ctx) {
 		return ctx.Next()
 	}

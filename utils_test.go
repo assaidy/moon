@@ -46,15 +46,3 @@ func TestGenerateSecureToken(t *testing.T) {
 		})
 	}
 }
-
-func TestTakeHelpers(t *testing.T) {
-	t.Run("TakeSecond returns second", func(t *testing.T) {
-		require.Equal(t, "b", TakeSecond("a", "b"))
-		require.Equal(t, 2, TakeSecond(1, 2))
-	})
-
-	t.Run("TakeFirst returns first", func(t *testing.T) {
-		require.Equal(t, "a", TakeFirst("a", "b"))
-		require.Equal(t, 1, TakeFirst(1, 2))
-	})
-}

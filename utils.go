@@ -76,13 +76,3 @@ func GenerateSecureToken(length ...int) string {
 	rand.Read(buffer)
 	return base64.RawURLEncoding.EncodeToString(buffer)
 }
-
-// TakeSecond returns the second value, dropping the first.
-func TakeSecond[T1, T2 any](_ T1, a2 T2) T2 {
-	return a2
-}
-
-// TakeFirst returns the first value, dropping the second.
-func TakeFirst[T1, T2 any](a1 T1, _ T2) T1 {
-	return a1
-}

@@ -51,10 +51,13 @@ func TestRouter_IsValidMiddlewareRoutePrefix(t *testing.T) {
 		{name: "parameter", prefix: "/:id", want: false},
 		{name: "parameter with underscore", prefix: "/:user_id", want: false},
 		{name: "parameter in middle of route", prefix: "/users/:id", want: false},
-		{name: "wildcard", prefix: "/*", want: false},
-		{name: "wildcard after literal", prefix: "/api/*", want: false},
-		{name: "wildcard inside literal", prefix: "/us*er", want: false},
-		{name: "multiple wildcards", prefix: "/a*b*c", want: false},
+		// ============================================================
+		// Wildcards match any sequence
+		// ============================================================
+		{name: "wildcard", prefix: "/*", want: true},
+		{name: "wildcard after literal", prefix: "/api/*", want: true},
+		{name: "wildcard inside literal", prefix: "/us*er", want: true},
+		{name: "multiple wildcards", prefix: "/a*b*c", want: true},
 		// ============================================================
 		// Invalid characters
 		// ============================================================
@@ -91,7 +94,7 @@ func TestRouter_IsValidMiddlewareRoutePrefix(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, isValidMiddlewareRoutePrefix(tc.prefix))
+			require.Equal(t, tc.want, isValidMiddlewarePattern(tc.prefix))
 		})
 	}
 }
@@ -238,7 +241,7 @@ func TestRouter_AreParamNamesUnique(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, areParamNamesUnique(tc.pattern))
+			require.Equal(t, tc.want, areRouteParamNamesUnique(tc.pattern))
 		})
 	}
 }
@@ -356,12 +359,10 @@ func TestRouter_UsePanics(t *testing.T) {
 		"/api//users",
 		"/:id",
 		"/api/:id",
-		"/*",
-		"/api/*",
 	}
 
 	for _, prefix := range invalidPrefixes {
-		t.Run("invalid prefix "+prefix, func(t *testing.T) {
+		t.Run("invalid pattern "+prefix, func(t *testing.T) {
 			app := New()
 			require.Panics(t, func() { app.Use(prefix, dummy) })
 		})
@@ -578,7 +579,7 @@ func TestRouter_MatchPath(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			route := Route{pattern: tc.pattern}
+			route := RouteEntry{pattern: tc.pattern}
 			gotParams, gotMatch := route.matchPath(tc.path)
 			require.Equal(t, tc.wantMatch, gotMatch)
 			require.Equal(t, tc.wantParams, gotParams)
@@ -599,7 +600,7 @@ func TestRouter_Dispatch(t *testing.T) {
 			app := New()
 			var called []string
 
-			app.Use("/api", newHandler("middleware", &called))
+			app.Use("/api/*", newHandler("middleware", &called))
 			app.Map(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users/123", nil))
@@ -612,7 +613,7 @@ func TestRouter_Dispatch(t *testing.T) {
 			var called []string
 
 			app.Map(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
-			app.Use("/api", newHandler("middleware", &called))
+			app.Use("/api/*", newHandler("middleware", &called))
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users/123", nil))
 			require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -620,12 +621,12 @@ func TestRouter_Dispatch(t *testing.T) {
 		})
 	})
 
-	t.Run("nested prefixes", func(t *testing.T) {
+	t.Run("nested patterns", func(t *testing.T) {
 		app := New()
 		var called []string
 
-		app.Use("/api", newHandler("api", &called))
-		app.Use("/api/users", newHandler("users", &called))
+		app.Use("/api/*", newHandler("api", &called))
+		app.Use("/api/users/*", newHandler("users", &called))
 		app.Map(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users/123", nil))
@@ -633,13 +634,13 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, []string{"api", "users", "handler"}, called)
 	})
 
-	t.Run("use merges parent prefixes", func(t *testing.T) {
+	t.Run("use merges parent patterns", func(t *testing.T) {
 		app := New()
 		var called []string
 
-		app.Use("/api", newHandler("api", &called))
-		app.Use("/api/v1", newHandler("v1", &called))
-		app.Use("/api/v1/admin", newHandler("admin", &called))
+		app.Use("/api/*", newHandler("api", &called))
+		app.Use("/api/v1/*", newHandler("v1", &called))
+		app.Use("/api/v1/admin/*", newHandler("admin", &called))
 		app.Map(http.MethodGet, "/api/v1/admin/users", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil))
@@ -651,7 +652,7 @@ func TestRouter_Dispatch(t *testing.T) {
 		app := New()
 		var called []string
 
-		app.Use("/api", newHandler("middleware", &called))
+		app.Use("/api/users", newHandler("middleware", &called))
 		app.Map(http.MethodGet, "/api/users", newHandler("get", &called))
 		app.Map(http.MethodPost, "/api/users", newHandler("post", &called))
 
@@ -666,30 +667,48 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, []string{"middleware", "post"}, called)
 	})
 
-	t.Run("raw string prefix matching", func(t *testing.T) {
+	t.Run("exact pattern matching", func(t *testing.T) {
 		app := New()
 		var called []string
 
 		app.Use("/api", newHandler("middleware", &called))
-		app.Map(http.MethodGet, "/api/users", newHandler("api", &called))
-		app.Map(http.MethodGet, "/api2/users", newHandler("api2", &called))
+		app.Map(http.MethodGet, "/api", newHandler("api", &called))
+		app.Map(http.MethodGet, "/api/users", newHandler("users", &called))
 
-		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil))
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		require.Equal(t, []string{"middleware", "api"}, called)
 
 		called = nil
-		resp = app.Test(httptest.NewRequest(http.MethodGet, "/api2/users", nil))
+		resp = app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, []string{"middleware", "api2"}, called)
+		require.Equal(t, []string{"users"}, called)
 	})
 
-	t.Run("subsequent prefixes inherit parent middleware", func(t *testing.T) {
+	t.Run("catch-all runs for every endpoint", func(t *testing.T) {
 		app := New()
 		var called []string
 
-		app.Use("/x", newHandler("x", &called))
-		app.Use("/x/y", newHandler("x/y", &called))
+		app.Use("/*", newHandler("middleware", &called))
+		app.Map(http.MethodGet, "/api", newHandler("api", &called))
+		app.Map(http.MethodGet, "/other", newHandler("other", &called))
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, []string{"middleware", "api"}, called)
+
+		called = nil
+		resp = app.Test(httptest.NewRequest(http.MethodGet, "/other", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, []string{"middleware", "other"}, called)
+	})
+
+	t.Run("subsequent patterns inherit parent middleware", func(t *testing.T) {
+		app := New()
+		var called []string
+
+		app.Use("/x/*", newHandler("x", &called))
+		app.Use("/x/y/*", newHandler("x/y", &called))
 		app.Map(http.MethodGet, "/x/y/users", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x/y/users", nil))
@@ -697,15 +716,31 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, []string{"x", "x/y", "handler"}, called)
 	})
 
-	t.Run("middleware-only route handles request", func(t *testing.T) {
+	t.Run("middleware alone is not an endpoint", func(t *testing.T) {
 		app := New()
 		var called []string
 
-		app.Use("/x", newHandler("middleware", &called))
+		app.Use("/*", newHandler("middleware", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, []string{"middleware"}, called)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.Empty(t, called)
+	})
+
+	t.Run("unmatched paths run no middlewares", func(t *testing.T) {
+		app := New()
+		var called []string
+
+		app.Use("/*", newHandler("middleware", &called))
+		app.Map(http.MethodGet, "/users", newHandler("handler", &called))
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.Empty(t, called)
+
+		resp = app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
+		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+		require.Empty(t, called)
 	})
 
 	t.Run("wildcard matches", func(t *testing.T) {
@@ -817,13 +852,13 @@ func TestRouter_Dispatch(t *testing.T) {
 			ctx.WriteStatus(http.StatusTeapot)
 		})
 
-		app.Use("/", func(ctx *Context) error {
+		app.Use("/*", func(ctx *Context) error {
 			order = append(order, "mw1-before")
 			err := ctx.Next()
 			order = append(order, "mw1-after")
 			return err
 		})
-		app.Use("/x", func(ctx *Context) error {
+		app.Use("/x/*", func(ctx *Context) error {
 			order = append(order, "mw2")
 			return ctx.Next()
 		})

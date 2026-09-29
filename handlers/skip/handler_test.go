@@ -44,7 +44,7 @@ func TestHandle(t *testing.T) {
 			predicateRan := false
 			wrappedRan := false
 
-			mw := New(
+			h := New(
 				func(ctx *moon.Context) error {
 					wrappedRan = true
 					if tc.wantErr != nil {
@@ -58,7 +58,7 @@ func TestHandle(t *testing.T) {
 				},
 			)
 
-			app.Use("/", mw.Handle)
+			app.Use("/*", h.Handle)
 			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "downstream")
 			})

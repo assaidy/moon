@@ -12,13 +12,13 @@ import (
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name       string
-		middleware *Middleware
+		handler    *Handler
 		wantHeader map[string]string
 		wantAbsent []string
 	}{
 		{
-			name:       "defaults",
-			middleware: New(),
+			name:    "defaults",
+			handler: New(),
 			wantHeader: map[string]string{
 				"X-XSS-Protection":                  "0",
 				"X-Content-Type-Options":            "nosniff",
@@ -41,7 +41,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "custom values",
-			middleware: New().
+			handler: New().
 				WithXssProtection("1; mode=block").
 				WithContentTypeNoSniff("nosniff").
 				WithXFrameOptions("DENY").
@@ -79,7 +79,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "csp report only",
-			middleware: New().
+			handler: New().
 				WithContentSecurityPolicy("default-src 'self'").
 				WithCspReportOnly(true),
 			wantHeader: map[string]string{
@@ -91,7 +91,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "disabled headers are omitted",
-			middleware: New().
+			handler: New().
 				WithXssProtection("").
 				WithXFrameOptions("").
 				WithReferrerPolicy(""),
@@ -106,7 +106,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "skipped request omits headers",
-			middleware: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New().WithSkip(func(ctx *moon.Context) bool {
 				return true
 			}),
 			wantHeader: nil,
@@ -122,7 +122,7 @@ func TestHandle(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Use("/", tc.middleware.Handle)
+			app.Use("/*", tc.handler.Handle)
 			app.Map(http.MethodGet, "/secure", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "hello")
 			})
@@ -142,41 +142,41 @@ func TestHandle(t *testing.T) {
 
 func TestHandleHsts(t *testing.T) {
 	testCases := []struct {
-		name       string
-		middleware *Middleware
-		want       []string
+		name    string
+		handler *Handler
+		want    []string
 	}{
 		{
-			name:       "disabled by default",
-			middleware: New(),
-			want:       nil,
+			name:    "disabled by default",
+			handler: New(),
+			want:    nil,
 		},
 		{
-			name:       "max age only",
-			middleware: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(false),
-			want:       []string{"max-age=31536000"},
+			name:    "max age only",
+			handler: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(false),
+			want:    []string{"max-age=31536000"},
 		},
 		{
-			name:       "include subdomains",
-			middleware: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true),
-			want:       []string{"max-age=31536000", "includeSubDomains"},
+			name:    "include subdomains",
+			handler: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true),
+			want:    []string{"max-age=31536000", "includeSubDomains"},
 		},
 		{
-			name:       "include subdomains and preload",
-			middleware: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true),
-			want:       []string{"max-age=31536000", "includeSubDomains", "preload"},
+			name:    "include subdomains and preload",
+			handler: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true),
+			want:    []string{"max-age=31536000", "includeSubDomains", "preload"},
 		},
 		{
-			name:       "zero max age omits directives",
-			middleware: New().WithHstsMaxAge(0).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true),
-			want:       nil,
+			name:    "zero max age omits directives",
+			handler: New().WithHstsMaxAge(0).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true),
+			want:    nil,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Use("/", tc.middleware.Handle)
+			app.Use("/*", tc.handler.Handle)
 			app.Map(http.MethodGet, "/secure", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "hello")
 			})

@@ -16,7 +16,7 @@ import (
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name         string
-		middleware   *Middleware
+		handler      *Handler
 		incoming     string
 		sendHeader   bool
 		header       string
@@ -26,7 +26,7 @@ func TestHandle(t *testing.T) {
 	}{
 		{
 			name:         "reuses valid incoming",
-			middleware:   nil,
+			handler:      nil,
 			incoming:     "abc-123",
 			sendHeader:   true,
 			header:       "X-Request-ID",
@@ -34,7 +34,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name:         "accepts inside spaces",
-			middleware:   nil,
+			handler:      nil,
 			incoming:     "ab cd",
 			sendHeader:   true,
 			header:       "X-Request-ID",
@@ -53,7 +53,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name:       "generates when incoming invalid",
-			middleware: nil,
+			handler:    nil,
 			incoming:   "a\x7fb",
 			sendHeader: true,
 			header:     "X-Request-ID",
@@ -61,25 +61,25 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name:         "trims generated value",
-			middleware:   New().WithGenerator(func() string { return "  xyz  " }),
+			handler:      New().WithGenerator(func() string { return "  xyz  " }),
 			header:       "X-Request-ID",
 			wantResponse: "xyz",
 		},
 		{
 			name:         "custom generator",
-			middleware:   New().WithGenerator(func() string { return "fixed-id" }),
+			handler:      New().WithGenerator(func() string { return "fixed-id" }),
 			header:       "X-Request-ID",
 			wantResponse: "fixed-id",
 		},
 		{
 			name:       "falls back after invalid generator",
-			middleware: New().WithGenerator(func() string { return "\x01" }),
+			handler:    New().WithGenerator(func() string { return "\x01" }),
 			header:     "X-Request-ID",
 			wantGenLen: 43,
 		},
 		{
 			name:         "custom header",
-			middleware:   New().WithHeader("X-Correlation-ID"),
+			handler:      New().WithHeader("X-Correlation-ID"),
 			incoming:     "corr-1",
 			sendHeader:   true,
 			header:       "X-Correlation-ID",
@@ -87,7 +87,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "skipped request sets nothing",
-			middleware: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New().WithSkip(func(ctx *moon.Context) bool {
 				return true
 			}),
 			incoming:    "abc-123",
@@ -101,13 +101,13 @@ func TestHandle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var fromCtx string
 
-			mw := tc.middleware
-			if mw == nil {
-				mw = New()
+			h := tc.handler
+			if h == nil {
+				h = New()
 			}
 
 			app := moon.New()
-			app.Use("/", mw.Handle)
+			app.Use("/*", h.Handle)
 			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				fromCtx = GetFromContext(ctx)
 				return ctx.Write(http.StatusOK, "hello")
@@ -140,7 +140,7 @@ func TestHandle(t *testing.T) {
 	}
 }
 
-// The middleware does not trim the incoming header itself: the HTTP server
+// The handler does not trim the incoming header itself: the HTTP server
 // strips edge whitespace while parsing. Pinned here so the premise in [New]
 // stays true.
 func TestIncomingHeaderArrivesTrimmed(t *testing.T) {
@@ -180,9 +180,9 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 func TestLogsRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
 	app := moon.New().WithLogger(slog.New(logs)).WithRequestLogging(true)
-	mw := New()
-	app.RegisterRequestLoggingEntry(mw.GetRequestLoggingEntry())
-	app.Use("/", mw.Handle)
+	h := New()
+	app.RegisterRequestLoggingEntry(h.GetRequestLoggingEntry())
+	app.Use("/*", h.Handle)
 	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		return ctx.Write(http.StatusOK, "hello")
 	})
