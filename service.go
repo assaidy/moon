@@ -31,6 +31,18 @@ type Service interface {
 	// TODO: create a utility to track availability inside services.
 }
 
+// AreAllServicesAvailable reports whether every given service is non-nil
+// and available (see [Service.IsAvailable]). It returns true when called
+// with no services.
+func AreAllServicesAvailable(services ...Service) bool {
+	for _, s := range services {
+		if s == nil || !s.IsAvailable() {
+			return false
+		}
+	}
+	return true
+}
+
 type serviceInfo struct {
 	type_   reflect.Type
 	started bool
@@ -43,7 +55,7 @@ type serviceInfo struct {
 // It panics if a service of the same type is already registered.
 // The service must not be nil.
 func (me *App) AddService[T Service](s T) {
-	Assert(!isNil(s), "service cannot be nil")
+	Assert(!IsNilValue(s), "service cannot be nil")
 	t := reflect.TypeOf(s)
 	Assert(
 		slices.IndexFunc(me.services, func(s serviceInfo) bool { return s.type_ == t }) == -1,

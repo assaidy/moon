@@ -43,30 +43,41 @@ func (me *App) registerRootHandler() {
 }
 
 func (me *App) dispatch(ctx *Context) {
-	for _, route := range me.routesPerMethod[ctx.GetMethod()] {
-		if params, ok := route.matchPath(ctx.GetPath()); ok {
-			ctx.pattern = route.pattern
-			ctx.params = params
-			ctx.handlers = []Handler{func(ctx *Context) error {
-				// Bodies declaring more than the read limit are rejected without reading
-				// them. Unknown sizes are enforced while reading instead.
-				if ctx.request.ContentLength > int64(me.readLimit) {
-					return ErrRequestEntityTooLarge
-				}
-				return ctx.Next()
-			}}
-			for _, middleware := range me.middlewares {
-				if middleware.order >= route.order {
-					continue
-				}
-				if middleware.matchPath(ctx.GetPath()) {
-					ctx.handlers = append(ctx.handlers, middleware.handlers...)
-				}
-			}
-			ctx.middlewareCount = len(ctx.handlers)
-			ctx.handlers = append(ctx.handlers, route.handlers...)
-			return
+	ctx.handlers = []Handler{func(ctx *Context) error {
+		// Bodies declaring more than the read limit are rejected without reading
+		// them. Unknown sizes are enforced while reading instead.
+		if ctx.request.ContentLength > int64(me.readLimit) {
+			return ErrRequestEntityTooLarge
 		}
+		return ctx.Next()
+	}}
+
+	var targetRoute *RouteEntry
+
+	routes := me.routesPerMethod[ctx.GetMethod()]
+	for i := range routes {
+		if params, ok := routes[i].matchPath(ctx.GetPath()); ok {
+			ctx.pattern = routes[i].pattern
+			ctx.params = params
+			targetRoute = &routes[i]
+			break
+		}
+	}
+
+	for _, middleware := range me.middlewares {
+		if targetRoute != nil && middleware.order >= targetRoute.order {
+			// only filter by order if we found a matching route.
+			continue
+		}
+		if middleware.matchPath(ctx.GetPath()) {
+			ctx.handlers = append(ctx.handlers, middleware.handlers...)
+		}
+	}
+	ctx.middlewareCount = len(ctx.handlers)
+
+	if targetRoute != nil {
+		ctx.handlers = append(ctx.handlers, targetRoute.handlers...)
+		return
 	}
 
 	for method, routes := range me.routesPerMethod {
@@ -75,13 +86,13 @@ func (me *App) dispatch(ctx *Context) {
 		}
 		for _, route := range routes {
 			if _, ok := route.matchPath(ctx.GetPath()); ok {
-				ctx.handlers = []Handler{func(ctx *Context) error { return ErrMethodNotAllowed }}
+				ctx.handlers = append(ctx.handlers, func(ctx *Context) error { return ErrMethodNotAllowed })
 				return
 			}
 		}
 	}
 
-	ctx.handlers = []Handler{func(ctx *Context) error { return ErrInvalidEndpoint }}
+	ctx.handlers = append(ctx.handlers, func(ctx *Context) error { return ErrInvalidEndpoint })
 }
 
 // Common HTTP methods.
@@ -102,9 +113,9 @@ const (
 
 // Map registers one or more handlers for method + pattern.
 //
-// method is case sensitive and must be all-caps (e.g. "GET", not "get").
-// Prefer the [MethodGet], [MethodPost], ... constants, or the [App.MapGet],
-// [App.MapPost], ... shortcuts.
+// method is trimmed and uppercased before validation, so "get", "GET" and
+// " GET " are equivalent. Prefer the [MethodGet], [MethodPost], ...
+// constants, or the [App.MapGet], [App.MapPost], ... shortcuts.
 //
 // pattern grammar:
 //
@@ -119,17 +130,19 @@ const (
 // Does nothing if no handlers are given. Handlers passed
 // in one call run in order via [Context.Next].
 //
-// Middlewares registered with [App.Use] before this call whose pattern
-// matches the request path run before handlers. A path match with an
-// unregistered method invokes the app's [ErrorHandler] with
-// [ErrMethodNotAllowed]; no match invokes it with [ErrInvalidEndpoint],
-// so a custom handler can inspect or override them. Both carry an empty
-// [Context.GetPattern] since no route pattern matched, and no middlewares
-// run without a route match.
+// Request flow: middlewares registered with [App.Use] before this call
+// whose pattern matches the request path run first, in registration order,
+// then these handlers. When the path matches but the method is unregistered,
+// the app's [ErrorHandler] is invoked with [ErrMethodNotAllowed] after any
+// matching middlewares; when nothing matches it is invoked with
+// [ErrInvalidEndpoint] after any matching middlewares, so a custom handler
+// can inspect or override them. [Context.GetPattern] holds the route pattern
+// when a route matches, otherwise "".
 func (me *App) Map(method string, pattern string, handlers ...Handler) {
-	Assert(isValidHttpMethod(method), "invalid http method")
-	Assert(isValidRoutePattern(pattern), "invalid route pattern")
-	Assert(areRouteParamNamesUnique(pattern), "duplicate param names are not allowed")
+	method = strings.ToUpper(strings.TrimSpace(method))
+	Assert(IsValidHttpMethod(method), "invalid http method")
+	Assert(IsValidRoutePattern(pattern), "invalid route pattern")
+	Assert(AreRouteParamNamesUnique(pattern), "duplicate param names are not allowed")
 	Assert(
 		slices.IndexFunc(me.routesPerMethod[method], func(r RouteEntry) bool { return r.method == method && r.pattern == pattern }) == -1,
 		"method with this pattern already registered",
@@ -150,22 +163,6 @@ func (me *App) Map(method string, pattern string, handlers ...Handler) {
 var routePatternRegex = regexp.MustCompile(
 	`^/(?:(?::[A-Za-z0-9_-]+|[A-Za-z0-9_*-]+)(?:/(?::[A-Za-z0-9_-]+|[A-Za-z0-9_*-]+))*)?$`,
 )
-
-func isValidRoutePattern(pattern string) bool {
-	return routePatternRegex.MatchString(pattern)
-}
-
-func areRouteParamNamesUnique(pattern string) bool {
-	paramNames := routeParamRegex.FindAllStringSubmatch(pattern, -1)
-	seen := make(map[string]struct{}, len(paramNames))
-	for _, match := range paramNames {
-		if _, ok := seen[match[1]]; ok {
-			return false
-		}
-		seen[match[1]] = struct{}{}
-	}
-	return true
-}
 
 // MapGet registers handlers for the GET method. See [App.Map].
 func (me *App) MapGet(pattern string, handlers ...Handler) {
@@ -257,14 +254,20 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 //
 // Panics on invalid pattern. Does nothing if no middlewares are given.
 // Registration order matters: only [App.Map] routes registered after
-// this call observe it, in registration order. Middlewares only run when
-// a route matches; they add behaviour to existing endpoints and never
-// serve as endpoints on their own.
+// this call observe it, in registration order.
+//
+// Middlewares run first when their pattern matches the request path, even
+// when no route matches: the chain is middlewares, then the matched route
+// if any, otherwise [ErrMethodNotAllowed] when another method matches the
+// path, otherwise [ErrInvalidEndpoint]. [Context.GetPattern] holds the
+// route pattern when a route matches, otherwise "".
 //
 // Each middleware must call [Context.Next] to continue the chain; a
 // returned error from the chain is passed to the app's [ErrorHandler].
+// A middleware that writes a response without calling [Context.Next]
+// short-circuits the chain, so it can serve requests without a route.
 func (me *App) Use(pattern string, handlers ...Handler) {
-	Assert(isValidMiddlewarePattern(pattern), "invalid middleware pattern")
+	Assert(IsValidMiddlewarePattern(pattern), "invalid middleware pattern")
 
 	if len(handlers) == 0 {
 		return
@@ -281,25 +284,11 @@ var middlewarePatternRegex = regexp.MustCompile(
 	`^/(?:[A-Za-z0-9_*\-]+(?:/[A-Za-z0-9_*\-]+)*)?$`,
 )
 
-func isValidMiddlewarePattern(pattern string) bool {
-	return middlewarePatternRegex.MatchString(pattern)
-}
-
-func isValidHttpMethod(method string) bool {
-	switch method {
-	case MethodGet,
-		MethodHead,
-		MethodPost,
-		MethodPut,
-		MethodPatch,
-		MethodDelete,
-		MethodConnect,
-		MethodOptions,
-		MethodTrace,
-		MethodQuery:
-		return true
-	}
-	return false
+// UseAlways registers middlewares that run for every path.
+// It is shorthand for [App.Use] with the catch-all "/*" pattern.
+// See [App.Use] for the middleware chain semantics.
+func (me *App) UseAlways(handlers ...Handler) {
+	me.Use("/*", handlers...)
 }
 
 // Handler is a middleware or route handler.
@@ -352,8 +341,7 @@ func (me RouteEntry) matchPath(path string) (map[string]string, bool) {
 	regexString = "^" + regexString + "$"
 
 	// Compile final regex
-	compiledRegex, err := regexp.Compile(regexString)
-	Assert(err == nil, "must be nil as we validated the pattern before registeration")
+	compiledRegex := regexp.MustCompile(regexString)
 
 	// Execute the match against the target string
 	matches := compiledRegex.FindStringSubmatch(path)
@@ -388,8 +376,7 @@ func (me MiddlewareEntry) matchPath(path string) bool {
 	regexString = "^" + regexString + "$"
 
 	// Compile final regex
-	compiledRegex, err := regexp.Compile(regexString)
-	Assert(err == nil, "must be nil as we validated the pattern before registeration")
+	compiledRegex := regexp.MustCompile(regexString)
 
 	return compiledRegex.MatchString(path)
 }

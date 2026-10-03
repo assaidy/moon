@@ -23,7 +23,11 @@ func Assert(condition bool, message ...string) {
 	}
 }
 
-func isNil(value any) bool {
+// IsNilValue reports whether value is nil, including typed nils.
+// It returns true for a nil interface and for nil chans, funcs, maps,
+// pointers, unsafe pointers, interfaces and slices. All other values,
+// including zero values like 0 or "", return false.
+func IsNilValue(value any) bool {
 	if value == nil {
 		return true
 	}
@@ -75,4 +79,52 @@ func GenerateSecureToken(length ...int) string {
 	buffer := make([]byte, n)
 	rand.Read(buffer)
 	return base64.RawURLEncoding.EncodeToString(buffer)
+}
+
+// IsValidHttpMethod reports whether method is a supported HTTP method.
+// It is case sensitive and expects the canonical all-caps form
+// (e.g. "GET", not "get"). See the Method* constants and [App.Map],
+// which normalizes its input with [strings.ToUpper] and [strings.TrimSpace]
+// before validating.
+func IsValidHttpMethod(method string) bool {
+	switch method {
+	case MethodGet,
+		MethodHead,
+		MethodPost,
+		MethodPut,
+		MethodPatch,
+		MethodDelete,
+		MethodConnect,
+		MethodOptions,
+		MethodTrace,
+		MethodQuery:
+		return true
+	}
+	return false
+}
+
+// IsValidRoutePattern reports whether pattern is a valid [App.Map] route
+// pattern. See [App.Map] for the grammar.
+func IsValidRoutePattern(pattern string) bool {
+	return routePatternRegex.MatchString(pattern)
+}
+
+// IsValidMiddlewarePattern reports whether pattern is a valid [App.Use]
+// middleware pattern. See [App.Use] for the grammar.
+func IsValidMiddlewarePattern(pattern string) bool {
+	return middlewarePatternRegex.MatchString(pattern)
+}
+
+// AreRouteParamNamesUnique reports whether all ":param" names in a route
+// pattern are distinct. [App.Map] panics on duplicates.
+func AreRouteParamNamesUnique(pattern string) bool {
+	paramNames := routeParamRegex.FindAllStringSubmatch(pattern, -1)
+	seen := make(map[string]struct{}, len(paramNames))
+	for _, match := range paramNames {
+		if _, ok := seen[match[1]]; ok {
+			return false
+		}
+		seen[match[1]] = struct{}{}
+	}
+	return true
 }

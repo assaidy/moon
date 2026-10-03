@@ -36,7 +36,7 @@ func TestAppOptions_Defaults(t *testing.T) {
 	require.NotNil(t, app.httpServer)
 	require.NotNil(t, app.dependencies)
 	require.Empty(t, app.services)
-	require.False(t, app.httpServer.DisableGeneralOptionsHandler)
+	require.True(t, app.httpServer.DisableGeneralOptionsHandler)
 	require.False(t, app.httpServer.DisableClientPriority)
 }
 

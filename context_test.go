@@ -1311,45 +1311,6 @@ func TestContext_State(t *testing.T) {
 	})
 }
 
-func TestContext_IsFinal(t *testing.T) {
-	t.Run("first false last true", func(t *testing.T) {
-		var finals []bool
-
-		app := New()
-		app.Map(http.MethodGet, "/chain",
-			func(ctx *Context) error {
-				finals = append(finals, ctx.IsFinal())
-				require.NoError(t, ctx.Next())
-				finals = append(finals, ctx.IsFinal())
-				return nil
-			},
-			func(ctx *Context) error {
-				finals = append(finals, ctx.IsFinal())
-				require.NoError(t, ctx.Next())
-				finals = append(finals, ctx.IsFinal())
-				return nil
-			},
-		)
-
-		app.Test(httptest.NewRequest(http.MethodGet, "/chain", nil))
-		require.Equal(t, []bool{false, true, true, true}, finals)
-	})
-
-	t.Run("single handler is final Next returns nil", func(t *testing.T) {
-		app := New()
-		app.Map(http.MethodGet, "/", func(ctx *Context) error {
-			require.True(t, ctx.IsFinal())
-			require.NoError(t, ctx.Next())
-			require.True(t, ctx.IsFinal())
-			require.NoError(t, ctx.Next())
-			require.True(t, ctx.IsFinal())
-			return nil
-		})
-
-		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
-	})
-}
-
 func TestContext_IsMiddleware(t *testing.T) {
 	t.Run("middleware true route false", func(t *testing.T) {
 		var mids []bool

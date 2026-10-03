@@ -225,9 +225,9 @@ func (me *Context) GetMethod() string {
 }
 
 // GetPattern returns the route pattern that matched the request
-// (e.g. "/users/:id"). It is empty for middleware-only requests and for
-// unmatched requests ([ErrInvalidEndpoint], [ErrMethodNotAllowed]),
-// since the pattern is only set for routes registered by [App.Map].
+// (e.g. "/users/:id"). It is empty when no route matches, including
+// middleware-only requests and unmatched requests ([ErrInvalidEndpoint],
+// [ErrMethodNotAllowed]). See [App.Map].
 func (me *Context) GetPattern() string {
 	return me.pattern
 }
@@ -487,7 +487,7 @@ func (me *Context) WriteMessagePack(statusCode int, value any) error {
 // Next invokes the next handler in the chain and returns its error.
 // It returns nil when the chain is exhausted.
 func (me *Context) Next() error {
-	if me.IsFinal() {
+	if me.nextHandlerIndex >= len(me.handlers) {
 		return nil
 	}
 
@@ -496,17 +496,10 @@ func (me *Context) Next() error {
 	return me.handlers[index](me)
 }
 
-// IsFinal reports whether no handlers remain in the chain. It is true inside
-// the last handler and after the chain is exhausted; [Context.Next] then
-// returns nil without invoking anything.
-func (me *Context) IsFinal() bool {
-	return me.nextHandlerIndex == len(me.handlers)
-}
-
 // IsMiddleware reports whether the current handler runs as a middleware.
 // It is true inside handlers registered via [App.Use].
 func (me *Context) IsMiddleware() bool {
-	return me.middlewareCount > 0 && me.nextHandlerIndex <= me.middlewareCount
+	return me.nextHandlerIndex > 0 && me.nextHandlerIndex <= me.middlewareCount
 }
 
 var _ context.Context = (*Context)(nil)

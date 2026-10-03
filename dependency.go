@@ -6,7 +6,7 @@ import "reflect"
 // If a dependency of the same type is already registered, it is replaced.
 // The dependency must not be nil.
 func (me *App) AddDependency(d any) {
-	Assert(!isNil(d), "dependency cannot be nil")
+	Assert(!IsNilValue(d), "dependency cannot be nil")
 	me.dependencies[reflect.TypeOf(d)] = d
 }
 

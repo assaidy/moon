@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRouter_IsValidMiddlewareRoutePrefix(t *testing.T) {
+func TestRouter_IsValidMiddlewarePattern(t *testing.T) {
 	var testCases = []struct {
 		name   string
 		prefix string
@@ -94,7 +94,7 @@ func TestRouter_IsValidMiddlewareRoutePrefix(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, isValidMiddlewarePattern(tc.prefix))
+			require.Equal(t, tc.want, IsValidMiddlewarePattern(tc.prefix))
 		})
 	}
 }
@@ -217,7 +217,7 @@ func TestRouter_IsValidRoutePattern(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, isValidRoutePattern(tc.route))
+			require.Equal(t, tc.want, IsValidRoutePattern(tc.route))
 		})
 	}
 }
@@ -241,7 +241,7 @@ func TestRouter_AreParamNamesUnique(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, areRouteParamNamesUnique(tc.pattern))
+			require.Equal(t, tc.want, AreRouteParamNamesUnique(tc.pattern))
 		})
 	}
 }
@@ -402,7 +402,7 @@ func TestRouter_IsValidHttpMethod(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		require.Equal(t, tc.expected, isValidHttpMethod(tc.input))
+		require.Equal(t, tc.expected, IsValidHttpMethod(tc.input))
 	}
 }
 
@@ -716,7 +716,7 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, []string{"x", "x/y", "handler"}, called)
 	})
 
-	t.Run("middleware alone is not an endpoint", func(t *testing.T) {
+	t.Run("middleware runs without an endpoint", func(t *testing.T) {
 		app := New()
 		var called []string
 
@@ -724,10 +724,10 @@ func TestRouter_Dispatch(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
-		require.Empty(t, called)
+		require.Equal(t, []string{"middleware"}, called)
 	})
 
-	t.Run("unmatched paths run no middlewares", func(t *testing.T) {
+	t.Run("middlewares run on unmatched paths", func(t *testing.T) {
 		app := New()
 		var called []string
 
@@ -736,11 +736,55 @@ func TestRouter_Dispatch(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
-		require.Empty(t, called)
+		require.Equal(t, []string{"middleware"}, called)
 
+		called = nil
 		resp = app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
 		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
-		require.Empty(t, called)
+		require.Equal(t, []string{"middleware"}, called)
+	})
+
+	t.Run("middleware sees empty pattern when no route matches", func(t *testing.T) {
+		app := New()
+		var got string
+
+		app.Use("/api/*", func(ctx *Context) error {
+			got = ctx.GetPattern()
+			return ctx.Next()
+		})
+		app.Map(http.MethodGet, "/other", func(ctx *Context) error { return nil })
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/missing", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.Equal(t, "", got)
+	})
+
+	t.Run("unmatched with no middleware has empty pattern", func(t *testing.T) {
+		app := New()
+		var got string
+		app.WithErrorHandler(func(ctx *Context, err error) {
+			got = ctx.GetPattern()
+			ctx.WriteStatus(http.StatusNotFound)
+		})
+		app.Map(http.MethodGet, "/users", func(ctx *Context) error { return nil })
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.Equal(t, "", got)
+	})
+
+	t.Run("middleware can short-circuit without a route", func(t *testing.T) {
+		app := New()
+
+		app.Use("/*", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "from-middleware")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, "from-middleware", string(raw))
 	})
 
 	t.Run("wildcard matches", func(t *testing.T) {

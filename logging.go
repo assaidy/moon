@@ -12,6 +12,8 @@ import (
 // Reserved entries (duration, client, method, path, status, error) are always
 // present; custom entries are appended in registration order.
 func (me *App) logRequest(ctx *Context) {
+	// TODO: make reserved entries default and can be configured and extended.
+	// put read entries in global vars.
 	me.requestLoggingEntriesMutex.RLock()
 	entries := make([]RequestLoggingEntry, len(me.registeredRequestLoggingEntries))
 	copy(entries, me.registeredRequestLoggingEntries)

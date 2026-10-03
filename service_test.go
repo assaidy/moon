@@ -111,6 +111,38 @@ func TestService_AddGet(t *testing.T) {
 	})
 }
 
+type stubAvailability struct {
+	name      string
+	available bool
+}
+
+func (s stubAvailability) Name() string                 { return s.name }
+func (s stubAvailability) Start(context.Context) error { return nil }
+func (s stubAvailability) Stop(context.Context) error  { return nil }
+func (s stubAvailability) IsAvailable() bool            { return s.available }
+
+func TestAreAllServicesAvailable(t *testing.T) {
+	newAvail := func(available bool) stubAvailability {
+		return stubAvailability{name: "s", available: available}
+	}
+
+	t.Run("no services", func(t *testing.T) {
+		require.True(t, AreAllServicesAvailable())
+	})
+
+	t.Run("all available", func(t *testing.T) {
+		require.True(t, AreAllServicesAvailable(newAvail(true), newAvail(true)))
+	})
+
+	t.Run("one unavailable", func(t *testing.T) {
+		require.False(t, AreAllServicesAvailable(newAvail(true), newAvail(false)))
+	})
+
+	t.Run("nil service", func(t *testing.T) {
+		require.False(t, AreAllServicesAvailable(newAvail(true), nil))
+	})
+}
+
 func TestService_StartStop(t *testing.T) {
 	t.Run("sequential happy path", func(t *testing.T) {
 		app := New()

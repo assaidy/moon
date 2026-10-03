@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+// TODO: revise the configs and allow some args like -1
+
 // App is the HTTP server, router and owner of shared state, typed
 // dependencies and managed services. Build it with [New], chain the With*
 // methods to configure it, register routes with [App.Map] and [App.Use],
@@ -56,7 +58,7 @@ type App struct {
 func New() *App {
 	app := &App{
 		routesPerMethod:      make(map[string][]RouteEntry),
-		httpServer:           new(http.Server),
+		httpServer:           &http.Server{DisableGeneralOptionsHandler: true},
 		dependencies:         make(map[reflect.Type]any),
 		logger:               slog.Default(),
 		errorHandler:         DefaultErrorHandler,
@@ -124,7 +126,7 @@ func (me *App) WithRequestLogging(b bool) *App {
 // with a 200 OK status and a Content-Length of 0.
 // It returns the same app for chaining.
 //
-// Default: true
+// Default: false
 func (me *App) WithGeneralOptionsHandler(b bool) *App {
 	me.httpServer.DisableGeneralOptionsHandler = !b
 	return me
