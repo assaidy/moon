@@ -23,7 +23,7 @@ func (me *App) logRequest(ctx *Context) {
 	for _, e := range entries {
 		args = append(args, e.Key, e.ValueFunc(ctx))
 	}
-	me.logger.Info("request handled", args...)
+	me.options.logger.Info("request handled", args...)
 }
 
 // RequestLoggingEntry is a key/value pair logged for every handled request.

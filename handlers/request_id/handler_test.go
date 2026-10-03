@@ -61,25 +61,25 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name:         "trims generated value",
-			handler:      New().WithGenerator(func() string { return "  xyz  " }),
+			handler:      New(NewOptions().WithGenerator(func() string { return "  xyz  " })),
 			header:       "X-Request-ID",
 			wantResponse: "xyz",
 		},
 		{
 			name:         "custom generator",
-			handler:      New().WithGenerator(func() string { return "fixed-id" }),
+			handler:      New(NewOptions().WithGenerator(func() string { return "fixed-id" })),
 			header:       "X-Request-ID",
 			wantResponse: "fixed-id",
 		},
 		{
 			name:       "falls back after invalid generator",
-			handler:    New().WithGenerator(func() string { return "\x01" }),
+			handler:    New(NewOptions().WithGenerator(func() string { return "\x01" })),
 			header:     "X-Request-ID",
 			wantGenLen: 43,
 		},
 		{
 			name:         "custom header",
-			handler:      New().WithHeader("X-Correlation-ID"),
+			handler:      New(NewOptions().WithHeader("X-Correlation-ID")),
 			incoming:     "corr-1",
 			sendHeader:   true,
 			header:       "X-Correlation-ID",
@@ -87,9 +87,9 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "skipped request sets nothing",
-			handler: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New(NewOptions().WithSkip(func(ctx *moon.Context) bool {
 				return true
-			}),
+			})),
 			incoming:    "abc-123",
 			sendHeader:  true,
 			header:      "X-Request-ID",
@@ -169,9 +169,8 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 	require.Equal(t, "request_id", entry.Key)
 	require.NotNil(t, entry.ValueFunc)
 
-	custom := New().
-		WithRequestLoggingEntryKey("correlation_id").
-		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context) string { return "v" }).
+	custom := New(NewOptions().WithRequestLoggingEntryKey("correlation_id").
+		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context) string { return "v" })).
 		GetRequestLoggingEntry()
 	require.Equal(t, "correlation_id", custom.Key)
 	require.NotNil(t, custom.ValueFunc)
@@ -179,7 +178,7 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 
 func TestLogsRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
-	app := moon.New().WithLogger(slog.New(logs)).WithRequestLogging(true)
+	app := moon.New(moon.NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
 	h := New()
 	app.RegisterRequestLoggingEntry(h.GetRequestLoggingEntry())
 	app.Use("/*", h.Handle)

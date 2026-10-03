@@ -16,23 +16,23 @@ import (
 func TestAppOptions_Defaults(t *testing.T) {
 	app := New()
 
-	require.Equal(t, "", app.listenAddress)
-	require.Same(t, slog.Default(), app.logger)
-	require.NotNil(t, app.errorHandler)
-	require.False(t, app.enableRequestLogging)
-	require.False(t, app.preforkIsEnabled)
-	require.Equal(t, runtime.NumCPU(), app.preforkChildrenCount)
-	require.Equal(t, -1, app.preforkRetriesCount)
-	require.False(t, app.useTls)
-	require.Equal(t, "", app.certFile)
-	require.Equal(t, "", app.keyFile)
-	require.Equal(t, time.Duration(0), app.serviceStartTimeout)
-	require.Equal(t, time.Duration(0), app.serviceStopTimeout)
-	require.False(t, app.serviceStartParallel)
-	require.False(t, app.serviceStopParallel)
-	require.Equal(t, time.Duration(0), app.shutdownTimeout)
-	require.False(t, app.passLocalsToContext)
-	require.Equal(t, 4*1024*1024, app.readLimit)
+	require.Equal(t, "", app.options.listenAddress)
+	require.Same(t, slog.Default(), app.options.logger)
+	require.NotNil(t, app.options.errorHandler)
+	require.False(t, app.options.enableRequestLogging)
+	require.False(t, app.options.preforkIsEnabled)
+	require.Equal(t, runtime.NumCPU(), app.options.preforkChildrenCount)
+	require.Equal(t, -1, app.options.preforkRetriesCount)
+	require.False(t, app.options.useTls)
+	require.Equal(t, "", app.options.certFile)
+	require.Equal(t, "", app.options.keyFile)
+	require.Equal(t, time.Duration(0), app.options.serviceStartTimeout)
+	require.Equal(t, time.Duration(0), app.options.serviceStopTimeout)
+	require.False(t, app.options.serviceStartParallel)
+	require.False(t, app.options.serviceStopParallel)
+	require.Equal(t, time.Duration(0), app.options.shutdownTimeout)
+	require.False(t, app.options.passLocalsToContext)
+	require.Equal(t, 4*1024*1024, app.options.readLimit)
 	require.NotNil(t, app.httpServer)
 	require.NotNil(t, app.dependencies)
 	require.Empty(t, app.services)
@@ -41,23 +41,23 @@ func TestAppOptions_Defaults(t *testing.T) {
 }
 
 func TestAppOptions_WithListenAddress(t *testing.T) {
-	app := New().WithListenAddress(":8080")
-	require.Equal(t, ":8080", app.listenAddress)
+	app := New(NewAppOptions().WithListenAddress(":8080"))
+	require.Equal(t, ":8080", app.options.listenAddress)
 }
 
 func TestAppOptions_WithLogger(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
-	app := New().WithLogger(logger)
-	require.Same(t, logger, app.logger)
-	require.Panics(t, func() { New().WithLogger(nil) })
+	app := New(NewAppOptions().WithLogger(logger))
+	require.Same(t, logger, app.options.logger)
+	require.Panics(t, func() { New(NewAppOptions().WithLogger(nil)) })
 }
 
 func TestAppOptions_WithErrorHandler(t *testing.T) {
 	var captured error
-	app := New().WithErrorHandler(func(ctx *Context, err error) {
+	app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
 		captured = err
 		ctx.SetStatusCode(http.StatusTeapot)
-	})
+	}))
 	sentinel := errors.New("boom")
 	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 		return sentinel
@@ -66,152 +66,152 @@ func TestAppOptions_WithErrorHandler(t *testing.T) {
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 	require.Equal(t, http.StatusTeapot, resp.StatusCode)
 	require.Equal(t, sentinel, captured)
-	require.Panics(t, func() { New().WithErrorHandler(nil) })
+	require.Panics(t, func() { New(NewAppOptions().WithErrorHandler(nil)) })
 }
 
 func TestAppOptions_WithRequestLogging(t *testing.T) {
-	require.True(t, New().WithRequestLogging(true).enableRequestLogging)
-	require.False(t, New().enableRequestLogging)
+	require.True(t, New(NewAppOptions().WithRequestLogging(true)).options.enableRequestLogging)
+	require.False(t, New().options.enableRequestLogging)
 }
 
 func TestAppOptions_WithGeneralOptionsHandler(t *testing.T) {
-	require.False(t, New().WithGeneralOptionsHandler(true).httpServer.DisableGeneralOptionsHandler)
-	require.True(t, New().WithGeneralOptionsHandler(false).httpServer.DisableGeneralOptionsHandler)
+	require.False(t, New(NewAppOptions().WithGeneralOptionsHandler(true)).httpServer.DisableGeneralOptionsHandler)
+	require.True(t, New(NewAppOptions().WithGeneralOptionsHandler(false)).httpServer.DisableGeneralOptionsHandler)
 }
 
 func TestAppOptions_WithReadTimeout(t *testing.T) {
-	app := New().WithReadTimeout(time.Second)
+	app := New(NewAppOptions().WithReadTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.ReadTimeout)
-	require.Panics(t, func() { New().WithReadTimeout(0) })
-	require.Panics(t, func() { New().WithReadTimeout(-time.Second) })
+	require.Panics(t, func() { New(NewAppOptions().WithReadTimeout(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithReadTimeout(-time.Second)) })
 }
 
 func TestAppOptions_WithReadHeaderTimeout(t *testing.T) {
-	app := New().WithReadHeaderTimeout(time.Second)
+	app := New(NewAppOptions().WithReadHeaderTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.ReadHeaderTimeout)
-	require.Panics(t, func() { New().WithReadHeaderTimeout(0) })
-	require.Panics(t, func() { New().WithReadHeaderTimeout(-time.Second) })
+	require.Panics(t, func() { New(NewAppOptions().WithReadHeaderTimeout(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithReadHeaderTimeout(-time.Second)) })
 }
 
 func TestAppOptions_WithWriteTimeout(t *testing.T) {
-	app := New().WithWriteTimeout(time.Second)
+	app := New(NewAppOptions().WithWriteTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.WriteTimeout)
-	require.Panics(t, func() { New().WithWriteTimeout(0) })
-	require.Panics(t, func() { New().WithWriteTimeout(-time.Second) })
+	require.Panics(t, func() { New(NewAppOptions().WithWriteTimeout(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithWriteTimeout(-time.Second)) })
 }
 
 func TestAppOptions_WithIdleTimeout(t *testing.T) {
-	app := New().WithIdleTimeout(time.Second)
+	app := New(NewAppOptions().WithIdleTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.IdleTimeout)
-	require.Panics(t, func() { New().WithIdleTimeout(0) })
-	require.Panics(t, func() { New().WithIdleTimeout(-time.Second) })
+	require.Panics(t, func() { New(NewAppOptions().WithIdleTimeout(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithIdleTimeout(-time.Second)) })
 }
 
 func TestAppOptions_WithMaxHeaderBytes(t *testing.T) {
-	app := New().WithMaxHeaderBytes(1024)
+	app := New(NewAppOptions().WithMaxHeaderBytes(1024))
 	require.Equal(t, 1024, app.httpServer.MaxHeaderBytes)
-	require.Panics(t, func() { New().WithMaxHeaderBytes(0) })
-	require.Panics(t, func() { New().WithMaxHeaderBytes(-1) })
+	require.Panics(t, func() { New(NewAppOptions().WithMaxHeaderBytes(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithMaxHeaderBytes(-1)) })
 }
 
 func TestAppOptions_WithMaxHeaderValueCount(t *testing.T) {
-	app := New().WithMaxHeaderValueCount(10)
+	app := New(NewAppOptions().WithMaxHeaderValueCount(10))
 	require.Equal(t, 10, app.httpServer.MaxHeaderValueCount)
-	require.Panics(t, func() { New().WithMaxHeaderValueCount(0) })
-	require.Panics(t, func() { New().WithMaxHeaderValueCount(-1) })
+	require.Panics(t, func() { New(NewAppOptions().WithMaxHeaderValueCount(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithMaxHeaderValueCount(-1)) })
 }
 
 func TestAppOptions_WithPrefork(t *testing.T) {
-	require.True(t, New().WithPrefork(true).preforkIsEnabled)
-	require.False(t, New().WithPrefork(false).preforkIsEnabled)
+	require.True(t, New(NewAppOptions().WithPrefork(true)).options.preforkIsEnabled)
+	require.False(t, New(NewAppOptions().WithPrefork(false)).options.preforkIsEnabled)
 }
 
 func TestAppOptions_WithPreforkChildrenCount(t *testing.T) {
-	app := New().WithPreforkChildrenCount(3)
-	require.Equal(t, 3, app.preforkChildrenCount)
-	require.Panics(t, func() { New().WithPreforkChildrenCount(0) })
-	require.Panics(t, func() { New().WithPreforkChildrenCount(-1) })
+	app := New(NewAppOptions().WithPreforkChildrenCount(3))
+	require.Equal(t, 3, app.options.preforkChildrenCount)
+	require.Panics(t, func() { New(NewAppOptions().WithPreforkChildrenCount(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithPreforkChildrenCount(-1)) })
 }
 
 func TestAppOptions_WithPreforkRetriesCount(t *testing.T) {
-	require.Equal(t, 0, New().WithPreforkRetriesCount(0).preforkRetriesCount)
-	require.Equal(t, 7, New().WithPreforkRetriesCount(7).preforkRetriesCount)
-	require.Panics(t, func() { New().WithPreforkRetriesCount(-1) })
-	require.Panics(t, func() { New().WithPreforkRetriesCount(-2) })
+	require.Equal(t, 0, New(NewAppOptions().WithPreforkRetriesCount(0)).options.preforkRetriesCount)
+	require.Equal(t, 7, New(NewAppOptions().WithPreforkRetriesCount(7)).options.preforkRetriesCount)
+	require.Panics(t, func() { New(NewAppOptions().WithPreforkRetriesCount(-1)) })
+	require.Panics(t, func() { New(NewAppOptions().WithPreforkRetriesCount(-2)) })
 }
 
 func TestAppOptions_WithTls(t *testing.T) {
-	app := New().WithTls("cert.pem", "key.pem")
-	require.True(t, app.useTls)
-	require.Equal(t, "cert.pem", app.certFile)
-	require.Equal(t, "key.pem", app.keyFile)
-	require.Panics(t, func() { New().WithTls("", "key.pem") })
-	require.Panics(t, func() { New().WithTls("cert.pem", "") })
+	app := New(NewAppOptions().WithTls("cert.pem", "key.pem"))
+	require.True(t, app.options.useTls)
+	require.Equal(t, "cert.pem", app.options.certFile)
+	require.Equal(t, "key.pem", app.options.keyFile)
+	require.Panics(t, func() { New(NewAppOptions().WithTls("", "key.pem")) })
+	require.Panics(t, func() { New(NewAppOptions().WithTls("cert.pem", "")) })
 }
 
 func TestAppOptions_WithTlsConfig(t *testing.T) {
 	cfg := &tls.Config{}
-	app := New().WithTlsConfig(cfg)
+	app := New(NewAppOptions().WithTlsConfig(cfg))
 	require.Same(t, cfg, app.httpServer.TLSConfig)
-	require.Panics(t, func() { New().WithTlsConfig(nil) })
+	require.Panics(t, func() { New(NewAppOptions().WithTlsConfig(nil)) })
 }
 
 func TestAppOptions_WithHttp2Config(t *testing.T) {
 	cfg := &http.HTTP2Config{}
-	app := New().WithHttp2Config(cfg)
+	app := New(NewAppOptions().WithHttp2Config(cfg))
 	require.Same(t, cfg, app.httpServer.HTTP2)
-	require.Panics(t, func() { New().WithHttp2Config(nil) })
+	require.Panics(t, func() { New(NewAppOptions().WithHttp2Config(nil)) })
 }
 
 func TestAppOptions_WithProtocols(t *testing.T) {
 	p := &http.Protocols{}
-	app := New().WithProtocols(p)
+	app := New(NewAppOptions().WithProtocols(p))
 	require.Same(t, p, app.httpServer.Protocols)
-	require.Panics(t, func() { New().WithProtocols(nil) })
+	require.Panics(t, func() { New(NewAppOptions().WithProtocols(nil)) })
 }
 
 func TestAppOptions_WithClientPriority(t *testing.T) {
-	require.False(t, New().WithClientPriority(true).httpServer.DisableClientPriority)
-	require.True(t, New().WithClientPriority(false).httpServer.DisableClientPriority)
+	require.False(t, New(NewAppOptions().WithClientPriority(true)).httpServer.DisableClientPriority)
+	require.True(t, New(NewAppOptions().WithClientPriority(false)).httpServer.DisableClientPriority)
 }
 
 func TestAppOptions_WithServiceStartTimeout(t *testing.T) {
-	app := New().WithServiceStartTimeout(time.Second)
-	require.Equal(t, time.Second, app.serviceStartTimeout)
-	require.Panics(t, func() { New().WithServiceStartTimeout(0) })
-	require.Panics(t, func() { New().WithServiceStartTimeout(-time.Second) })
+	app := New(NewAppOptions().WithServiceStartTimeout(time.Second))
+	require.Equal(t, time.Second, app.options.serviceStartTimeout)
+	require.Panics(t, func() { New(NewAppOptions().WithServiceStartTimeout(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithServiceStartTimeout(-time.Second)) })
 }
 
 func TestAppOptions_WithServiceStopTimeout(t *testing.T) {
-	app := New().WithServiceStopTimeout(time.Second)
-	require.Equal(t, time.Second, app.serviceStopTimeout)
-	require.Panics(t, func() { New().WithServiceStopTimeout(0) })
-	require.Panics(t, func() { New().WithServiceStopTimeout(-time.Second) })
+	app := New(NewAppOptions().WithServiceStopTimeout(time.Second))
+	require.Equal(t, time.Second, app.options.serviceStopTimeout)
+	require.Panics(t, func() { New(NewAppOptions().WithServiceStopTimeout(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithServiceStopTimeout(-time.Second)) })
 }
 
 func TestAppOptions_WithParallelServiceStart(t *testing.T) {
-	require.True(t, New().WithParallelServiceStart().serviceStartParallel)
+	require.True(t, New(NewAppOptions().WithParallelServiceStart()).options.serviceStartParallel)
 }
 
 func TestAppOptions_WithParallelServiceStop(t *testing.T) {
-	require.True(t, New().WithParallelServiceStop().serviceStopParallel)
+	require.True(t, New(NewAppOptions().WithParallelServiceStop()).options.serviceStopParallel)
 }
 
 func TestAppOptions_WithShutdownTimeout(t *testing.T) {
-	app := New().WithShutdownTimeout(time.Second)
-	require.Equal(t, time.Second, app.shutdownTimeout)
-	require.Panics(t, func() { New().WithShutdownTimeout(0) })
-	require.Panics(t, func() { New().WithShutdownTimeout(-time.Second) })
+	app := New(NewAppOptions().WithShutdownTimeout(time.Second))
+	require.Equal(t, time.Second, app.options.shutdownTimeout)
+	require.Panics(t, func() { New(NewAppOptions().WithShutdownTimeout(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithShutdownTimeout(-time.Second)) })
 }
 
 func TestAppOptions_WithReadLimit(t *testing.T) {
-	app := New().WithReadLimit(1024)
-	require.Equal(t, 1024, app.readLimit)
-	require.Panics(t, func() { New().WithReadLimit(0) })
-	require.Panics(t, func() { New().WithReadLimit(-1) })
+	app := New(NewAppOptions().WithReadLimit(1024))
+	require.Equal(t, 1024, app.options.readLimit)
+	require.Panics(t, func() { New(NewAppOptions().WithReadLimit(0)) })
+	require.Panics(t, func() { New(NewAppOptions().WithReadLimit(-1)) })
 }
 
 func TestAppOptions_WithPassLocalsToContext(t *testing.T) {
-	require.True(t, New().WithPassLocalsToContext(true).passLocalsToContext)
-	require.False(t, New().WithPassLocalsToContext(false).passLocalsToContext)
+	require.True(t, New(NewAppOptions().WithPassLocalsToContext(true)).options.passLocalsToContext)
+	require.False(t, New(NewAppOptions().WithPassLocalsToContext(false)).options.passLocalsToContext)
 }

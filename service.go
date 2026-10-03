@@ -91,13 +91,13 @@ func (me *Context) GetService[T Service]() T {
 func (me *App) StartServices() error {
 	// in prefork mode, don't start services in parent process.
 	// it doesn't listen for requests. it just starts children.
-	if me.preforkIsEnabled && !IsPreforkChild() {
+	if me.options.preforkIsEnabled && !IsPreforkChild() {
 		return nil
 	}
 
-	me.logger.Info("starting all services", "pid", os.Getpid())
+	me.options.logger.Info("starting all services", "pid", os.Getpid())
 
-	if me.serviceStartParallel {
+	if me.options.serviceStartParallel {
 		return me.startServicesParallel()
 	} else {
 		return me.startServicesSequential()
@@ -113,7 +113,7 @@ func (me *App) startServicesSequential() error {
 		me.services[i].started = true
 	}
 
-	me.logger.Info("all services started")
+	me.options.logger.Info("all services started")
 	return nil
 }
 
@@ -138,24 +138,24 @@ func (me *App) startServicesParallel() error {
 		return err
 	}
 
-	me.logger.Info("all services started")
+	me.options.logger.Info("all services started")
 	return nil
 }
 
 func (me *App) startOneService(service Service) error {
 	ctx := context.Background()
-	if me.serviceStartTimeout > 0 {
+	if me.options.serviceStartTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, me.serviceStartTimeout)
+		ctx, cancel = context.WithTimeout(ctx, me.options.serviceStartTimeout)
 		defer cancel()
 	}
 
 	if err := service.Start(ctx); err != nil {
-		me.logger.Error("failed to start service", "name", service.Name(), "error", err, "pid", os.Getpid())
+		me.options.logger.Error("failed to start service", "name", service.Name(), "error", err, "pid", os.Getpid())
 		return err
 	}
 
-	me.logger.Info("service started", "name", service.Name(), "pid", os.Getpid())
+	me.options.logger.Info("service started", "name", service.Name(), "pid", os.Getpid())
 	return nil
 }
 
@@ -167,13 +167,13 @@ func (me *App) startOneService(service Service) error {
 // listening.
 func (me *App) StopServices() {
 	// see comment in [App.StartServices]
-	if me.preforkIsEnabled && !IsPreforkChild() {
+	if me.options.preforkIsEnabled && !IsPreforkChild() {
 		return
 	}
 
-	me.logger.Info("stopping all services", "pid", os.Getpid())
+	me.options.logger.Info("stopping all services", "pid", os.Getpid())
 
-	if me.serviceStopParallel {
+	if me.options.serviceStopParallel {
 		me.stopServicesParallel()
 	} else {
 		me.stopServicesSequential()
@@ -187,7 +187,7 @@ func (me *App) stopServicesSequential() {
 			me.services[i].started = false
 		}
 	}
-	me.logger.Info("all services stopped")
+	me.options.logger.Info("all services stopped")
 }
 
 func (me *App) stopServicesParallel() {
@@ -206,21 +206,21 @@ func (me *App) stopServicesParallel() {
 	}
 
 	wg.Wait()
-	me.logger.Info("all services stopped")
+	me.options.logger.Info("all services stopped")
 }
 
 func (me *App) stopOneService(service Service) {
 	ctx := context.Background()
-	if me.serviceStopTimeout > 0 {
+	if me.options.serviceStopTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, me.serviceStopTimeout)
+		ctx, cancel = context.WithTimeout(ctx, me.options.serviceStopTimeout)
 		defer cancel()
 	}
 
 	if err := service.Stop(ctx); err != nil {
-		me.logger.Error("failed to stop service", "name", service.Name(), "error", err, "pid", os.Getpid())
+		me.options.logger.Error("failed to stop service", "name", service.Name(), "error", err, "pid", os.Getpid())
 		return
 	}
 
-	me.logger.Info("service stopped", "name", service.Name(), "pid", os.Getpid())
+	me.options.logger.Info("service stopped", "name", service.Name(), "pid", os.Getpid())
 }

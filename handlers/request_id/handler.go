@@ -7,7 +7,12 @@
 //
 // Customize the header or generator:
 //
-//	app.Use("/*", request_id.New().WithHeader("X-Correlation-ID").Handle)
+//	app.Use("/*", request_id.New(request_id.NewOptions().WithHeader("X-Correlation-ID")).Handle)
+//
+// As a middleware it runs before the route is resolved, so every matching
+// request gets an ID — including requests with no route
+// ([moon.ErrInvalidEndpoint], [moon.ErrMethodNotAllowed]), which still
+// carry the echoed header.
 package request_id
 
 import (
@@ -19,9 +24,16 @@ import (
 const localKey = "moon.handlers.request_id.local_key"
 
 // Handler ensures every request has a request ID. Use [New] to construct
-// it with defaults, chain the With* methods to configure it, then register
-// [Handler.Handle] in the chain.
+// it, passing [NewOptions] chained with the With* methods to configure it,
+// then register [Handler.Handle] in the chain.
 type Handler struct {
+	options Options
+}
+
+// Options holds the configuration of a [Handler]. All fields are private;
+// build one with [NewOptions] for the defaults and chain the With* methods
+// to configure it, then pass it to [New].
+type Options struct {
 	skip                         func(*moon.Context) bool
 	header                       string
 	generator                    func() string
@@ -29,16 +41,17 @@ type Handler struct {
 	requestLoggingEntryValueFunc moon.RequestLoggingEntryValueFunc
 }
 
-// New returns a handler with default options. Chain the With* methods to
-// configure it, then register [Handler.Handle] in the chain:
+// New returns a handler built from the given options, or defaults when none
+// are given. Chain the With* methods on [NewOptions] to configure it, then
+// register [Handler.Handle] in the chain:
 //
 //	app.Use("/*", New().Handle)
-//	app.Use("/*", New().WithHeader("X-Correlation-ID").Handle)
+//	app.Use("/*", New(NewOptions().WithHeader("X-Correlation-ID")).Handle)
 //
 // The incoming request header is reused when it is a valid ID: non-empty
 // printable ASCII (0x20-0x7E, inside spaces allowed). It arrives pre-trimmed
 // because the HTTP server strips edge whitespace while parsing; otherwise
-// an ID is generated (see [Handler.WithGenerator]). The ID is echoed in
+// an ID is generated (see [Options.WithGenerator]). The ID is echoed in
 // the response header and stored for [GetFromContext], then the chain runs.
 //
 // To include the ID in request logs, register [Handler.GetRequestLoggingEntry]
@@ -48,11 +61,22 @@ type Handler struct {
 //	app.RegisterRequestLoggingEntry(h.GetRequestLoggingEntry())
 //	app.Use("/*", h.Handle)
 //
-// Default header: "X-Request-ID" (see [Handler.WithHeader]).
-// Requests for which the [Handler.WithSkip] predicate returns true run the
+// Default header: "X-Request-ID" (see [Options.WithHeader]).
+// Requests for which the [Options.WithSkip] predicate returns true run the
 // chain untouched: no header is set and [GetFromContext] returns "".
-func New() *Handler {
-	return &Handler{
+func New(opts ...Options) *Handler {
+	options := NewOptions()
+	if len(opts) > 0 {
+		moon.Assert(len(opts) == 1)
+		options = opts[0]
+	}
+	return &Handler{options: options}
+}
+
+// NewOptions returns an Options populated with the default values.
+// See the With* methods for each default.
+func NewOptions() Options {
+	return Options{
 		header:                       "X-Request-ID",
 		generator:                    func() string { return moon.GenerateSecureToken() },
 		requestLoggingEntryKey:       "request_id",
@@ -62,20 +86,20 @@ func New() *Handler {
 
 // WithSkip skips ID assignment for requests where f returns true.
 // The chain still runs; no header is set and [GetFromContext] returns "".
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: nil (nothing is skipped)
-func (me *Handler) WithSkip(f func(ctx *moon.Context) bool) *Handler {
+func (me Options) WithSkip(f func(ctx *moon.Context) bool) Options {
 	me.skip = f
 	return me
 }
 
 // WithHeader sets the request/response header carrying the ID.
 // Surrounding whitespace is trimmed. It panics on an empty name. It returns
-// the same handler for chaining.
+// the same options for chaining.
 //
 // Default: "X-Request-ID"
-func (me *Handler) WithHeader(s string) *Handler {
+func (me Options) WithHeader(s string) Options {
 	s = strings.TrimSpace(s)
 	moon.Assert(s != "", "header cannot be empty or whitespace")
 	me.header = s
@@ -85,10 +109,10 @@ func (me *Handler) WithHeader(s string) *Handler {
 // WithGenerator sets the ID generator. Its output is trimmed and tried up to
 // 3 times until it produces a valid ID; afterwards [moon.GenerateSecureToken]
 // is used as a fallback. It panics on a nil generator. It returns the same
-// handler for chaining.
+// options for chaining.
 //
 // Default: [moon.GenerateSecureToken].
-func (me *Handler) WithGenerator(f func() string) *Handler {
+func (me Options) WithGenerator(f func() string) Options {
 	moon.Assert(f != nil, "generator func cannot be nil")
 	me.generator = f
 	return me
@@ -98,11 +122,11 @@ func (me *Handler) WithGenerator(f func() string) *Handler {
 // [Handler.GetRequestLoggingEntry].
 // Surrounding whitespace is trimmed. It panics on an empty key, and
 // registering the same key twice on one app panics: multiple instances on
-// the same app need distinct keys. It returns the same handler for
+// the same app need distinct keys. It returns the same options for
 // chaining.
 //
 // Default: "request_id".
-func (me *Handler) WithRequestLoggingEntryKey(s string) *Handler {
+func (me Options) WithRequestLoggingEntryKey(s string) Options {
 	s = strings.TrimSpace(s)
 	moon.Assert(s != "", "key cannot be empty or whitespace")
 	me.requestLoggingEntryKey = s
@@ -111,10 +135,10 @@ func (me *Handler) WithRequestLoggingEntryKey(s string) *Handler {
 
 // WithRequestLoggingEntryValueFunc sets the func rendering the request
 // logging entry value returned by [Handler.GetRequestLoggingEntry].
-// It panics on a nil func. It returns the same handler for chaining.
+// It panics on a nil func. It returns the same options for chaining.
 //
 // Default: [GetFromContext].
-func (me *Handler) WithRequestLoggingEntryValueFunc(f moon.RequestLoggingEntryValueFunc) *Handler {
+func (me Options) WithRequestLoggingEntryValueFunc(f moon.RequestLoggingEntryValueFunc) Options {
 	moon.Assert(f != nil, "value func cannot be nil")
 	me.requestLoggingEntryValueFunc = f
 	return me
@@ -127,26 +151,26 @@ func (me *Handler) WithRequestLoggingEntryValueFunc(f moon.RequestLoggingEntryVa
 //	app.RegisterRequestLoggingEntry(h.GetRequestLoggingEntry())
 //	app.Use("/*", h.Handle)
 //
-// Customize the key and value with [Handler.WithRequestLoggingEntryKey]
-// and [Handler.WithRequestLoggingEntryValueFunc].
+// Customize the key and value with [Options.WithRequestLoggingEntryKey]
+// and [Options.WithRequestLoggingEntryValueFunc].
 func (me *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry {
 	return moon.RequestLoggingEntry{
-		Key:       me.requestLoggingEntryKey,
-		ValueFunc: me.requestLoggingEntryValueFunc,
+		Key:       me.options.requestLoggingEntryKey,
+		ValueFunc: me.options.requestLoggingEntryValueFunc,
 	}
 }
 
 // Handle ensures every request has a request ID. The incoming request header
 // is reused when valid, otherwise an ID is generated (see
-// [Handler.WithGenerator]). The ID is echoed in the response header and
+// [Options.WithGenerator]). The ID is echoed in the response header and
 // stored for [GetFromContext], then the chain runs.
 func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.skip != nil && me.skip(ctx) {
+	if me.options.skip != nil && me.options.skip(ctx) {
 		return ctx.Next()
 	}
 
-	requestId := sanitizeRequestId(ctx.GetHeader(me.header), me.generator)
-	ctx.SetHeader(me.header, requestId)
+	requestId := sanitizeRequestId(ctx.GetHeader(me.options.header), me.options.generator)
+	ctx.SetHeader(me.options.header, requestId)
 	ctx.SetLocal(localKey, requestId)
 
 	return ctx.Next()

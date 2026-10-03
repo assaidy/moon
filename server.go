@@ -28,7 +28,7 @@ func IsPreforkChild() bool {
 // instead (see [App.WithPrefork]). It returns [ErrFailedToStartServices] when
 // any service fails to start, and nil after a graceful [App.Shutdown].
 func (me *App) Start() error {
-	if me.preforkIsEnabled && !IsPreforkChild() {
+	if me.options.preforkIsEnabled && !IsPreforkChild() {
 		return me.forkChildren()
 	}
 
@@ -36,9 +36,9 @@ func (me *App) Start() error {
 		return ErrFailedToStartServices
 	}
 
-	address := me.listenAddress
+	address := me.options.listenAddress
 	if address == "" {
-		if me.useTls {
+		if me.options.useTls {
 			address = ":https"
 		} else {
 			address = ":http"
@@ -50,9 +50,9 @@ func (me *App) Start() error {
 		return err
 	}
 
-	me.logger.Info("starting server", "address", address, "pid", os.Getpid())
-	if me.useTls {
-		return ignoreErrServerClosed(me.httpServer.ServeTLS(listener, me.certFile, me.keyFile))
+	me.options.logger.Info("starting server", "address", address, "pid", os.Getpid())
+	if me.options.useTls {
+		return ignoreErrServerClosed(me.httpServer.ServeTLS(listener, me.options.certFile, me.options.keyFile))
 	} else {
 		return ignoreErrServerClosed(me.httpServer.Serve(listener))
 	}
@@ -61,7 +61,7 @@ func (me *App) Start() error {
 var ErrFailedToStartServices = errors.New("failed to start services")
 
 func (me *App) getListener(address string) (net.Listener, error) {
-	if me.preforkIsEnabled {
+	if me.options.preforkIsEnabled {
 		config := net.ListenConfig{
 			Control: func(network, address string, c syscall.RawConn) error {
 				return c.Control(func(fd uintptr) {
@@ -98,13 +98,13 @@ var (
 )
 
 func (me *App) forkChildren() error {
-	childProcesses = make(map[*os.Process]struct{}, me.preforkChildrenCount)
-	childProcessResultChan = make(chan childProcessResult, me.preforkChildrenCount)
+	childProcesses = make(map[*os.Process]struct{}, me.options.preforkChildrenCount)
+	childProcessResultChan = make(chan childProcessResult, me.options.preforkChildrenCount)
 
 	defer func() {
 		childProcessesMutex.RLock()
 		for proc := range childProcesses {
-			me.logger.Info("stopping prefork process", "pid", proc.Pid)
+			me.options.logger.Info("stopping prefork process", "pid", proc.Pid)
 			proc.Signal(syscall.SIGINT)
 		}
 		childProcessesMutex.RUnlock()
@@ -112,7 +112,7 @@ func (me *App) forkChildren() error {
 		close(allChildrenStoppedChan)
 	}()
 
-	for range me.preforkChildrenCount {
+	for range me.options.preforkChildrenCount {
 		if err := me.spawnChild(); err != nil {
 			return fmt.Errorf("failed to spawn child process: %w", err)
 		}
@@ -128,8 +128,8 @@ func (me *App) forkChildren() error {
 			if shuttingDown.Load() {
 				continue
 			}
-			me.logger.Error("a child process stopped abnormally", "pid", result.pid, "error", result.err)
-			if me.preforkRetriesCount != -1 && retries == me.preforkRetriesCount {
+			me.options.logger.Error("a child process stopped abnormally", "pid", result.pid, "error", result.err)
+			if me.options.preforkRetriesCount != -1 && retries == me.options.preforkRetriesCount {
 				return ErrPreforkRetriesExceeded
 			}
 			if err := me.spawnChild(); err != nil {
@@ -169,7 +169,7 @@ func (me *App) spawnChild() error {
 	childProcessesMutex.Lock()
 	childProcesses[cmd.Process] = struct{}{}
 	childProcessesMutex.Unlock()
-	me.logger.Info("started prefork process", "pid", cmd.Process.Pid)
+	me.options.logger.Info("started prefork process", "pid", cmd.Process.Pid)
 	return nil
 }
 
@@ -178,19 +178,19 @@ func (me *App) spawnChild() error {
 func (me *App) Shutdown() error {
 	defer me.StopServices()
 
-	if !me.preforkIsEnabled || IsPreforkChild() {
+	if !me.options.preforkIsEnabled || IsPreforkChild() {
 		ctx := context.Background()
-		if me.shutdownTimeout > 0 {
+		if me.options.shutdownTimeout > 0 {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(context.Background(), me.shutdownTimeout)
+			ctx, cancel = context.WithTimeout(context.Background(), me.options.shutdownTimeout)
 			defer cancel()
 		}
-		me.logger.Info("shutting down server", "pid", os.Getpid())
+		me.options.logger.Info("shutting down server", "pid", os.Getpid())
 		return me.httpServer.Shutdown(ctx)
 	}
 
 	close(shutdownChan)
-	if me.preforkIsEnabled {
+	if me.options.preforkIsEnabled {
 		<-allChildrenStoppedChan
 	}
 	return nil

@@ -58,7 +58,7 @@ func (me *App) newContext(
 	ctx.response = &httpResponseWriterWrapper{bodyBuffer: bodyBufferPool.Get().(*bytes.Buffer)}
 	ctx.response.tracker = &httpResponseWriterTracker{writer: w, statusCode: &ctx.response.statusCode}
 	ctx.request = r
-	ctx.request.Body = httpRequestBodyReaderWrapper{body: http.MaxBytesReader(w, r.Body, int64(me.readLimit))}
+	ctx.request.Body = httpRequestBodyReaderWrapper{body: http.MaxBytesReader(w, r.Body, int64(me.options.readLimit))}
 	ctx.requestBodyBuffer = bodyBufferPool.Get().(*bytes.Buffer)
 	ctx.locals = make(map[string]any)
 	return ctx
@@ -531,7 +531,7 @@ func (me *Context) SetLocal(key string, value any) {
 	Assert(key != "", "key cannot be empty")
 	Assert(value != nil, "value cannot be nil")
 	me.locals[key] = value
-	if me.app.passLocalsToContext {
+	if me.app.options.passLocalsToContext {
 		me.request = me.request.WithContext(context.WithValue(me.request.Context(), key, value))
 	}
 }
@@ -554,7 +554,7 @@ func (me *Context) GetLocal[T any](key string) (T, bool) {
 // key is shadowed with nil in the request context.
 func (me *Context) DeleteLocal(key string) {
 	delete(me.locals, key)
-	if me.app.passLocalsToContext {
+	if me.app.options.passLocalsToContext {
 		me.request = me.request.WithContext(context.WithValue(me.request.Context(), key, nil))
 	}
 }

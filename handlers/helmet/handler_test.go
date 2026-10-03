@@ -41,8 +41,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "custom values",
-			handler: New().
-				WithXssProtection("1; mode=block").
+			handler: New(NewOptions().WithXssProtection("1; mode=block").
 				WithContentTypeNoSniff("nosniff").
 				WithXFrameOptions("DENY").
 				WithHstsMaxAge(31536000).
@@ -57,7 +56,7 @@ func TestHandle(t *testing.T) {
 				WithOriginAgentCluster("?0").
 				WithXDnsPrefetchControl("on").
 				WithXDownloadOptions("noopen").
-				WithXPermittedCrossDomainPolicies("master-only"),
+				WithXPermittedCrossDomainPolicies("master-only")),
 			wantHeader: map[string]string{
 				"X-XSS-Protection":                  "1; mode=block",
 				"X-Content-Type-Options":            "nosniff",
@@ -79,9 +78,8 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "csp report only",
-			handler: New().
-				WithContentSecurityPolicy("default-src 'self'").
-				WithCspReportOnly(true),
+			handler: New(NewOptions().WithContentSecurityPolicy("default-src 'self'").
+				WithCspReportOnly(true)),
 			wantHeader: map[string]string{
 				"Content-Security-Policy-Report-Only": "default-src 'self'",
 			},
@@ -91,10 +89,9 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "disabled headers are omitted",
-			handler: New().
-				WithXssProtection("").
+			handler: New(NewOptions().WithXssProtection("").
 				WithXFrameOptions("").
-				WithReferrerPolicy(""),
+				WithReferrerPolicy("")),
 			wantHeader: map[string]string{
 				"X-Content-Type-Options": "nosniff",
 			},
@@ -106,9 +103,9 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "skipped request omits headers",
-			handler: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New(NewOptions().WithSkip(func(ctx *moon.Context) bool {
 				return true
-			}),
+			})),
 			wantHeader: nil,
 			wantAbsent: []string{
 				"X-XSS-Protection",
@@ -153,22 +150,22 @@ func TestHandleHsts(t *testing.T) {
 		},
 		{
 			name:    "max age only",
-			handler: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(false),
+			handler: New(NewOptions().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(false)),
 			want:    []string{"max-age=31536000"},
 		},
 		{
 			name:    "include subdomains",
-			handler: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true),
+			handler: New(NewOptions().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true)),
 			want:    []string{"max-age=31536000", "includeSubDomains"},
 		},
 		{
 			name:    "include subdomains and preload",
-			handler: New().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true),
+			handler: New(NewOptions().WithHstsMaxAge(31536000).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true)),
 			want:    []string{"max-age=31536000", "includeSubDomains", "preload"},
 		},
 		{
 			name:    "zero max age omits directives",
-			handler: New().WithHstsMaxAge(0).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true),
+			handler: New(NewOptions().WithHstsMaxAge(0).WithHstsIncludeSubdomains(true).WithHstsPreloadEnabled(true)),
 			want:    nil,
 		},
 	}

@@ -5,7 +5,11 @@
 //
 // Customize or disable individual headers:
 //
-//	app.Use("/*", helmet.New().WithXFrameOptions("DENY").WithHstsMaxAge(31536000).Handle)
+//	app.Use("/*", helmet.New(helmet.NewOptions().WithXFrameOptions("DENY").WithHstsMaxAge(31536000)).Handle)
+//
+// As a middleware it runs before the route is resolved, so the headers are
+// set even for unmatched requests ([moon.ErrInvalidEndpoint],
+// [moon.ErrMethodNotAllowed]).
 package helmet
 
 import (
@@ -16,9 +20,16 @@ import (
 )
 
 // Handler sets security-related response headers. Use [New] to construct
-// it with defaults, chain the With* methods to configure it, then register
-// [Handler.Handle] in the chain.
+// it, passing [NewOptions] chained with the With* methods to configure it,
+// then register [Handler.Handle] in the chain.
 type Handler struct {
+	options Options
+}
+
+// Options holds the configuration of a [Handler]. All fields are private;
+// build one with [NewOptions] for the defaults and chain the With* methods
+// to configure it, then pass it to [New].
+type Options struct {
 	skip                      func(*moon.Context) bool
 	xssProtection             string
 	contentTypeNoSniff        string
@@ -39,19 +50,31 @@ type Handler struct {
 	xPermittedCrossDomain     string
 }
 
-// New returns a handler with default options. Chain the With* methods to
-// configure it, then register [Handler.Handle] in the chain:
+// New returns a handler built from the given options, or defaults when none
+// are given. Chain the With* methods on [NewOptions] to configure it, then
+// register [Handler.Handle] in the chain:
 //
 //	app.Use("/*", New().Handle)
-//	app.Use("/*", New().WithXFrameOptions("DENY").Handle)
+//	app.Use("/*", New(NewOptions().WithXFrameOptions("DENY")).Handle)
 //
 // HSTS, Content-Security-Policy and Permissions-Policy are disabled by
-// default (see [Handler.WithHstsMaxAge],
-// [Handler.WithContentSecurityPolicy] and [Handler.WithPermissionPolicy]).
-// Requests for which the [Handler.WithSkip] predicate returns true run the
+// default (see [Options.WithHstsMaxAge],
+// [Options.WithContentSecurityPolicy] and [Options.WithPermissionPolicy]).
+// Requests for which the [Options.WithSkip] predicate returns true run the
 // chain untouched: no headers are set.
-func New() *Handler {
-	return &Handler{
+func New(opts ...Options) *Handler {
+	options := NewOptions()
+	if len(opts) > 0 {
+		moon.Assert(len(opts) == 1)
+		options = opts[0]
+	}
+	return &Handler{options: options}
+}
+
+// NewOptions returns an Options populated with the default values.
+// See the With* methods for each default.
+func NewOptions() Options {
+	return Options{
 		xssProtection:             "0",
 		contentTypeNoSniff:        "nosniff",
 		xFrameOptions:             "SAMEORIGIN",
@@ -69,50 +92,50 @@ func New() *Handler {
 
 // WithSkip skips setting headers for requests where f returns true.
 // The chain still runs; only the headers are omitted. It returns the same
-// handler for chaining.
+// options for chaining.
 //
 // Default: nil (nothing is skipped)
-func (me *Handler) WithSkip(f func(*moon.Context) bool) *Handler {
+func (me Options) WithSkip(f func(*moon.Context) bool) Options {
 	me.skip = f
 	return me
 }
 
 // WithXssProtection sets the X-XSS-Protection header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "0"
-func (me *Handler) WithXssProtection(s string) *Handler {
+func (me Options) WithXssProtection(s string) Options {
 	me.xssProtection = strings.TrimSpace(s)
 	return me
 }
 
 // WithContentTypeNoSniff sets the X-Content-Type-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "nosniff"
-func (me *Handler) WithContentTypeNoSniff(s string) *Handler {
+func (me Options) WithContentTypeNoSniff(s string) Options {
 	me.contentTypeNoSniff = strings.TrimSpace(s)
 	return me
 }
 
 // WithXFrameOptions sets the X-Frame-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "SAMEORIGIN"
-func (me *Handler) WithXFrameOptions(s string) *Handler {
+func (me Options) WithXFrameOptions(s string) Options {
 	me.xFrameOptions = strings.TrimSpace(s)
 	return me
 }
 
 // WithHstsMaxAge sets the max-age (in seconds) of the
 // Strict-Transport-Security header. It panics on a negative value.
-// Zero disables the header. It returns the same handler for chaining.
+// Zero disables the header. It returns the same options for chaining.
 //
 // Default: 0 (disabled)
-func (me *Handler) WithHstsMaxAge(seconds int) *Handler {
+func (me Options) WithHstsMaxAge(seconds int) Options {
 	moon.Assert(seconds >= 0, "hsts max age cannot be negative")
 	me.hstsMaxAge = seconds
 	return me
@@ -120,122 +143,122 @@ func (me *Handler) WithHstsMaxAge(seconds int) *Handler {
 
 // WithHstsIncludeSubdomains controls whether the includeSubDomains directive
 // is added to the Strict-Transport-Security header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: true
-func (me *Handler) WithHstsIncludeSubdomains(b bool) *Handler {
+func (me Options) WithHstsIncludeSubdomains(b bool) Options {
 	me.hstsIncludeSubdomains = b
 	return me
 }
 
 // WithHstsPreloadEnabled controls whether the preload directive is added to
 // the Strict-Transport-Security header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: false
-func (me *Handler) WithHstsPreloadEnabled(b bool) *Handler {
+func (me Options) WithHstsPreloadEnabled(b bool) Options {
 	me.hstsPreloadEnabled = b
 	return me
 }
 
 // WithContentSecurityPolicy sets the Content-Security-Policy header value
 // (or the Content-Security-Policy-Report-Only header when
-// [Handler.WithCspReportOnly] is enabled).
+// [Options.WithCspReportOnly] is enabled).
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "" (disabled)
-func (me *Handler) WithContentSecurityPolicy(s string) *Handler {
+func (me Options) WithContentSecurityPolicy(s string) Options {
 	me.contentSecurityPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCspReportOnly switches the Content-Security-Policy header to
 // Content-Security-Policy-Report-Only.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: false
-func (me *Handler) WithCspReportOnly(reportOnly bool) *Handler {
+func (me Options) WithCspReportOnly(reportOnly bool) Options {
 	me.cspReportOnly = reportOnly
 	return me
 }
 
 // WithReferrerPolicy sets the Referrer-Policy header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "no-referrer"
-func (me *Handler) WithReferrerPolicy(s string) *Handler {
+func (me Options) WithReferrerPolicy(s string) Options {
 	me.referrerPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithPermissionPolicy sets the Permissions-Policy header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "" (disabled)
-func (me *Handler) WithPermissionPolicy(s string) *Handler {
+func (me Options) WithPermissionPolicy(s string) Options {
 	me.permissionPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCrossOriginEmbedderPolicy sets the Cross-Origin-Embedder-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same handler for chaining.
+// header. It returns the same options for chaining.
 //
 // Default: "require-corp"
-func (me *Handler) WithCrossOriginEmbedderPolicy(s string) *Handler {
+func (me Options) WithCrossOriginEmbedderPolicy(s string) Options {
 	me.crossOriginEmbedderPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCrossOriginOpenerPolicy sets the Cross-Origin-Opener-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same handler for chaining.
+// header. It returns the same options for chaining.
 //
 // Default: "same-origin"
-func (me *Handler) WithCrossOriginOpenerPolicy(s string) *Handler {
+func (me Options) WithCrossOriginOpenerPolicy(s string) Options {
 	me.crossOriginOpenerPolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithCrossOriginResourcePolicy sets the Cross-Origin-Resource-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same handler for chaining.
+// header. It returns the same options for chaining.
 //
 // Default: "same-origin"
-func (me *Handler) WithCrossOriginResourcePolicy(s string) *Handler {
+func (me Options) WithCrossOriginResourcePolicy(s string) Options {
 	me.crossOriginResourcePolicy = strings.TrimSpace(s)
 	return me
 }
 
 // WithOriginAgentCluster sets the Origin-Agent-Cluster header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "?1"
-func (me *Handler) WithOriginAgentCluster(s string) *Handler {
+func (me Options) WithOriginAgentCluster(s string) Options {
 	me.originAgentCluster = strings.TrimSpace(s)
 	return me
 }
 
 // WithXDnsPrefetchControl sets the X-DNS-Prefetch-Control header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "off"
-func (me *Handler) WithXDnsPrefetchControl(s string) *Handler {
+func (me Options) WithXDnsPrefetchControl(s string) Options {
 	me.xDnsPrefetchControl = strings.TrimSpace(s)
 	return me
 }
 
 // WithXDownloadOptions sets the X-Download-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "noopen"
-func (me *Handler) WithXDownloadOptions(s string) *Handler {
+func (me Options) WithXDownloadOptions(s string) Options {
 	me.xDownloadOptions = strings.TrimSpace(s)
 	return me
 }
@@ -243,10 +266,10 @@ func (me *Handler) WithXDownloadOptions(s string) *Handler {
 // WithXPermittedCrossDomainPolicies sets the
 // X-Permitted-Cross-Domain-Policies header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same handler for chaining.
+// It returns the same options for chaining.
 //
 // Default: "none"
-func (me *Handler) WithXPermittedCrossDomainPolicies(s string) *Handler {
+func (me Options) WithXPermittedCrossDomainPolicies(s string) Options {
 	me.xPermittedCrossDomain = strings.TrimSpace(s)
 	return me
 }
@@ -254,77 +277,77 @@ func (me *Handler) WithXPermittedCrossDomainPolicies(s string) *Handler {
 // Handle sets the configured security headers, then runs the chain.
 // Headers with empty values are omitted, and Strict-Transport-Security is
 // only set when a positive max-age is configured (see
-// [Handler.WithHstsMaxAge]).
+// [Options.WithHstsMaxAge]).
 func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.skip != nil && me.skip(ctx) {
+	if me.options.skip != nil && me.options.skip(ctx) {
 		return ctx.Next()
 	}
 
-	if me.xssProtection != "" {
-		ctx.SetHeader("X-XSS-Protection", me.xssProtection)
+	if me.options.xssProtection != "" {
+		ctx.SetHeader("X-XSS-Protection", me.options.xssProtection)
 	}
 
-	if me.contentTypeNoSniff != "" {
-		ctx.SetHeader("X-Content-Type-Options", me.contentTypeNoSniff)
+	if me.options.contentTypeNoSniff != "" {
+		ctx.SetHeader("X-Content-Type-Options", me.options.contentTypeNoSniff)
 	}
 
-	if me.xFrameOptions != "" {
-		ctx.SetHeader("X-Frame-Options", me.xFrameOptions)
+	if me.options.xFrameOptions != "" {
+		ctx.SetHeader("X-Frame-Options", me.options.xFrameOptions)
 	}
 
-	if me.hstsMaxAge > 0 {
+	if me.options.hstsMaxAge > 0 {
 		header := "Strict-Transport-Security"
-		ctx.AddHeader(header, fmt.Sprintf("max-age=%d", me.hstsMaxAge))
-		if me.hstsIncludeSubdomains {
+		ctx.AddHeader(header, fmt.Sprintf("max-age=%d", me.options.hstsMaxAge))
+		if me.options.hstsIncludeSubdomains {
 			ctx.AddHeader(header, "includeSubDomains")
 		}
-		if me.hstsPreloadEnabled {
+		if me.options.hstsPreloadEnabled {
 			ctx.AddHeader(header, "preload")
 		}
 	}
 
-	if me.contentSecurityPolicy != "" {
-		if me.cspReportOnly {
-			ctx.SetHeader("Content-Security-Policy-Report-Only", me.contentSecurityPolicy)
+	if me.options.contentSecurityPolicy != "" {
+		if me.options.cspReportOnly {
+			ctx.SetHeader("Content-Security-Policy-Report-Only", me.options.contentSecurityPolicy)
 		} else {
-			ctx.SetHeader("Content-Security-Policy", me.contentSecurityPolicy)
+			ctx.SetHeader("Content-Security-Policy", me.options.contentSecurityPolicy)
 		}
 	}
 
-	if me.referrerPolicy != "" {
-		ctx.SetHeader("Referrer-Policy", me.referrerPolicy)
+	if me.options.referrerPolicy != "" {
+		ctx.SetHeader("Referrer-Policy", me.options.referrerPolicy)
 	}
 
-	if me.permissionPolicy != "" {
-		ctx.SetHeader("Permissions-Policy", me.permissionPolicy)
+	if me.options.permissionPolicy != "" {
+		ctx.SetHeader("Permissions-Policy", me.options.permissionPolicy)
 	}
 
-	if me.crossOriginEmbedderPolicy != "" {
-		ctx.SetHeader("Cross-Origin-Embedder-Policy", me.crossOriginEmbedderPolicy)
+	if me.options.crossOriginEmbedderPolicy != "" {
+		ctx.SetHeader("Cross-Origin-Embedder-Policy", me.options.crossOriginEmbedderPolicy)
 	}
 
-	if me.crossOriginOpenerPolicy != "" {
-		ctx.SetHeader("Cross-Origin-Opener-Policy", me.crossOriginOpenerPolicy)
+	if me.options.crossOriginOpenerPolicy != "" {
+		ctx.SetHeader("Cross-Origin-Opener-Policy", me.options.crossOriginOpenerPolicy)
 	}
 
-	if me.crossOriginResourcePolicy != "" {
-		ctx.SetHeader("Cross-Origin-Resource-Policy", me.crossOriginResourcePolicy)
+	if me.options.crossOriginResourcePolicy != "" {
+		ctx.SetHeader("Cross-Origin-Resource-Policy", me.options.crossOriginResourcePolicy)
 	}
 
-	if me.originAgentCluster != "" {
-		ctx.SetHeader("Origin-Agent-Cluster", me.originAgentCluster)
+	if me.options.originAgentCluster != "" {
+		ctx.SetHeader("Origin-Agent-Cluster", me.options.originAgentCluster)
 	}
 
-	if me.xDnsPrefetchControl != "" {
-		ctx.SetHeader("X-DNS-Prefetch-Control", me.xDnsPrefetchControl)
+	if me.options.xDnsPrefetchControl != "" {
+		ctx.SetHeader("X-DNS-Prefetch-Control", me.options.xDnsPrefetchControl)
 	}
 
-	if me.xDownloadOptions != "" {
-		ctx.SetHeader("X-Download-Options", me.xDownloadOptions)
+	if me.options.xDownloadOptions != "" {
+		ctx.SetHeader("X-Download-Options", me.options.xDownloadOptions)
 	}
 
-	if me.xPermittedCrossDomain != "" {
-		ctx.SetHeader("X-Permitted-Cross-Domain-Policies", me.xPermittedCrossDomain)
+	if me.options.xPermittedCrossDomain != "" {
+		ctx.SetHeader("X-Permitted-Cross-Domain-Policies", me.options.xPermittedCrossDomain)
 	}
 
 	return ctx.Next()

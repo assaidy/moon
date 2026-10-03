@@ -3,7 +3,9 @@
 //
 // This is a terminal endpoint: it doesn't continue the chain (it never calls
 // [moon.Context.Next]). It must be registered as a route via [moon.App.Map]
-// rather than as a middleware via [moon.App.Use]. If you register it for
+// rather than as a middleware via [moon.App.Use]: as a middleware it would
+// answer every matching request itself, including requests with no route,
+// and the rest of the chain would never run. If you register it for
 // HEAD, never write bytes to the body (HEAD responses must not carry a body).
 //
 // The most common usage is registering the built-in endpoints:
@@ -14,11 +16,13 @@
 //
 // with a probe config deciding when the endpoint reports unhealthy:
 //
-//	app.MapGet(health_check.ReadinessEndpoint, health_check.New().WithProbe(
-//		func(ctx *moon.Context) bool {
-//			err := db.Ping()
-//			return err == nil
-//		},
+//	app.MapGet(health_check.ReadinessEndpoint, health_check.New(
+//		health_check.NewOptions().WithProbe(
+//			func(ctx *moon.Context) bool {
+//				err := db.Ping()
+//				return err == nil
+//			},
+//		),
 //	).Handle)
 package health_check
 
@@ -28,27 +32,46 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler runs a probe and renders its result. Use [New] to construct it
-// with defaults, chain [Handler.WithProbe] and [Handler.WithResponse]
-// to configure it, then register [Handler.Handle] as a terminal endpoint.
+// Handler runs a probe and renders its result. Use [New] to construct it,
+// passing [NewOptions] chained with [Options.WithProbe] and
+// [Options.WithResponse] to configure it, then register [Handler.Handle]
+// as a terminal endpoint.
 type Handler struct {
+	options Options
+}
+
+// Options holds the configuration of a [Handler]. All fields are private;
+// build one with [NewOptions] for the defaults and chain the With* methods
+// to configure it, then pass it to [New].
+type Options struct {
 	probe    func(ctx *moon.Context) bool
 	response func(ctx *moon.Context, ok bool) error
 }
 
-// New returns a handler that runs a probe and renders its result. Chain
-// [Handler.WithProbe] and [Handler.WithResponse] to configure it, then
-// register [Handler.Handle] as a terminal endpoint:
+// New returns a handler built from the given options, or defaults when none
+// are given. Chain [Options.WithProbe] and [Options.WithResponse] to
+// configure it, then register [Handler.Handle] as a terminal endpoint:
 //
 //	app.Map(http.MethodGet, "/healthz", New().Handle)
 //
-// It runs the probe (see [Handler.WithProbe]) and passes the outcome to
-// the response func (see [Handler.WithResponse]).
+// It runs the probe (see [Options.WithProbe]) and passes the outcome to
+// the response func (see [Options.WithResponse]).
 //
 // Default behavior: the probe reports ok, and the response writes
 // 200 OK when it succeeds or 503 Service Unavailable when it fails.
-func New() *Handler {
-	return &Handler{
+func New(opts ...Options) *Handler {
+	options := NewOptions()
+	if len(opts) > 0 {
+		moon.Assert(len(opts) == 1)
+		options = opts[0]
+	}
+	return &Handler{options: options}
+}
+
+// NewOptions returns an Options populated with the default values.
+// See [Options.WithProbe] and [Options.WithResponse] for each default.
+func NewOptions() Options {
+	return Options{
 		probe:    defaultProbe,
 		response: defaultResponse,
 	}
@@ -56,10 +79,10 @@ func New() *Handler {
 
 // WithProbe sets the probe deciding whether the endpoint reports healthy:
 // true means ok, false means unhealthy. It panics if f is nil. It returns
-// the same handler for chaining.
+// the same options for chaining.
 //
 // Default: always reports ok (true).
-func (me *Handler) WithProbe(f func(ctx *moon.Context) bool) *Handler {
+func (me Options) WithProbe(f func(ctx *moon.Context) bool) Options {
 	moon.Assert(f != nil, "probe func cannot be nil")
 	me.probe = f
 	return me
@@ -72,11 +95,11 @@ func defaultProbe(_ *moon.Context) bool {
 
 // WithResponse sets the func rendering the probe result; ok is what the
 // probe returned. Returning an error hands it to the error handler.
-// It panics if f is nil. It returns the same handler for chaining.
+// It panics if f is nil. It returns the same options for chaining.
 //
 // Default: 200 OK when ok, 503 Service Unavailable otherwise. When writing
 // your own response, never write body bytes if the request method is HEAD.
-func (me *Handler) WithResponse(f func(ctx *moon.Context, ok bool) error) *Handler {
+func (me Options) WithResponse(f func(ctx *moon.Context, ok bool) error) Options {
 	moon.Assert(f != nil, "response func cannot be nil")
 	me.response = f
 	return me
@@ -94,7 +117,7 @@ func defaultResponse(ctx *moon.Context, ok bool) error {
 
 // Handle runs the probe and renders its result with the response func.
 func (me *Handler) Handle(ctx *moon.Context) error {
-	return me.response(ctx, me.probe(ctx))
+	return me.options.response(ctx, me.options.probe(ctx))
 }
 
 // Built-in endpoint paths for the common probe registrations.

@@ -3,6 +3,10 @@
 //
 //	h := skip.New(handler, predicate)
 //	app.Use("/*", h.Handle)
+//
+// As a middleware it runs before the route is resolved, so the predicate
+// runs even for requests with no route: a bypassed request simply continues
+// to the route, [moon.ErrMethodNotAllowed] or [moon.ErrInvalidEndpoint].
 package skip
 
 import "github.com/assaidy/moon"

@@ -24,12 +24,12 @@ func (me *App) registerRootHandler() {
 
 		setRequestHandlingStartTimeLocal(ctx)
 		if err := ctx.Next(); err != nil {
-			me.errorHandler(ctx, err)
+			me.options.errorHandler(ctx, err)
 			setRequestHandlingErrorLocal(ctx, err)
 		}
 		ctx.response.flush()
 
-		if me.enableRequestLogging {
+		if me.options.enableRequestLogging {
 			me.logRequest(ctx)
 		}
 
@@ -46,7 +46,7 @@ func (me *App) dispatch(ctx *Context) {
 	ctx.handlers = []Handler{func(ctx *Context) error {
 		// Bodies declaring more than the read limit are rejected without reading
 		// them. Unknown sizes are enforced while reading instead.
-		if ctx.request.ContentLength > int64(me.readLimit) {
+		if ctx.request.ContentLength > int64(me.options.readLimit) {
 			return ErrRequestEntityTooLarge
 		}
 		return ctx.Next()

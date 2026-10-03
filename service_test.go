@@ -116,10 +116,10 @@ type stubAvailability struct {
 	available bool
 }
 
-func (s stubAvailability) Name() string                 { return s.name }
+func (s stubAvailability) Name() string                { return s.name }
 func (s stubAvailability) Start(context.Context) error { return nil }
 func (s stubAvailability) Stop(context.Context) error  { return nil }
-func (s stubAvailability) IsAvailable() bool            { return s.available }
+func (s stubAvailability) IsAvailable() bool           { return s.available }
 
 func TestAreAllServicesAvailable(t *testing.T) {
 	newAvail := func(available bool) stubAvailability {
@@ -165,7 +165,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("parallel happy path", func(t *testing.T) {
-		app := New().WithParallelServiceStart().WithParallelServiceStop()
+		app := New(NewAppOptions().WithParallelServiceStart().WithParallelServiceStop())
 		a, b := newStubA(), newStubB()
 		app.AddService(a)
 		app.AddService(b)
@@ -208,7 +208,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("parallel start failure", func(t *testing.T) {
 		startBoom := errors.New("start boom")
-		app := New().WithParallelServiceStart()
+		app := New(NewAppOptions().WithParallelServiceStart())
 		a, b := newStubA(), newStubB()
 		b.startErr = startBoom
 		app.AddService(a)
@@ -220,7 +220,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("start timeout", func(t *testing.T) {
-		app := New().WithServiceStartTimeout(50 * time.Millisecond)
+		app := New(NewAppOptions().WithServiceStartTimeout(50 * time.Millisecond))
 		a := newStubA()
 		a.startBlock = time.Second
 		app.AddService(a)
@@ -247,7 +247,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("parallel stop failure swallowed", func(t *testing.T) {
-		app := New().WithParallelServiceStop()
+		app := New(NewAppOptions().WithParallelServiceStop())
 		a, b := newStubA(), newStubB()
 		a.stopErr = errors.New("stop a")
 		b.stopErr = errors.New("stop b")
@@ -261,7 +261,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("stop timeout enforced", func(t *testing.T) {
-		app := New().WithServiceStopTimeout(50 * time.Millisecond)
+		app := New(NewAppOptions().WithServiceStopTimeout(50 * time.Millisecond))
 		a := newStubA()
 		a.stopBlock = time.Second
 		app.AddService(a)
@@ -285,7 +285,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("prefork parent starts nothing", func(t *testing.T) {
 		t.Setenv(preforkChildEnv, "")
-		app := New().WithPrefork(true)
+		app := New(NewAppOptions().WithPrefork(true))
 		a := newStubA()
 		app.AddService(a)
 

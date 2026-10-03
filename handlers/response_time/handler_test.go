@@ -31,7 +31,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name:        "custom header",
-			handler:     New().WithHeader("X-Took"),
+			handler:     New(NewOptions().WithHeader("X-Took")),
 			route:       nil,
 			header:      "X-Took",
 			wantStatus:  http.StatusOK,
@@ -39,9 +39,9 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "skipped request omits header",
-			handler: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New(NewOptions().WithSkip(func(ctx *moon.Context) bool {
 				return true
-			}),
+			})),
 			route:       nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,
@@ -49,9 +49,9 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "non-skipped request keeps header",
-			handler: New().WithSkip(func(ctx *moon.Context) bool {
+			handler: New(NewOptions().WithSkip(func(ctx *moon.Context) bool {
 				return false
-			}),
+			})),
 			route:       nil,
 			header:      "X-Response-Time",
 			wantStatus:  http.StatusOK,

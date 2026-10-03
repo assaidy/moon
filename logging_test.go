@@ -23,7 +23,7 @@ func loggedAttrs(t *testing.T, h *captureLogHandler) map[string]any {
 }
 
 func testLoggedApp(logs *captureLogHandler) *App {
-	return New().WithLogger(slog.New(logs)).WithRequestLogging(true)
+	return New(NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
 }
 
 func TestRegisterRequestLoggingEntry(t *testing.T) {

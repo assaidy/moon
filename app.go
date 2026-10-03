@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-// TODO: revise the configs and allow some args like -1
-
 // App is the HTTP server, router and owner of shared state, typed
 // dependencies and managed services. Build it with [New], chain the With*
 // methods to configure it, register routes with [App.Map] and [App.Use],
@@ -29,42 +27,38 @@ type App struct {
 	services                        []serviceInfo
 	registeredRequestLoggingEntries []RequestLoggingEntry
 	requestLoggingEntriesMutex      sync.RWMutex
-
-	// options
-	listenAddress        string
-	logger               *slog.Logger
-	errorHandler         ErrorHandler
-	enableRequestLogging bool
-	preforkIsEnabled     bool
-	preforkChildrenCount int
-	preforkRetriesCount  int
-	useTls               bool
-	certFile             string
-	keyFile              string
-	serviceStartTimeout  time.Duration
-	serviceStopTimeout   time.Duration
-	serviceStartParallel bool
-	serviceStopParallel  bool
-	shutdownTimeout      time.Duration
-	passLocalsToContext  bool
-	readLimit            int
+	options                         AppOptions
 }
 
-// New creates an App with sensible defaults and registers the root handler.
-// Chain the With* methods to configure it, then serve it with [App.Start]:
+// New creates an App with the given options, or sensible defaults when
+// none are given, and registers the root handler.
+// Register routes with [App.Map] and [App.Use], then serve with [App.Start]:
 //
-//	app := New().WithListenAddress(":3000")
-//	app := New().WithLogger(logger).WithRequestLogging(true)
-func New() *App {
+//	app := New()
+//	app := New(NewAppOptions().WithListenAddress(":3000"))
+func New(opts ...AppOptions) *App {
+	options := NewAppOptions()
+	if len(opts) > 0 {
+		Assert(len(opts) == 1)
+		options = opts[0]
+	}
 	app := &App{
-		routesPerMethod:      make(map[string][]RouteEntry),
-		httpServer:           &http.Server{DisableGeneralOptionsHandler: true},
-		dependencies:         make(map[reflect.Type]any),
-		logger:               slog.Default(),
-		errorHandler:         DefaultErrorHandler,
-		preforkChildrenCount: runtime.NumCPU(),
-		preforkRetriesCount:  -1,
-		readLimit:            4 << 20, // 4MB
+		routesPerMethod: make(map[string][]RouteEntry),
+		httpServer: &http.Server{
+			DisableGeneralOptionsHandler: !options.enableGeneralOptionsHandler,
+			ReadTimeout:                  options.readTimeout,
+			ReadHeaderTimeout:            options.readHeaderTimeout,
+			WriteTimeout:                 options.writeTimeout,
+			IdleTimeout:                  options.idleTimeout,
+			MaxHeaderBytes:               options.maxHeaderBytes,
+			MaxHeaderValueCount:          options.maxHeaderValueCount,
+			TLSConfig:                    options.tlsConfig,
+			HTTP2:                        options.http2Config,
+			Protocols:                    options.protocols,
+			DisableClientPriority:        !options.clientPriority,
+		},
+		dependencies: make(map[reflect.Type]any),
+		options:      options,
 	}
 
 	app.registerReservedRequestLoggingEntries()
@@ -73,23 +67,74 @@ func New() *App {
 	return app
 }
 
+// AppOptions holds the user-configurable settings of an [App].
+// All fields are private; build one with [NewAppOptions] for the defaults,
+// chain the With* methods to configure it, and pass it to [New].
+type AppOptions struct {
+	listenAddress               string
+	logger                      *slog.Logger
+	errorHandler                ErrorHandler
+	enableRequestLogging        bool
+	enableGeneralOptionsHandler bool
+	readTimeout                 time.Duration
+	readHeaderTimeout           time.Duration
+	writeTimeout                time.Duration
+	idleTimeout                 time.Duration
+	maxHeaderBytes              int
+	maxHeaderValueCount         int
+	preforkIsEnabled            bool
+	preforkChildrenCount        int
+	preforkRetriesCount         int
+	useTls                      bool
+	certFile                    string
+	keyFile                     string
+	tlsConfig                   *tls.Config
+	http2Config                 *http.HTTP2Config
+	protocols                   *http.Protocols
+	clientPriority              bool
+	serviceStartTimeout         time.Duration
+	serviceStopTimeout          time.Duration
+	serviceStartParallel        bool
+	serviceStopParallel         bool
+	shutdownTimeout             time.Duration
+	passLocalsToContext         bool
+	readLimit                   int
+}
+
+// NewAppOptions returns an AppOptions populated with the default values.
+// Chain the With* methods to configure it, then pass it to [New]:
+//
+//	app := New(NewAppOptions().WithListenAddress(":3000"))
+//
+// See the With* methods for each default.
+func NewAppOptions() AppOptions {
+	return AppOptions{
+		logger:               slog.Default(),
+		errorHandler:         DefaultErrorHandler,
+		clientPriority:       true,
+		preforkChildrenCount: runtime.NumCPU(),
+		preforkRetriesCount:  -1,
+		readLimit:            4 << 20, // 4MB
+	}
+}
+
 // WithListenAddress sets the TCP address the server listens on,
-// e.g. ":8080" or "127.0.0.1:3000". It returns the same app for chaining.
+// e.g. ":8080" or "127.0.0.1:3000". It returns the same options for chaining.
 //
 // Default: ":http" (port 80), or ":https" (port 443) when TLS is
-// enabled via [App.WithTls].
-func (me *App) WithListenAddress(address string) *App {
+// enabled via [AppOptions.WithTls].
+func (me AppOptions) WithListenAddress(address string) AppOptions {
 	me.listenAddress = address
 	return me
 }
 
 // WithLogger sets the logger used for all internal logging within the app
 // and its contexts. It is also used for request logging when
-// [App.WithRequestLogging] is enabled. It panics on a nil logger. It returns
+// [AppOptions.WithRequestLogging] is enabled. It panics on a nil logger. It returns
 // the same app for chaining.
 //
 // Default: [slog.Default]
-func (me *App) WithLogger(l *slog.Logger) *App {
+func (me AppOptions) WithLogger(l *slog.Logger) AppOptions {
 	Assert(l != nil)
 	me.logger = l
 	return me
@@ -102,7 +147,7 @@ func (me *App) WithLogger(l *slog.Logger) *App {
 // app for chaining.
 //
 // Default: [DefaultErrorHandler]
-func (me *App) WithErrorHandler(eh ErrorHandler) *App {
+func (me AppOptions) WithErrorHandler(eh ErrorHandler) AppOptions {
 	Assert(eh != nil)
 	me.errorHandler = eh
 	return me
@@ -113,10 +158,10 @@ func (me *App) WithErrorHandler(eh ErrorHandler) *App {
 // Every request routed through the app is logged, including unmatched
 // paths/methods handled as [ErrInvalidEndpoint]/[ErrMethodNotAllowed].
 // The logged status defaults to 200 when no response was written.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: false
-func (me *App) WithRequestLogging(b bool) *App {
+func (me AppOptions) WithRequestLogging(b bool) AppOptions {
 	me.enableRequestLogging = b
 	return me
 }
@@ -124,67 +169,67 @@ func (me *App) WithRequestLogging(b bool) *App {
 // WithGeneralOptionsHandler determines whether the server should pass
 // general OPTIONS requests to the Handler. If true, the server responds
 // with a 200 OK status and a Content-Length of 0.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: false
-func (me *App) WithGeneralOptionsHandler(b bool) *App {
-	me.httpServer.DisableGeneralOptionsHandler = !b
+func (me AppOptions) WithGeneralOptionsHandler(b bool) AppOptions {
+	me.enableGeneralOptionsHandler = b
 	return me
 }
 
 // WithReadTimeout sets the maximum duration for reading the entire request,
-// including the body. It returns the same app for chaining.
+// including the body. It returns the same options for chaining.
 //
 // Default: no timeout
-func (me *App) WithReadTimeout(d time.Duration) *App {
+func (me AppOptions) WithReadTimeout(d time.Duration) AppOptions {
 	Assert(d > 0)
-	me.httpServer.ReadTimeout = d
+	me.readTimeout = d
 	return me
 }
 
 // WithReadHeaderTimeout sets the maximum duration for reading request headers.
 // The connection's read deadline is reset after the headers are read,
 // allowing the Handler to decide what is considered too slow for the body.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: read timout
-func (me *App) WithReadHeaderTimeout(d time.Duration) *App {
+func (me AppOptions) WithReadHeaderTimeout(d time.Duration) AppOptions {
 	Assert(d > 0)
-	me.httpServer.ReadHeaderTimeout = d
+	me.readHeaderTimeout = d
 	return me
 }
 
 // WithWriteTimeout sets the maximum duration for writing the response. It is
 // reset whenever a new request's header is read. Like ReadTimeout, it
 // does not allow Handlers to make per-request decisions.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: no timeout
-func (me *App) WithWriteTimeout(d time.Duration) *App {
+func (me AppOptions) WithWriteTimeout(d time.Duration) AppOptions {
 	Assert(d > 0)
-	me.httpServer.WriteTimeout = d
+	me.writeTimeout = d
 	return me
 }
 
 // WithIdleTimeout sets the maximum amount of time to wait for the next request
-// when keep-alives are enabled. It returns the same app for chaining.
+// when keep-alives are enabled. It returns the same options for chaining.
 //
 // Default: read timout
-func (me *App) WithIdleTimeout(d time.Duration) *App {
+func (me AppOptions) WithIdleTimeout(d time.Duration) AppOptions {
 	Assert(d > 0)
-	me.httpServer.IdleTimeout = d
+	me.idleTimeout = d
 	return me
 }
 
 // WithMaxHeaderBytes controls the maximum number of bytes the server will read
 // while parsing request header keys and values, including the request line.
 // It does not limit the size of the request body.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: [http.DefaultMaxHeaderBytes] (1MB)
-func (me *App) WithMaxHeaderBytes(i int) *App {
+func (me AppOptions) WithMaxHeaderBytes(i int) AppOptions {
 	Assert(i > 0)
-	me.httpServer.MaxHeaderBytes = i
+	me.maxHeaderBytes = i
 	return me
 }
 
@@ -192,31 +237,44 @@ func (me *App) WithMaxHeaderBytes(i int) *App {
 // the server will parse from a request. Comma-separated values in a
 // single header line are counted once, while values sent as multiple
 // header lines are counted separately.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: [http.DefaultMaxHeaderValueCount] (500)
-func (me *App) WithMaxHeaderValueCount(i int) *App {
+func (me AppOptions) WithMaxHeaderValueCount(i int) AppOptions {
 	Assert(i > 0)
-	me.httpServer.MaxHeaderValueCount = i
+	me.maxHeaderValueCount = i
+	return me
+}
+
+// WithReadLimit sets the maximum number of bytes accepted for a request
+// body. Reads past the limit fail, both via [Context.Read] and raw reads of
+// the request body. Bodies declaring more than the limit are rejected without
+// reading them. Over-limit failures are reported as [ErrRequestEntityTooLarge] (413).
+// It returns the same options for chaining.
+//
+// Default: 4MB
+func (me AppOptions) WithReadLimit(n int) AppOptions {
+	Assert(n > 0)
+	me.readLimit = n
 	return me
 }
 
 // WithPrefork determines whether to use a prefork listener for the server.
 // If enabled, the app starts multiple child processes that listen on the same
 // port by enabling the SO_REUSEPORT socket option.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: false
-func (me *App) WithPrefork(b bool) *App {
+func (me AppOptions) WithPrefork(b bool) AppOptions {
 	me.preforkIsEnabled = b
 	return me
 }
 
 // WithPreforkChildrenCount sets the number of child processes to start when
-// prefork is enabled. It returns the same app for chaining.
+// prefork is enabled. It returns the same options for chaining.
 //
 // Default: number of logical CPUs from [runtime.NumCPU]
-func (me *App) WithPreforkChildrenCount(i int) *App {
+func (me AppOptions) WithPreforkChildrenCount(i int) AppOptions {
 	Assert(i > 0)
 	me.preforkChildrenCount = i
 	return me
@@ -225,10 +283,10 @@ func (me *App) WithPreforkChildrenCount(i int) *App {
 // WithPreforkRetriesCount sets the number of times the prefork parent will
 // respawn a worker child process after it stops or crashes before giving up.
 // Once this limit is reached, [ErrPreforkRetriesExceeded] is returned from
-// [App.Start]. It returns the same app for chaining.
+// [App.Start]. It returns the same options for chaining.
 //
 // Default: infinite retries
-func (me *App) WithPreforkRetriesCount(i int) *App {
+func (me AppOptions) WithPreforkRetriesCount(i int) AppOptions {
 	Assert(i >= 0)
 	me.preforkRetriesCount = i
 	return me
@@ -237,10 +295,10 @@ func (me *App) WithPreforkRetriesCount(i int) *App {
 // WithTls allows the server to use TLS when listening.
 // certFile specifies the path to the TLS certificate file.
 // keyFile specifies the path to the TLS private key file.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: no TLS
-func (me *App) WithTls(certFile, keyFile string) *App {
+func (me AppOptions) WithTls(certFile, keyFile string) AppOptions {
 	Assert(certFile != "" && keyFile != "")
 	me.useTls = true
 	me.certFile = certFile
@@ -250,18 +308,18 @@ func (me *App) WithTls(certFile, keyFile string) *App {
 
 // WithTlsConfig provides a TLS configuration for the server.
 // The configuration is cloned before use by the server.
-// It returns the same app for chaining.
-func (me *App) WithTlsConfig(c *tls.Config) *App {
+// It returns the same options for chaining.
+func (me AppOptions) WithTlsConfig(c *tls.Config) AppOptions {
 	Assert(c != nil)
-	me.httpServer.TLSConfig = c
+	me.tlsConfig = c
 	return me
 }
 
 // WithHttp2Config configures HTTP/2 connections.
-// It returns the same app for chaining.
-func (me *App) WithHttp2Config(c *http.HTTP2Config) *App {
+// It returns the same options for chaining.
+func (me AppOptions) WithHttp2Config(c *http.HTTP2Config) AppOptions {
 	Assert(c != nil)
-	me.httpServer.HTTP2 = c
+	me.http2Config = c
 	return me
 }
 
@@ -270,12 +328,12 @@ func (me *App) WithHttp2Config(c *http.HTTP2Config) *App {
 // If Protocols includes unencrypted HTTP/2, the server accepts
 // unencrypted HTTP/2 connections. The server can serve both HTTP/1
 // and unencrypted HTTP/2 on the same address and port.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: HTTP/1 and HTTP/2
-func (me *App) WithProtocols(p *http.Protocols) *App {
+func (me AppOptions) WithProtocols(p *http.Protocols) AppOptions {
 	Assert(p != nil)
-	me.httpServer.Protocols = p
+	me.protocols = p
 	return me
 }
 
@@ -285,21 +343,21 @@ func (me *App) WithProtocols(p *http.Protocols) *App {
 // This field only takes effect when using HTTP/2 and when no custom
 // write scheduler is configured. If false, requests are served in
 // round-robin order without prioritization.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: true
-func (me *App) WithClientPriority(b bool) *App {
-	me.httpServer.DisableClientPriority = !b
+func (me AppOptions) WithClientPriority(b bool) AppOptions {
+	me.clientPriority = b
 	return me
 }
 
 // WithServiceStartTimeout sets the maximum duration for starting each service.
 // The timeout is enforced per service through the context passed to [Service.Start].
 // A service that does not finish in time fails with a context error and is skipped.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: no timeout
-func (me *App) WithServiceStartTimeout(d time.Duration) *App {
+func (me AppOptions) WithServiceStartTimeout(d time.Duration) AppOptions {
 	Assert(d > 0)
 	me.serviceStartTimeout = d
 	return me
@@ -308,53 +366,40 @@ func (me *App) WithServiceStartTimeout(d time.Duration) *App {
 // WithServiceStopTimeout sets the maximum duration for stopping each service.
 // The timeout is enforced per service through the context passed to [Service.Stop].
 // A service that does not finish in time fails with a context error, which is logged.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: no timeout
-func (me *App) WithServiceStopTimeout(d time.Duration) *App {
+func (me AppOptions) WithServiceStopTimeout(d time.Duration) AppOptions {
 	Assert(d > 0)
 	me.serviceStopTimeout = d
 	return me
 }
 
 // WithParallelServiceStart determines whether services are started concurrently
-// instead of one after another. It returns the same app for chaining.
+// instead of one after another. It returns the same options for chaining.
 //
 // Default: false
-func (me *App) WithParallelServiceStart() *App {
+func (me AppOptions) WithParallelServiceStart() AppOptions {
 	me.serviceStartParallel = true
 	return me
 }
 
 // WithParallelServiceStop determines whether services are stopped concurrently
-// instead of one after another. It returns the same app for chaining.
+// instead of one after another. It returns the same options for chaining.
 //
 // Default: false
-func (me *App) WithParallelServiceStop() *App {
+func (me AppOptions) WithParallelServiceStop() AppOptions {
 	me.serviceStopParallel = true
 	return me
 }
 
 // WithShutdownTimeout sets the maximum duration for http server shutdown.
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: no timeout
-func (me *App) WithShutdownTimeout(d time.Duration) *App {
+func (me AppOptions) WithShutdownTimeout(d time.Duration) AppOptions {
 	Assert(d > 0)
 	me.shutdownTimeout = d
-	return me
-}
-
-// WithReadLimit sets the maximum number of bytes accepted for a request
-// body. Reads past the limit fail, both via [Context.Read] and raw reads of
-// the request body. Bodies declaring more than the limit are rejected without
-// reading them. Over-limit failures are reported as [ErrRequestEntityTooLarge] (413).
-// It returns the same app for chaining.
-//
-// Default: 4MB
-func (me *App) WithReadLimit(n int) *App {
-	Assert(n > 0)
-	me.readLimit = n
 	return me
 }
 
@@ -362,13 +407,13 @@ func (me *App) WithReadLimit(n int) *App {
 //
 // Locals themselves live in a per-request map[string]any (no locking:
 // handlers run linearly via [Context.Next] in one goroutine).
-// If true, [Context.SetLocal] also calls context.WithValue, and
+// If true, [Context.SetLocal] also calls [context.WithValue], and
 // [Context.DeleteLocal] shadows the key with nil (contexts can't delete).
 // Enable only for interop with stdlib/middleware reading r.Context().Value().
-// It returns the same app for chaining.
+// It returns the same options for chaining.
 //
 // Default: false
-func (me *App) WithPassLocalsToContext(b bool) *App {
+func (me AppOptions) WithPassLocalsToContext(b bool) AppOptions {
 	me.passLocalsToContext = b
 	return me
 }

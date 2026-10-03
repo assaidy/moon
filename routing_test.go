@@ -760,12 +760,11 @@ func TestRouter_Dispatch(t *testing.T) {
 	})
 
 	t.Run("unmatched with no middleware has empty pattern", func(t *testing.T) {
-		app := New()
 		var got string
-		app.WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
 			got = ctx.GetPattern()
 			ctx.WriteStatus(http.StatusNotFound)
-		})
+		}))
 		app.Map(http.MethodGet, "/users", func(ctx *Context) error { return nil })
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
@@ -856,11 +855,11 @@ func TestRouter_Dispatch(t *testing.T) {
 		var captured error
 		var pattern string
 
-		app := New().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
 			captured = err
 			pattern = ctx.GetPattern()
 			ctx.WriteAs(http.StatusNotFound, CodecJson, ErrInvalidEndpoint)
-		})
+		}))
 		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
@@ -873,11 +872,11 @@ func TestRouter_Dispatch(t *testing.T) {
 		var captured error
 		var pattern string
 
-		app := New().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
 			captured = err
 			pattern = ctx.GetPattern()
 			ctx.WriteAs(http.StatusMethodNotAllowed, CodecJson, ErrMethodNotAllowed)
-		})
+		}))
 		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
 		resp := app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
@@ -891,10 +890,10 @@ func TestRouter_Dispatch(t *testing.T) {
 		var order []string
 		var captured error
 
-		app := New().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
 			captured = err
 			ctx.WriteStatus(http.StatusTeapot)
-		})
+		}))
 
 		app.Use("/*", func(ctx *Context) error {
 			order = append(order, "mw1-before")
@@ -947,7 +946,7 @@ func loggedStatus(t *testing.T, h *captureLogHandler) any {
 func TestRouter_RequestLoggingStatus(t *testing.T) {
 	t.Run("defaults to 200 when nothing written", func(t *testing.T) {
 		logs := &captureLogHandler{}
-		app := New().WithLogger(slog.New(logs)).WithRequestLogging(true)
+		app := New(NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
 		app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
@@ -957,7 +956,7 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 
 	t.Run("logs written status", func(t *testing.T) {
 		logs := &captureLogHandler{}
-		app := New().WithLogger(slog.New(logs)).WithRequestLogging(true)
+		app := New(NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
 		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 			return ctx.Write(http.StatusCreated, "hello")
 		})
