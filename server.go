@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"sync"
-	"sync/atomic"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -27,9 +25,6 @@ func IsPreforkChild() bool {
 // listens and serves HTTP. With prefork enabled it forks child processes
 // instead (see [App.WithPrefork]). It returns [ErrFailedToStartServices] when
 // any service fails to start, and nil after a graceful [App.Shutdown].
-//
-// Serving marks the app as started, so [App.AddRequestLoggingEntry] panics
-// afterwards: add request logging entries during setup, before Start.
 func (me *App) Start() error {
 	if me.options.preforkIsEnabled && !IsPreforkChild() {
 		return me.forkChildren()
@@ -52,7 +47,6 @@ func (me *App) Start() error {
 	if err != nil {
 		return err
 	}
-	me.started = true
 
 	me.options.logger.Info("starting server", "address", address, "pid", os.Getpid())
 	if me.options.useTls {
@@ -91,29 +85,19 @@ type childProcessResult struct {
 	err error
 }
 
-var (
-	childProcessesMutex     sync.RWMutex
-	childProcesses          map[*os.Process]struct{}
-	childProcessesWaitGroup sync.WaitGroup
-	childProcessResultChan  chan childProcessResult
-	shutdownChan            = make(chan struct{})
-	shuttingDown            atomic.Bool
-	allChildrenStoppedChan  = make(chan struct{})
-)
-
 func (me *App) forkChildren() error {
-	childProcesses = make(map[*os.Process]struct{}, me.options.preforkChildrenCount)
-	childProcessResultChan = make(chan childProcessResult, me.options.preforkChildrenCount)
+	me.childProcesses = make(map[*os.Process]struct{}, me.options.preforkChildrenCount)
+	me.childProcessResultChan = make(chan childProcessResult, me.options.preforkChildrenCount)
 
 	defer func() {
-		childProcessesMutex.RLock()
-		for proc := range childProcesses {
+		me.childProcessesMutex.RLock()
+		for proc := range me.childProcesses {
 			me.options.logger.Info("stopping prefork process", "pid", proc.Pid)
 			proc.Signal(syscall.SIGINT)
 		}
-		childProcessesMutex.RUnlock()
-		childProcessesWaitGroup.Wait()
-		close(allChildrenStoppedChan)
+		me.childProcessesMutex.RUnlock()
+		me.childProcessesWaitGroup.Wait()
+		close(me.allChildrenStoppedChan)
 	}()
 
 	for range me.options.preforkChildrenCount {
@@ -125,11 +109,11 @@ func (me *App) forkChildren() error {
 	retries := 0
 	for {
 		select {
-		case <-shutdownChan:
-			shuttingDown.Store(true)
+		case <-me.shutdownChan:
+			me.shuttingDown.Store(true)
 			return nil
-		case result := <-childProcessResultChan:
-			if shuttingDown.Load() {
+		case result := <-me.childProcessResultChan:
+			if me.shuttingDown.Load() {
 				continue
 			}
 			me.options.logger.Error("a child process stopped abnormally", "pid", result.pid, "error", result.err)
@@ -162,17 +146,17 @@ func (me *App) spawnChild() error {
 		return err
 	}
 
-	childProcessesWaitGroup.Go(func() {
+	me.childProcessesWaitGroup.Go(func() {
 		exitErr := cmd.Wait()
-		childProcessesMutex.Lock()
-		delete(childProcesses, cmd.Process)
-		childProcessesMutex.Unlock()
-		childProcessResultChan <- childProcessResult{pid: cmd.Process.Pid, err: exitErr}
+		me.childProcessesMutex.Lock()
+		delete(me.childProcesses, cmd.Process)
+		me.childProcessesMutex.Unlock()
+		me.childProcessResultChan <- childProcessResult{pid: cmd.Process.Pid, err: exitErr}
 	})
 
-	childProcessesMutex.Lock()
-	childProcesses[cmd.Process] = struct{}{}
-	childProcessesMutex.Unlock()
+	me.childProcessesMutex.Lock()
+	me.childProcesses[cmd.Process] = struct{}{}
+	me.childProcessesMutex.Unlock()
 	me.options.logger.Info("started prefork process", "pid", cmd.Process.Pid)
 	return nil
 }
@@ -193,9 +177,9 @@ func (me *App) Shutdown() error {
 		return me.httpServer.Shutdown(ctx)
 	}
 
-	close(shutdownChan)
+	close(me.shutdownChan)
 	if me.options.preforkIsEnabled {
-		<-allChildrenStoppedChan
+		<-me.allChildrenStoppedChan
 	}
 	return nil
 }

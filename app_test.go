@@ -79,7 +79,7 @@ func TestAppOptions_WithRequestLoggingEntries(t *testing.T) {
 	t.Run("defaults are the builtin entries", func(t *testing.T) {
 		require.Equal(t,
 			requestLoggingEntryKeys(DefaultRequestLoggingEntries),
-			requestLoggingEntryKeys(New().options.requestLoggingEntries),
+			requestLoggingEntryKeys(New().options.rle),
 		)
 	})
 
@@ -95,7 +95,7 @@ func TestAppOptions_WithRequestLoggingEntries(t *testing.T) {
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, map[string]any{"custom": "only"}, loggedAttrs(t, logs))
-		require.Equal(t, []string{"custom"}, requestLoggingEntryKeys(app.options.requestLoggingEntries))
+		require.Equal(t, []string{"custom"}, requestLoggingEntryKeys(app.options.rle))
 	})
 
 	t.Run("keeps the app starting point for appends", func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestAppOptions_WithRequestLoggingEntries(t *testing.T) {
 		app.AddRequestLoggingEntry(RequestLoggingEntry{Key: "path", Value: testEntryValue("v")})
 
 		require.Equal(t, []string{"method", "path"},
-			requestLoggingEntryKeys(app.options.requestLoggingEntries))
+			requestLoggingEntryKeys(app.options.rle))
 	})
 
 	t.Run("empty key panics", func(t *testing.T) {

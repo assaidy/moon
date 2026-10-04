@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -102,26 +103,7 @@ func TestAddRequestLoggingEntry(t *testing.T) {
 			app.AddRequestLoggingEntry(RequestLoggingEntry{Key: "status", Value: testEntryValue("v")})
 		})
 		require.Equal(t, []string{"method", "status"},
-			requestLoggingEntryKeys(app.options.requestLoggingEntries))
-	})
-}
-
-func TestAddRequestLoggingEntry_AfterStartPanics(t *testing.T) {
-	addr := freePort(t)
-	app := New(NewAppOptions().WithListenAddress(addr))
-	app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
-	require.False(t, app.started)
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- app.Start() }()
-	waitServing(t, addr)
-
-	require.NoError(t, app.Shutdown())
-	require.NoError(t, <-errCh)
-
-	require.True(t, app.started)
-	require.PanicsWithValue(t, "cannot add request logging entries after the app started", func() {
-		app.AddRequestLoggingEntry(RequestLoggingEntry{Key: "custom", Value: testEntryValue("v")})
+			requestLoggingEntryKeys(app.options.rle))
 	})
 }
 
@@ -156,9 +138,127 @@ func TestAddRequestLoggingEntry_KeepsAppsAndDefaultsIsolated(t *testing.T) {
 
 	first.AddRequestLoggingEntry(RequestLoggingEntry{Key: "only-first", Value: testEntryValue("v")})
 
-	require.Contains(t, requestLoggingEntryKeys(first.options.requestLoggingEntries), "only-first")
-	require.NotContains(t, requestLoggingEntryKeys(second.options.requestLoggingEntries), "only-first")
+	require.Contains(t, requestLoggingEntryKeys(first.options.rle), "only-first")
+	require.NotContains(t, requestLoggingEntryKeys(second.options.rle), "only-first")
 	require.NotContains(t, requestLoggingEntryKeys(DefaultRequestLoggingEntries), "only-first")
+}
+
+// A request logs the entries present when it starts, so an entry added while
+// a request runs never sees that request.
+func TestAddRequestLoggingEntry_DuringRequest(t *testing.T) {
+	const preparedLocalKey = "test.prepared_local_key"
+
+	preparedEntry := RequestLoggingEntry{
+		Key: "prepared",
+		Before: func(ctx *Context) {
+			ctx.SetLocal(preparedLocalKey, true)
+		},
+		Value: func(ctx *Context, err error) any {
+			prepared, _ := ctx.GetLocal[bool](preparedLocalKey)
+			return prepared
+		},
+	}
+
+	t.Run("added by a handler logs from the next request", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := testLoggedApp(logs)
+
+		added := false
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+			if !added {
+				added = true
+				app.AddRequestLoggingEntry(preparedEntry)
+			}
+			return ctx.Write(http.StatusOK, "ok")
+		})
+
+		// the entry joins while this request runs, so its Before missed it
+		// and its value must stay out of this request's log
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.NotContains(t, loggedAttrKeys(t, logs), "prepared")
+
+		// the next request captures it before the Before hooks run
+		logs.records = nil
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		attrs := loggedAttrs(t, logs)
+		require.Contains(t, attrs, "prepared")
+		require.Equal(t, true, attrs["prepared"])
+	})
+
+	t.Run("added by a Before hook does not deadlock", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := testLoggedApp(logs)
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
+
+		added := false
+		app.AddRequestLoggingEntry(RequestLoggingEntry{
+			Key: "hook",
+			Before: func(ctx *Context) {
+				if added {
+					return
+				}
+				added = true
+				app.AddRequestLoggingEntry(RequestLoggingEntry{
+					Key:   "from-hook",
+					Value: testEntryValue("late"),
+				})
+			},
+			Value: testEntryValue("hook"),
+		})
+
+		// hooks run while no lock is held, so adding from one returns
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("adding an entry from a Before hook deadlocked")
+		}
+
+		// the entry added mid-request joins the list but not this request
+		require.Equal(t, "hook", loggedAttrs(t, logs)["hook"])
+		require.NotContains(t, loggedAttrKeys(t, logs), "from-hook")
+
+		// the next request snapshots it
+		logs.records = nil
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, "late", loggedAttrs(t, logs)["from-hook"])
+	})
+}
+
+// Adding entries from another goroutine while requests snapshot the list is
+// race free.
+func TestAddRequestLoggingEntry_WhileRequestsRun(t *testing.T) {
+	logs := &captureLogHandler{}
+	app := testLoggedApp(logs)
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+		return ctx.Write(http.StatusOK, "ok")
+	})
+
+	const extras = 50
+	added := make(chan struct{})
+	go func() {
+		defer close(added)
+		for i := range extras {
+			app.AddRequestLoggingEntry(RequestLoggingEntry{
+				Key:   "extra-" + strconv.Itoa(i),
+				Value: testEntryValue("v"),
+			})
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	for range extras {
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	}
+	<-added
+
+	require.Len(t, requestLoggingEntryKeys(app.options.rle),
+		len(DefaultRequestLoggingEntries)+extras)
 }
 
 func TestLogRequest_Entries(t *testing.T) {

@@ -22,8 +22,13 @@ func (me *App) registerRootHandler() {
 		ctx := me.newContext(w, r)
 		me.dispatch(ctx)
 
+		var rleSnapshot []RequestLoggingEntry
 		if me.options.enableRequestLogging {
-			for _, e := range me.options.requestLoggingEntries {
+			me.rleMutex.RLock()
+			rleSnapshot = slices.Clone(me.options.rle)
+			me.rleMutex.RUnlock()
+
+			for _, e := range rleSnapshot {
 				if e.Before != nil {
 					e.Before(ctx)
 				}
@@ -37,7 +42,7 @@ func (me *App) registerRootHandler() {
 		ctx.response.flush()
 
 		if me.options.enableRequestLogging {
-			me.logRequest(ctx, err)
+			me.logRequest(ctx, err, rleSnapshot)
 		}
 
 		ctx.requestBodyBuffer.Reset()
@@ -163,7 +168,7 @@ func (me *App) Map(method string, pattern string, handlers ...Handler) {
 		method:   method,
 		pattern:  pattern,
 		handlers: handlers,
-		order:    int(me.nextOrder.Add(1)),
+		order:    int(me.nextRoutingOrder.Add(1)),
 	})
 }
 
@@ -283,7 +288,7 @@ func (me *App) Use(pattern string, handlers ...Handler) {
 	me.middlewares = append(me.middlewares, MiddlewareEntry{
 		pattern:  pattern,
 		handlers: handlers,
-		order:    int(me.nextOrder.Add(1)),
+		order:    int(me.nextRoutingOrder.Add(1)),
 	})
 }
 

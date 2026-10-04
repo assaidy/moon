@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"runtime"
 	"slices"
@@ -21,15 +22,26 @@ import (
 // then serve with [App.Start] and stop with [App.Shutdown]. Use [App.Test]
 // to exercise handlers without listening.
 type App struct {
-	httpServer      *http.Server
-	routesPerMethod map[string][]RouteEntry // method -> routes
-	middlewares     []MiddlewareEntry
-	nextOrder       atomic.Int64
-	state           sync.Map
-	dependencies    map[reflect.Type]any
-	services        []serviceInfo
-	started         bool
-	options         AppOptions
+	httpServer       *http.Server
+	routesPerMethod  map[string][]RouteEntry // method -> routes
+	middlewares      []MiddlewareEntry
+	nextRoutingOrder atomic.Int64
+
+	state        sync.Map
+	dependencies map[reflect.Type]any
+	services     []serviceInfo
+
+	rleMutex sync.RWMutex
+
+	childProcessesMutex     sync.RWMutex
+	childProcesses          map[*os.Process]struct{}
+	childProcessesWaitGroup sync.WaitGroup
+	childProcessResultChan  chan childProcessResult
+	shutdownChan            chan struct{}
+	shuttingDown            atomic.Bool
+	allChildrenStoppedChan  chan struct{}
+
+	options AppOptions
 }
 
 // New creates an App with the given options, or sensible defaults when
@@ -46,7 +58,7 @@ func New(opts ...AppOptions) *App {
 	}
 	// Every app owns its entry list, so AddRequestLoggingEntry never writes
 	// into DefaultRequestLoggingEntries or into an app sharing these options.
-	options.requestLoggingEntries = slices.Clone(options.requestLoggingEntries)
+	options.rle = slices.Clone(options.rle)
 
 	app := &App{
 		routesPerMethod: make(map[string][]RouteEntry),
@@ -63,8 +75,10 @@ func New(opts ...AppOptions) *App {
 			Protocols:                    options.protocols,
 			DisableClientPriority:        !options.clientPriority,
 		},
-		dependencies: make(map[reflect.Type]any),
-		options:      options,
+		dependencies:           make(map[reflect.Type]any),
+		shutdownChan:           make(chan struct{}),
+		allChildrenStoppedChan: make(chan struct{}),
+		options:                options,
 	}
 
 	app.registerRootHandler()
@@ -104,7 +118,7 @@ type AppOptions struct {
 	shutdownTimeout             time.Duration
 	passLocalsToContext         bool
 	readLimit                   int
-	requestLoggingEntries       []RequestLoggingEntry
+	rle                         []RequestLoggingEntry
 }
 
 // NewAppOptions returns an AppOptions populated with the default values.
@@ -115,13 +129,13 @@ type AppOptions struct {
 // See the With* methods for each default.
 func NewAppOptions() AppOptions {
 	return AppOptions{
-		logger:                slog.Default(),
-		errorHandler:          DefaultErrorHandler,
-		clientPriority:        true,
-		preforkChildrenCount:  runtime.NumCPU(),
-		preforkRetriesCount:   -1,
-		readLimit:             4 << 20, // 4MB
-		requestLoggingEntries: DefaultRequestLoggingEntries,
+		logger:               slog.Default(),
+		errorHandler:         DefaultErrorHandler,
+		clientPriority:       true,
+		preforkChildrenCount: runtime.NumCPU(),
+		preforkRetriesCount:  -1,
+		readLimit:            4 << 20, // 4MB
+		rle:                  DefaultRequestLoggingEntries,
 	}
 }
 
@@ -206,7 +220,7 @@ func (me AppOptions) WithRequestLoggingEntries(entries []RequestLoggingEntry) Ap
 
 		validated[i] = e
 	}
-	me.requestLoggingEntries = validated
+	me.rle = validated
 	return me
 }
 

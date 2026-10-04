@@ -170,7 +170,7 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 	require.NotNil(t, entry.Value)
 
 	custom := New(NewOptions().WithRequestLoggingEntryKey("correlation_id").
-		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context, err error) any { return "v" })).
+		WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any { return "v" })).
 		GetRequestLoggingEntry()
 	require.Equal(t, "correlation_id", custom.Key)
 	require.NotNil(t, custom.Value)
@@ -211,7 +211,7 @@ func TestLogsCustomRequestIdEntry(t *testing.T) {
 	app := moon.New(moon.NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
 	h := New(NewOptions().
 		WithRequestLoggingEntryKey("correlation_id").
-		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context, err error) any {
+		WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any {
 			return "custom-" + GetFromContext(ctx)
 		}))
 	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())

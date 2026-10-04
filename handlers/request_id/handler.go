@@ -55,7 +55,7 @@ type Options struct {
 // the response header and stored for [GetFromContext], then the chain runs.
 //
 // To include the ID in request logs, add
-// [Handler.GetRequestLoggingEntry] to the app before it starts:
+// [Handler.GetRequestLoggingEntry] to the app:
 //
 //	h := New()
 //	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
@@ -133,29 +133,28 @@ func (me Options) WithRequestLoggingEntryKey(s string) Options {
 	return me
 }
 
-// WithRequestLoggingEntryValueFunc sets the func rendering the request
+// WithRequestLoggingEntryValue sets the func rendering the request
 // logging entry value returned by [Handler.GetRequestLoggingEntry]. It runs
 // after the handler chain with the app's [moon.ErrorHandler] result as err,
 // nil when the chain succeeded.
 // It panics on a nil func. It returns the same options for chaining.
 //
 // Default: the request ID from [GetFromContext].
-func (me Options) WithRequestLoggingEntryValueFunc(f moon.RequestLoggingEntryValue) Options {
+func (me Options) WithRequestLoggingEntryValue(f moon.RequestLoggingEntryValue) Options {
 	moon.Assert(f != nil, "value func cannot be nil")
 	me.rleValue = f
 	return me
 }
 
 // GetRequestLoggingEntry returns the request logging entry carrying the ID.
-// Add it to the app during setup, before [moon.App.Start], to include the ID
-// in request logs:
+// Add it to the app to include the ID in request logs:
 //
 //	h := New()
 //	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 //	app.Use("/*", h.Handle)
 //
 // Customize the key and value with [Options.WithRequestLoggingEntryKey]
-// and [Options.WithRequestLoggingEntryValueFunc].
+// and [Options.WithRequestLoggingEntryValue].
 func (me *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry {
 	return moon.RequestLoggingEntry{
 		Key:   me.options.rleKey,

@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -57,6 +58,7 @@ type serviceInfo struct {
 func (me *App) AddService[T Service](s T) {
 	Assert(!IsNilValue(s), "service cannot be nil")
 	t := reflect.TypeOf(s)
+	Assert(strings.TrimSpace(s.Name()) != "", "service name cannot be empty or whitespace")
 	Assert(
 		slices.IndexFunc(me.services, func(s serviceInfo) bool { return s.type_ == t }) == -1,
 		fmt.Sprintf("service of type: %s is already registered", t.String()),

@@ -123,21 +123,22 @@ var (
 //
 // The key is trimmed. It panics:
 //
-//   - once the app started, so entries belong to setup, before [App.Start];
 //   - on an empty or whitespace-only key, or a nil value;
 //   - when the key is already in this app's list.
 //
-// The call is meant to run sequentially; serializing calls made from
-// multiple goroutines is the caller's responsibility.
+// A request logs the entries present when it starts: an entry added while a
+// request is in flight, from a handler or from a [RequestLoggingEntryBefore]
+// hook, is logged starting with the next request.
 func (me *App) AddRequestLoggingEntry(entry RequestLoggingEntry) {
-	Assert(!me.started, "cannot add request logging entries after the app started")
-
 	entry.Key = strings.TrimSpace(entry.Key)
 	Assert(entry.Key != "", "key cannot be empty or whitespace")
 	Assert(entry.Value != nil, "value func cannot be nil")
 
+	me.rleMutex.Lock()
+	defer me.rleMutex.Unlock()
+
 	duplicateIndex := slices.IndexFunc(
-		me.options.requestLoggingEntries,
+		me.options.rle,
 		func(e RequestLoggingEntry) bool { return e.Key == entry.Key },
 	)
 	Assert(
@@ -145,17 +146,15 @@ func (me *App) AddRequestLoggingEntry(entry RequestLoggingEntry) {
 		fmt.Sprintf("request logging entry key %q is already registered at index %d", entry.Key, duplicateIndex),
 	)
 
-	me.options.requestLoggingEntries = append(me.options.requestLoggingEntries, entry)
+	me.options.rle = append(me.options.rle, entry)
 }
 
-// logRequest logs the handled request with one attribute per entry in this
-// app's request logging list. err is what the app's [ErrorHandler] returned,
-// nil when the handler chain succeeded.
-func (me *App) logRequest(ctx *Context, err error) {
-	entries := me.options.requestLoggingEntries
-
-	args := make([]any, 0, len(entries)*2)
-	for _, e := range entries {
+// logRequest logs the handled request with one attribute per entry in rle,
+// the list captured when the request started. err is what the app's
+// [ErrorHandler] returned, nil when the handler chain succeeded.
+func (me *App) logRequest(ctx *Context, err error, rle []RequestLoggingEntry) {
+	args := make([]any, 0, len(rle)*2)
+	for _, e := range rle {
 		args = append(args, e.Key, e.Value(ctx, err))
 	}
 
