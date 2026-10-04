@@ -291,10 +291,10 @@ var middlewarePatternRegex = regexp.MustCompile(
 	`^/(?:[A-Za-z0-9_*\-]+(?:/[A-Za-z0-9_*\-]+)*)?$`,
 )
 
-// UseAlways registers middlewares that run for every path.
+// UseAll registers middlewares that run for every path.
 // It is shorthand for [App.Use] with the catch-all "/*" pattern.
 // See [App.Use] for the middleware chain semantics.
-func (me *App) UseAlways(handlers ...Handler) {
+func (me *App) UseAll(handlers ...Handler) {
 	me.Use("/*", handlers...)
 }
 

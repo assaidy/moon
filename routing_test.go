@@ -349,6 +349,41 @@ func TestRouter_MapAll_NoHandlers(t *testing.T) {
 	require.NotPanics(t, func() { app.MapGet("/api/users") })
 }
 
+// UseAll registers the middleware for every path, like Use("/*").
+func TestRouter_UseAll(t *testing.T) {
+	app := New()
+
+	var called int
+	app.UseAll(func(ctx *Context) error {
+		called++
+		return ctx.Next()
+	})
+
+	app.MapGet("/", func(ctx *Context) error {
+		return ctx.Write(http.StatusOK, "ok")
+	})
+	app.MapGet("/api/users", func(ctx *Context) error {
+		return ctx.Write(http.StatusOK, "ok")
+	})
+
+	// runs for matched paths and for unmatched ones too
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{
+		{"/", http.StatusOK},
+		{"/api/users", http.StatusOK},
+		{"/nope", http.StatusNotFound},
+	} {
+		resp := app.Test(httptest.NewRequest(http.MethodGet, tc.path, nil))
+		require.Equal(t, tc.status, resp.StatusCode, tc.path)
+	}
+	require.Equal(t, 3, called)
+
+	// UseAll with no handlers does nothing, like Use.
+	require.NotPanics(t, func() { app.UseAll() })
+}
+
 func TestRouter_UsePanics(t *testing.T) {
 	dummy := func(ctx *Context) error { return nil }
 
