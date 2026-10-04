@@ -167,20 +167,20 @@ func (h *captureLogHandler) WithGroup(string) slog.Handler      { return h }
 func TestGetRequestLoggingEntry(t *testing.T) {
 	entry := New().GetRequestLoggingEntry()
 	require.Equal(t, "request_id", entry.Key)
-	require.NotNil(t, entry.ValueFunc)
+	require.NotNil(t, entry.Value)
 
 	custom := New(NewOptions().WithRequestLoggingEntryKey("correlation_id").
-		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context) string { return "v" })).
+		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context, err error) any { return "v" })).
 		GetRequestLoggingEntry()
 	require.Equal(t, "correlation_id", custom.Key)
-	require.NotNil(t, custom.ValueFunc)
+	require.NotNil(t, custom.Value)
 }
 
 func TestLogsRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
 	app := moon.New(moon.NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
 	h := New()
-	app.RegisterRequestLoggingEntry(h.GetRequestLoggingEntry())
+	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 	app.Use("/*", h.Handle)
 	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		return ctx.Write(http.StatusOK, "hello")
@@ -204,4 +204,38 @@ func TestLogsRequestIdEntry(t *testing.T) {
 	})
 	require.True(t, found, "expected request id log entry")
 	require.Equal(t, id, logged)
+}
+
+func TestLogsCustomRequestIdEntry(t *testing.T) {
+	logs := &captureLogHandler{}
+	app := moon.New(moon.NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
+	h := New(NewOptions().
+		WithRequestLoggingEntryKey("correlation_id").
+		WithRequestLoggingEntryValueFunc(func(ctx *moon.Context, err error) any {
+			return "custom-" + GetFromContext(ctx)
+		}))
+	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
+	app.Use("/*", h.Handle)
+	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+		return ctx.Write(http.StatusOK, "hello")
+	})
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/resource", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	id := resp.Header.Get("X-Request-ID")
+	require.NotEmpty(t, id)
+
+	require.Len(t, logs.records, 1)
+	var logged any
+	found := false
+	logs.records[0].Attrs(func(a slog.Attr) bool {
+		if a.Key == "correlation_id" {
+			logged, found = a.Value.Any(), true
+			return false
+		}
+		return true
+	})
+	require.True(t, found, "expected correlation id log entry")
+	require.Equal(t, "custom-"+id, logged)
 }

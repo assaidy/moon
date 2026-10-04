@@ -3,93 +3,161 @@ package moon
 import (
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// logRequest logs the handled request with every registered entry.
-// Reserved entries (duration, client, method, path, status, error) are always
-// present; custom entries are appended in registration order.
-func (me *App) logRequest(ctx *Context) {
-	// TODO: make reserved entries default and can be configured and extended.
-	// put read entries in global vars.
-	me.requestLoggingEntriesMutex.RLock()
-	entries := make([]RequestLoggingEntry, len(me.registeredRequestLoggingEntries))
-	copy(entries, me.registeredRequestLoggingEntries)
-	me.requestLoggingEntriesMutex.RUnlock()
+// RequestLoggingEntry is one key/value pair logged for every handled request
+// when request logging is enabled with [AppOptions.WithRequestLogging].
+//
+// Key is the attribute name Value is logged under. Value runs once per
+// request after the response was written; keep it cheap and non-blocking.
+// Before, when non-nil, runs before the handler chain so the entry can
+// capture request-scoped state (see [RleDuration]).
+//
+// Every app starts with [DefaultRequestLoggingEntries]; replace that list
+// with [AppOptions.WithRequestLoggingEntries] and append to it with
+// [App.AddRequestLoggingEntry].
+type RequestLoggingEntry struct {
+	Before RequestLoggingEntryBefore
+	Key    string
+	Value  RequestLoggingEntryValue
+}
+
+// RequestLoggingEntryBefore prepares a [RequestLoggingEntry] before the
+// handler chain runs, e.g. by storing a start time in a [Context] local.
+// It runs only when request logging is enabled, once per request and per
+// entry present when the request starts, and may be nil.
+type RequestLoggingEntryBefore func(*Context)
+
+// RequestLoggingEntryValue renders the value logged for a
+// [RequestLoggingEntry] after the handler chain finished. err is the error
+// the app's [ErrorHandler] returned, nil when the chain succeeded, so it
+// matches the error the response carries. Keep it cheap and non-blocking.
+type RequestLoggingEntryValue func(*Context, error) any
+
+// DefaultRequestLoggingEntries is the entry list every app starts with:
+// [RleDuration], [RleRemote], [RleMethod], [RlePath], [RleStatus] and
+// [RleError], in that order. Pass it to
+// [AppOptions.WithRequestLoggingEntries] to restore the defaults after
+// resetting the list.
+//
+// The slice is shared by every app, and apps never write into it:
+// [App.AddRequestLoggingEntry] appends to the list owned by the app.
+var DefaultRequestLoggingEntries = []RequestLoggingEntry{
+	RleDuration,
+	RleRemote,
+	RleMethod,
+	RlePath,
+	RleStatus,
+	RleError,
+}
+
+const rleDurationStartTimeLocalKey = "moon.rle_duration_start_time_local_key"
+
+var (
+	// RleDuration logs how long handling the request took, measured from
+	// when the handler chain is about to run, via its Before hook, until
+	// the entry is rendered. The value is a [time.Duration].
+	RleDuration = RequestLoggingEntry{
+		Before: func(ctx *Context) {
+			ctx.SetLocal(rleDurationStartTimeLocalKey, time.Now())
+		},
+		Key: "duration",
+		Value: func(ctx *Context, err error) any {
+			t, _ := ctx.GetLocal[time.Time](rleDurationStartTimeLocalKey)
+			return time.Since(t)
+		},
+	}
+
+	// RleRemote logs the client address from [Context.GetRemoteAddress].
+	RleRemote = RequestLoggingEntry{
+		Key: "remote",
+		Value: func(ctx *Context, err error) any {
+			return ctx.GetRemoteAddress()
+		},
+	}
+
+	// RleMethod logs the request method, e.g. "GET".
+	// See [Context.GetMethod].
+	RleMethod = RequestLoggingEntry{
+		Key: "method",
+		Value: func(ctx *Context, err error) any {
+			return ctx.GetMethod()
+		},
+	}
+
+	// RlePath logs the request path, e.g. "/users/42".
+	// See [Context.GetPath].
+	RlePath = RequestLoggingEntry{
+		Key: "path",
+		Value: func(ctx *Context, err error) any {
+			return ctx.GetPath()
+		},
+	}
+
+	// RleStatus logs the response status code as an int, defaulting to 200
+	// when the handler chain wrote no status. See [Context.GetStatusCode].
+	RleStatus = RequestLoggingEntry{
+		Key: "status",
+		Value: func(ctx *Context, err error) any {
+			return ctx.GetStatusCode()
+		},
+	}
+
+	// RleError logs the error the app's [ErrorHandler] returned, or nil when
+	// the handler chain succeeded.
+	RleError = RequestLoggingEntry{
+		Key: "error",
+		Value: func(ctx *Context, err error) any {
+			return err
+		},
+	}
+)
+
+// AddRequestLoggingEntry appends an entry to the request logging list of
+// this app only, so multiple apps can log differently. The app starts from
+// [DefaultRequestLoggingEntries], or from
+// [AppOptions.WithRequestLoggingEntries] when it was given, and logs the new
+// entry after the ones already in the list.
+//
+// The key is trimmed. It panics:
+//
+//   - once the app started, so entries belong to setup, before [App.Start];
+//   - on an empty or whitespace-only key, or a nil value;
+//   - when the key is already in this app's list.
+//
+// The call is meant to run sequentially; serializing calls made from
+// multiple goroutines is the caller's responsibility.
+func (me *App) AddRequestLoggingEntry(entry RequestLoggingEntry) {
+	Assert(!me.started, "cannot add request logging entries after the app started")
+
+	entry.Key = strings.TrimSpace(entry.Key)
+	Assert(entry.Key != "", "key cannot be empty or whitespace")
+	Assert(entry.Value != nil, "value func cannot be nil")
+
+	duplicateIndex := slices.IndexFunc(
+		me.options.requestLoggingEntries,
+		func(e RequestLoggingEntry) bool { return e.Key == entry.Key },
+	)
+	Assert(
+		duplicateIndex == -1,
+		fmt.Sprintf("request logging entry key %q is already registered at index %d", entry.Key, duplicateIndex),
+	)
+
+	me.options.requestLoggingEntries = append(me.options.requestLoggingEntries, entry)
+}
+
+// logRequest logs the handled request with one attribute per entry in this
+// app's request logging list. err is what the app's [ErrorHandler] returned,
+// nil when the handler chain succeeded.
+func (me *App) logRequest(ctx *Context, err error) {
+	entries := me.options.requestLoggingEntries
 
 	args := make([]any, 0, len(entries)*2)
 	for _, e := range entries {
-		args = append(args, e.Key, e.ValueFunc(ctx))
+		args = append(args, e.Key, e.Value(ctx, err))
 	}
+
 	me.options.logger.Info("request handled", args...)
-}
-
-// RequestLoggingEntry is a key/value pair logged for every handled request.
-// ValueFunc runs per request; keep it cheap and non-blocking.
-type RequestLoggingEntry struct {
-	Key       string
-	ValueFunc RequestLoggingEntryValueFunc
-}
-
-// RequestLoggingEntryValueFunc renders a request logging entry value.
-type RequestLoggingEntryValueFunc func(ctx *Context) string
-
-// registerReservedRequestLoggingEntries installs the default entries every
-// app starts with: duration, client, method, path, status and error.
-func (me *App) registerReservedRequestLoggingEntries() {
-	me.registeredRequestLoggingEntries = []RequestLoggingEntry{
-		{"duration", func(ctx *Context) string { return time.Since(getRequestHandlingStartTimeLocal(ctx)).String() }},
-		{"client", func(ctx *Context) string { return ctx.GetRemoteAddress() }},
-		{"method", func(ctx *Context) string { return ctx.GetMethod() }},
-		{"path", func(ctx *Context) string { return ctx.GetPath() }},
-		{"status", func(ctx *Context) string { return strconv.Itoa(ctx.GetStatusCode()) }},
-		{"error", func(ctx *Context) string { return fmt.Sprint(getRequestHandlingErrorLocal(ctx)) }},
-	}
-}
-
-// RegisterRequestLoggingEntry appends a custom entry to this app only, so
-// multiple apps can log differently. The key is trimmed; it panics on an
-// empty key, a nil value func, or a key that is already registered on this
-// app. Reserved keys (duration, client, method, path, status, error) cannot
-// be overridden.
-func (me *App) RegisterRequestLoggingEntry(entry RequestLoggingEntry) {
-	entry.Key = strings.TrimSpace(entry.Key)
-	Assert(entry.Key != "", "key cannot be empty or whitespace")
-	Assert(entry.ValueFunc != nil, "value func cannot be nil")
-
-	me.requestLoggingEntriesMutex.Lock()
-	defer me.requestLoggingEntriesMutex.Unlock()
-
-	Assert(
-		slices.IndexFunc(me.registeredRequestLoggingEntries, func(e RequestLoggingEntry) bool { return e.Key == entry.Key }) == -1,
-		"request logging entry key is already registered",
-	)
-	me.registeredRequestLoggingEntries = append(me.registeredRequestLoggingEntries, entry)
-}
-
-const requestHandlingStartTimeLocalKey = "moon.request_handling_start_time"
-
-func setRequestHandlingStartTimeLocal(ctx *Context) {
-	ctx.SetLocal(requestHandlingStartTimeLocalKey, time.Now())
-}
-
-func getRequestHandlingStartTimeLocal(ctx *Context) time.Time {
-	v, ok := ctx.GetLocal[time.Time](requestHandlingStartTimeLocalKey)
-	Assert(ok)
-	return v
-}
-
-const requestHandlingErrorLocalKey = "moon.request_handling_error"
-
-func setRequestHandlingErrorLocal(ctx *Context, err error) {
-	if err != nil {
-		ctx.SetLocal(requestHandlingErrorLocalKey, err)
-	}
-}
-
-func getRequestHandlingErrorLocal(ctx *Context) error {
-	v, _ := ctx.GetLocal[error](requestHandlingErrorLocalKey)
-	return v
 }

@@ -761,9 +761,10 @@ func TestRouter_Dispatch(t *testing.T) {
 
 	t.Run("unmatched with no middleware has empty pattern", func(t *testing.T) {
 		var got string
-		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 			got = ctx.GetPattern()
 			ctx.WriteStatus(http.StatusNotFound)
+			return err
 		}))
 		app.Map(http.MethodGet, "/users", func(ctx *Context) error { return nil })
 
@@ -855,10 +856,11 @@ func TestRouter_Dispatch(t *testing.T) {
 		var captured error
 		var pattern string
 
-		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 			captured = err
 			pattern = ctx.GetPattern()
 			ctx.WriteAs(http.StatusNotFound, CodecJson, ErrInvalidEndpoint)
+			return err
 		}))
 		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
@@ -872,10 +874,11 @@ func TestRouter_Dispatch(t *testing.T) {
 		var captured error
 		var pattern string
 
-		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 			captured = err
 			pattern = ctx.GetPattern()
 			ctx.WriteAs(http.StatusMethodNotAllowed, CodecJson, ErrMethodNotAllowed)
+			return err
 		}))
 		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
@@ -890,9 +893,10 @@ func TestRouter_Dispatch(t *testing.T) {
 		var order []string
 		var captured error
 
-		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 			captured = err
 			ctx.WriteStatus(http.StatusTeapot)
+			return err
 		}))
 
 		app.Use("/*", func(ctx *Context) error {
@@ -951,7 +955,7 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, "200", loggedStatus(t, logs))
+		require.Equal(t, int64(http.StatusOK), loggedStatus(t, logs))
 	})
 
 	t.Run("logs written status", func(t *testing.T) {
@@ -963,6 +967,6 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
-		require.Equal(t, "201", loggedStatus(t, logs))
+		require.Equal(t, int64(http.StatusCreated), loggedStatus(t, logs))
 	})
 }

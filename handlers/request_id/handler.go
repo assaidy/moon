@@ -34,11 +34,11 @@ type Handler struct {
 // build one with [NewOptions] for the defaults and chain the With* methods
 // to configure it, then pass it to [New].
 type Options struct {
-	skip                         func(*moon.Context) bool
-	header                       string
-	generator                    func() string
-	requestLoggingEntryKey       string
-	requestLoggingEntryValueFunc moon.RequestLoggingEntryValueFunc
+	skip      func(*moon.Context) bool
+	header    string
+	generator func() string
+	rleKey    string
+	rleValue  moon.RequestLoggingEntryValue
 }
 
 // New returns a handler built from the given options, or defaults when none
@@ -54,11 +54,11 @@ type Options struct {
 // an ID is generated (see [Options.WithGenerator]). The ID is echoed in
 // the response header and stored for [GetFromContext], then the chain runs.
 //
-// To include the ID in request logs, register [Handler.GetRequestLoggingEntry]
-// on the app:
+// To include the ID in request logs, add
+// [Handler.GetRequestLoggingEntry] to the app before it starts:
 //
 //	h := New()
-//	app.RegisterRequestLoggingEntry(h.GetRequestLoggingEntry())
+//	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 //	app.Use("/*", h.Handle)
 //
 // Default header: "X-Request-ID" (see [Options.WithHeader]).
@@ -77,10 +77,10 @@ func New(opts ...Options) *Handler {
 // See the With* methods for each default.
 func NewOptions() Options {
 	return Options{
-		header:                       "X-Request-ID",
-		generator:                    func() string { return moon.GenerateSecureToken() },
-		requestLoggingEntryKey:       "request_id",
-		requestLoggingEntryValueFunc: GetFromContext,
+		header:    "X-Request-ID",
+		generator: func() string { return moon.GenerateSecureToken() },
+		rleKey:    "request_id",
+		rleValue:  func(ctx *moon.Context, err error) any { return GetFromContext(ctx) },
 	}
 }
 
@@ -121,42 +121,45 @@ func (me Options) WithGenerator(f func() string) Options {
 // WithRequestLoggingEntryKey sets the request logging entry key returned by
 // [Handler.GetRequestLoggingEntry].
 // Surrounding whitespace is trimmed. It panics on an empty key, and
-// registering the same key twice on one app panics: multiple instances on
-// the same app need distinct keys. It returns the same options for
-// chaining.
+// adding the same key twice to one app panics (see
+// [moon.App.AddRequestLoggingEntry]): multiple instances on the same app
+// need distinct keys. It returns the same options for chaining.
 //
 // Default: "request_id".
 func (me Options) WithRequestLoggingEntryKey(s string) Options {
 	s = strings.TrimSpace(s)
 	moon.Assert(s != "", "key cannot be empty or whitespace")
-	me.requestLoggingEntryKey = s
+	me.rleKey = s
 	return me
 }
 
 // WithRequestLoggingEntryValueFunc sets the func rendering the request
-// logging entry value returned by [Handler.GetRequestLoggingEntry].
+// logging entry value returned by [Handler.GetRequestLoggingEntry]. It runs
+// after the handler chain with the app's [moon.ErrorHandler] result as err,
+// nil when the chain succeeded.
 // It panics on a nil func. It returns the same options for chaining.
 //
-// Default: [GetFromContext].
-func (me Options) WithRequestLoggingEntryValueFunc(f moon.RequestLoggingEntryValueFunc) Options {
+// Default: the request ID from [GetFromContext].
+func (me Options) WithRequestLoggingEntryValueFunc(f moon.RequestLoggingEntryValue) Options {
 	moon.Assert(f != nil, "value func cannot be nil")
-	me.requestLoggingEntryValueFunc = f
+	me.rleValue = f
 	return me
 }
 
 // GetRequestLoggingEntry returns the request logging entry carrying the ID.
-// Register it on the app to include the ID in request logs:
+// Add it to the app during setup, before [moon.App.Start], to include the ID
+// in request logs:
 //
 //	h := New()
-//	app.RegisterRequestLoggingEntry(h.GetRequestLoggingEntry())
+//	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 //	app.Use("/*", h.Handle)
 //
 // Customize the key and value with [Options.WithRequestLoggingEntryKey]
 // and [Options.WithRequestLoggingEntryValueFunc].
 func (me *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry {
 	return moon.RequestLoggingEntry{
-		Key:       me.options.requestLoggingEntryKey,
-		ValueFunc: me.options.requestLoggingEntryValueFunc,
+		Key:   me.options.rleKey,
+		Value: me.options.rleValue,
 	}
 }
 

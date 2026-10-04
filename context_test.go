@@ -1340,9 +1340,10 @@ func TestContext_IsMiddleware(t *testing.T) {
 	t.Run("route only and unmatched are not middleware", func(t *testing.T) {
 		var mids []bool
 
-		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
+		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 			mids = append(mids, ctx.IsMiddleware())
 			ctx.WriteStatus(http.StatusNotFound)
+			return err
 		}))
 		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 			mids = append(mids, ctx.IsMiddleware())

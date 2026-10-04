@@ -22,15 +22,22 @@ func (me *App) registerRootHandler() {
 		ctx := me.newContext(w, r)
 		me.dispatch(ctx)
 
-		setRequestHandlingStartTimeLocal(ctx)
-		if err := ctx.Next(); err != nil {
-			me.options.errorHandler(ctx, err)
-			setRequestHandlingErrorLocal(ctx, err)
+		if me.options.enableRequestLogging {
+			for _, e := range me.options.requestLoggingEntries {
+				if e.Before != nil {
+					e.Before(ctx)
+				}
+			}
+		}
+
+		err := ctx.Next()
+		if err != nil {
+			err = me.options.errorHandler(ctx, err)
 		}
 		ctx.response.flush()
 
 		if me.options.enableRequestLogging {
-			me.logRequest(ctx)
+			me.logRequest(ctx, err)
 		}
 
 		ctx.requestBodyBuffer.Reset()

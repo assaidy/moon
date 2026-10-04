@@ -54,9 +54,10 @@ func TestAppOptions_WithLogger(t *testing.T) {
 
 func TestAppOptions_WithErrorHandler(t *testing.T) {
 	var captured error
-	app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) {
+	app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 		captured = err
 		ctx.SetStatusCode(http.StatusTeapot)
+		return err
 	}))
 	sentinel := errors.New("boom")
 	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
@@ -72,6 +73,87 @@ func TestAppOptions_WithErrorHandler(t *testing.T) {
 func TestAppOptions_WithRequestLogging(t *testing.T) {
 	require.True(t, New(NewAppOptions().WithRequestLogging(true)).options.enableRequestLogging)
 	require.False(t, New().options.enableRequestLogging)
+}
+
+func TestAppOptions_WithRequestLoggingEntries(t *testing.T) {
+	t.Run("defaults are the builtin entries", func(t *testing.T) {
+		require.Equal(t,
+			requestLoggingEntryKeys(DefaultRequestLoggingEntries),
+			requestLoggingEntryKeys(New().options.requestLoggingEntries),
+		)
+	})
+
+	t.Run("replaces the defaults and trims keys", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := New(NewAppOptions().
+			WithLogger(slog.New(logs)).
+			WithRequestLogging(true).
+			WithRequestLoggingEntries([]RequestLoggingEntry{
+				{Key: "  custom  ", Value: testEntryValue("only")},
+			}))
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, map[string]any{"custom": "only"}, loggedAttrs(t, logs))
+		require.Equal(t, []string{"custom"}, requestLoggingEntryKeys(app.options.requestLoggingEntries))
+	})
+
+	t.Run("keeps the app starting point for appends", func(t *testing.T) {
+		app := New(NewAppOptions().WithRequestLoggingEntries([]RequestLoggingEntry{
+			{Key: "method", Value: testEntryValue("v")},
+		}))
+		app.AddRequestLoggingEntry(RequestLoggingEntry{Key: "path", Value: testEntryValue("v")})
+
+		require.Equal(t, []string{"method", "path"},
+			requestLoggingEntryKeys(app.options.requestLoggingEntries))
+	})
+
+	t.Run("empty key panics", func(t *testing.T) {
+		require.PanicsWithValue(t, "key cannot be empty or whitespace", func() {
+			New(NewAppOptions().WithRequestLoggingEntries([]RequestLoggingEntry{
+				{Key: "", Value: testEntryValue("v")},
+			}))
+		})
+	})
+
+	t.Run("whitespace key panics", func(t *testing.T) {
+		require.PanicsWithValue(t, "key cannot be empty or whitespace", func() {
+			New(NewAppOptions().WithRequestLoggingEntries([]RequestLoggingEntry{
+				{Key: "   ", Value: testEntryValue("v")},
+			}))
+		})
+	})
+
+	t.Run("nil value panics", func(t *testing.T) {
+		require.PanicsWithValue(t, "value func cannot be nil", func() {
+			New(NewAppOptions().WithRequestLoggingEntries([]RequestLoggingEntry{
+				{Key: "custom", Value: nil},
+			}))
+		})
+	})
+
+	t.Run("duplicate keys panic", func(t *testing.T) {
+		require.Panics(t, func() {
+			New(NewAppOptions().WithRequestLoggingEntries([]RequestLoggingEntry{
+				{Key: "path", Value: testEntryValue("v")},
+				{Key: "method", Value: testEntryValue("v")},
+				{Key: "path", Value: testEntryValue("v")},
+			}))
+		})
+	})
+
+	t.Run("nil logs no attributes", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := New(NewAppOptions().
+			WithLogger(slog.New(logs)).
+			WithRequestLogging(true).
+			WithRequestLoggingEntries(nil))
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error { return nil })
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Len(t, logs.records, 1)
+		require.Empty(t, loggedAttrs(t, logs))
+	})
 }
 
 func TestAppOptions_WithGeneralOptionsHandler(t *testing.T) {

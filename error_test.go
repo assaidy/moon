@@ -49,10 +49,17 @@ func TestError_WithDetailsCopy(t *testing.T) {
 	require.Equal(t, "id 123", with.Details)
 }
 
-func testErrorHandlerResponse(t *testing.T, handlerErr error) (int, map[string]any) {
+// testErrorHandlerResponse runs handlerErr through the app and returns the
+// response status, the decoded body, and the error the error handler
+// returned, which is what request logging logs.
+func testErrorHandlerResponse(t *testing.T, handlerErr error) (int, map[string]any, error) {
 	t.Helper()
 
-	app := New()
+	var logged error
+	app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
+		logged = DefaultErrorHandler(ctx, err)
+		return logged
+	}))
 	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 		return handlerErr
 	})
@@ -63,12 +70,12 @@ func testErrorHandlerResponse(t *testing.T, handlerErr error) (int, map[string]a
 
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(raw, &body))
-	return resp.StatusCode, body
+	return resp.StatusCode, body, logged
 }
 
 func TestDefaultErrorHandler(t *testing.T) {
 	t.Run("non-internal preserves details", func(t *testing.T) {
-		status, body := testErrorHandlerResponse(t, ErrNotFound.WithDetails("id 123"))
+		status, body, _ := testErrorHandlerResponse(t, ErrNotFound.WithDetails("id 123"))
 
 		require.Equal(t, http.StatusNotFound, status)
 		require.Equal(t, "not_found", body["kind"])
@@ -76,7 +83,7 @@ func TestDefaultErrorHandler(t *testing.T) {
 	})
 
 	t.Run("internal strips details", func(t *testing.T) {
-		status, body := testErrorHandlerResponse(t, ErrInternalServerError.WithDetails("db password leak"))
+		status, body, _ := testErrorHandlerResponse(t, ErrInternalServerError.WithDetails("db password leak"))
 
 		require.Equal(t, http.StatusInternalServerError, status)
 		require.Equal(t, "internal_server_error", body["kind"])
@@ -84,17 +91,41 @@ func TestDefaultErrorHandler(t *testing.T) {
 	})
 
 	t.Run("non-error falls back to generic 500", func(t *testing.T) {
-		status, body := testErrorHandlerResponse(t, errors.New("boom"))
+		status, body, _ := testErrorHandlerResponse(t, errors.New("boom"))
 
 		require.Equal(t, http.StatusInternalServerError, status)
 		require.Equal(t, "internal_server_error", body["kind"])
 	})
 
 	t.Run("wrapped error keeps status and details", func(t *testing.T) {
-		status, body := testErrorHandlerResponse(t, fmt.Errorf("handler failed: %w", ErrForbidden.WithDetails("x")))
+		status, body, _ := testErrorHandlerResponse(t, fmt.Errorf("handler failed: %w", ErrForbidden.WithDetails("x")))
 
 		require.Equal(t, http.StatusForbidden, status)
 		require.Equal(t, "forbidden", body["kind"])
 		require.Equal(t, "x", body["details"])
+	})
+
+	t.Run("returns the original error for logging", func(t *testing.T) {
+		_, _, logged := testErrorHandlerResponse(t, ErrNotFound.WithDetails("id 123"))
+
+		require.Equal(t, ErrNotFound.WithDetails("id 123"), logged)
+	})
+
+	t.Run("returns internal errors with details for logging", func(t *testing.T) {
+		_, _, logged := testErrorHandlerResponse(t, ErrInternalServerError.WithDetails("db password leak"))
+
+		require.Equal(t, ErrInternalServerError.WithDetails("db password leak"), logged)
+	})
+
+	t.Run("wraps non-Error failures for logging", func(t *testing.T) {
+		_, _, logged := testErrorHandlerResponse(t, errors.New("boom"))
+
+		loggedErr, ok := logged.(Error)
+		require.True(t, ok)
+		require.Equal(t, ErrInternalServerError.Kind, loggedErr.Kind)
+
+		details, ok := loggedErr.Details.(error)
+		require.True(t, ok)
+		require.EqualError(t, details, "boom")
 	})
 }

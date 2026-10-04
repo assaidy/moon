@@ -99,21 +99,33 @@ var (
 // This includes [ErrInvalidEndpoint] for unknown paths and
 // [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
 // inspect or override them.
-// Use the [Context] Write methods to send the response.
-// Set it via [App.WithErrorHandler]. Request logging, when enabled via
-// [App.WithRequestLogging], runs after the handler and logs the error.
-type ErrorHandler func(ctx *Context, err error)
+// Use the [Context] Write methods to send the response, then return the
+// error to log: request logging, when enabled via
+// [AppOptions.WithRequestLogging], logs the returned error, so returning
+// nil keeps the failure out of the request record.
+// It is set via [AppOptions.WithErrorHandler].
+type ErrorHandler func(ctx *Context, err error) error
 
 // DefaultErrorHandler writes an [Error] as JSON with its status code,
-// stripping Details for internal_server_error. Any other error becomes a
-// generic [ErrInternalServerError] response.
-func DefaultErrorHandler(ctx *Context, err error) {
+// stripping Details for internal_server_error, and turns any other error
+// into a generic [ErrInternalServerError] response so handler failures are
+// never exposed to the client.
+//
+// It returns the error to log: err itself when it is an [Error], keeping
+// its Details in the logs, and [ErrInternalServerError] with err as Details
+// otherwise, so request logging always records an [Error].
+func DefaultErrorHandler(ctx *Context, err error) error {
+	response := ErrInternalServerError
 	if e, ok := errors.AsType[Error](err); ok {
-		if errors.Is(e, ErrInternalServerError) {
-			e.Details = nil
+		// internal_server_error keeps the generic body, so internal details
+		// never reach the client, only the logs.
+		if !errors.Is(err, ErrInternalServerError) {
+			response = e
 		}
-		ctx.WriteAs(e.StatusCode, CodecJson, e)
 	} else {
-		ctx.WriteAs(http.StatusInternalServerError, CodecJson, ErrInternalServerError)
+		// wrap non-[Error] failures so the logs always carry an [Error].
+		err = ErrInternalServerError.WithDetails(err)
 	}
+	ctx.WriteJson(response.StatusCode, response)
+	return err
 }

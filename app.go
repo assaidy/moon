@@ -2,11 +2,14 @@ package moon
 
 import (
 	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,16 +21,15 @@ import (
 // then serve with [App.Start] and stop with [App.Shutdown]. Use [App.Test]
 // to exercise handlers without listening.
 type App struct {
-	httpServer                      *http.Server
-	routesPerMethod                 map[string][]RouteEntry // method -> routes
-	middlewares                     []MiddlewareEntry
-	nextOrder                       atomic.Int64
-	state                           sync.Map
-	dependencies                    map[reflect.Type]any
-	services                        []serviceInfo
-	registeredRequestLoggingEntries []RequestLoggingEntry
-	requestLoggingEntriesMutex      sync.RWMutex
-	options                         AppOptions
+	httpServer      *http.Server
+	routesPerMethod map[string][]RouteEntry // method -> routes
+	middlewares     []MiddlewareEntry
+	nextOrder       atomic.Int64
+	state           sync.Map
+	dependencies    map[reflect.Type]any
+	services        []serviceInfo
+	started         bool
+	options         AppOptions
 }
 
 // New creates an App with the given options, or sensible defaults when
@@ -42,6 +44,10 @@ func New(opts ...AppOptions) *App {
 		Assert(len(opts) == 1)
 		options = opts[0]
 	}
+	// Every app owns its entry list, so AddRequestLoggingEntry never writes
+	// into DefaultRequestLoggingEntries or into an app sharing these options.
+	options.requestLoggingEntries = slices.Clone(options.requestLoggingEntries)
+
 	app := &App{
 		routesPerMethod: make(map[string][]RouteEntry),
 		httpServer: &http.Server{
@@ -61,7 +67,6 @@ func New(opts ...AppOptions) *App {
 		options:      options,
 	}
 
-	app.registerReservedRequestLoggingEntries()
 	app.registerRootHandler()
 
 	return app
@@ -99,6 +104,7 @@ type AppOptions struct {
 	shutdownTimeout             time.Duration
 	passLocalsToContext         bool
 	readLimit                   int
+	requestLoggingEntries       []RequestLoggingEntry
 }
 
 // NewAppOptions returns an AppOptions populated with the default values.
@@ -109,12 +115,13 @@ type AppOptions struct {
 // See the With* methods for each default.
 func NewAppOptions() AppOptions {
 	return AppOptions{
-		logger:               slog.Default(),
-		errorHandler:         DefaultErrorHandler,
-		clientPriority:       true,
-		preforkChildrenCount: runtime.NumCPU(),
-		preforkRetriesCount:  -1,
-		readLimit:            4 << 20, // 4MB
+		logger:                slog.Default(),
+		errorHandler:          DefaultErrorHandler,
+		clientPriority:        true,
+		preforkChildrenCount:  runtime.NumCPU(),
+		preforkRetriesCount:   -1,
+		readLimit:             4 << 20, // 4MB
+		requestLoggingEntries: DefaultRequestLoggingEntries,
 	}
 }
 
@@ -153,16 +160,53 @@ func (me AppOptions) WithErrorHandler(eh ErrorHandler) AppOptions {
 	return me
 }
 
-// WithRequestLogging determines whether to log request handling results,
-// such as response time, status code, remote address, error, etc.
-// Every request routed through the app is logged, including unmatched
-// paths/methods handled as [ErrInvalidEndpoint]/[ErrMethodNotAllowed].
+// WithRequestLogging determines whether every request routed through the
+// app is logged as a "request handled" record on the logger, with one
+// attribute per entry of the request logging list (see
+// [AppOptions.WithRequestLoggingEntries] and [App.AddRequestLoggingEntry]).
+// Unmatched paths and methods handled as [ErrInvalidEndpoint] or
+// [ErrMethodNotAllowed] are logged too.
 // The logged status defaults to 200 when no response was written.
 // It returns the same options for chaining.
 //
 // Default: false
 func (me AppOptions) WithRequestLogging(b bool) AppOptions {
 	me.enableRequestLogging = b
+	return me
+}
+
+// WithRequestLoggingEntries replaces the request logging list of the app,
+// so the attributes logged for every handled request can be reset or built
+// from scratch instead of starting from [DefaultRequestLoggingEntries].
+// Append to the list afterwards with [App.AddRequestLoggingEntry].
+//
+// Each key is trimmed. It panics on an empty or whitespace-only key, on a
+// nil value, or when the same key appears twice in entries. Keys only
+// have to be distinct within entries: a builtin key such as "status" is
+// logged only when its entry is part of the list. Passing nil or an empty
+// slice logs no attributes, just the "request handled" message.
+// It returns the same options for chaining.
+//
+// Default: [DefaultRequestLoggingEntries]
+func (me AppOptions) WithRequestLoggingEntries(entries []RequestLoggingEntry) AppOptions {
+	validated := make([]RequestLoggingEntry, len(entries))
+	for i, e := range entries {
+		e.Key = strings.TrimSpace(e.Key)
+		Assert(e.Key != "", "key cannot be empty or whitespace")
+		Assert(e.Value != nil, "value func cannot be nil")
+
+		duplicateIndex := slices.IndexFunc(
+			validated[:i],
+			func(v RequestLoggingEntry) bool { return v.Key == e.Key },
+		)
+		Assert(
+			duplicateIndex == -1,
+			fmt.Sprintf("request logging entry key %q is already registered at index %d", e.Key, duplicateIndex),
+		)
+
+		validated[i] = e
+	}
+	me.requestLoggingEntries = validated
 	return me
 }
 

@@ -27,6 +27,9 @@ func IsPreforkChild() bool {
 // listens and serves HTTP. With prefork enabled it forks child processes
 // instead (see [App.WithPrefork]). It returns [ErrFailedToStartServices] when
 // any service fails to start, and nil after a graceful [App.Shutdown].
+//
+// Serving marks the app as started, so [App.AddRequestLoggingEntry] panics
+// afterwards: add request logging entries during setup, before Start.
 func (me *App) Start() error {
 	if me.options.preforkIsEnabled && !IsPreforkChild() {
 		return me.forkChildren()
@@ -49,6 +52,7 @@ func (me *App) Start() error {
 	if err != nil {
 		return err
 	}
+	me.started = true
 
 	me.options.logger.Info("starting server", "address", address, "pid", os.Getpid())
 	if me.options.useTls {
