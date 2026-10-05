@@ -57,7 +57,8 @@ func New(opts ...AppOptions) *App {
 		options = opts[0]
 	}
 	// Every app owns its entry list, so [App.AddRequestLoggingEntry] never
-	// writes into an app sharing these options.
+	// writes into an app sharing these options, nor into the defaults every
+	// app starts from.
 	options.rle = slices.Clone(options.rle)
 
 	app := &App{
@@ -135,7 +136,7 @@ func NewAppOptions() AppOptions {
 		preforkChildrenCount: runtime.NumCPU(),
 		preforkRetriesCount:  -1,
 		readLimit:            4 << 20, // 4MB
-		rle:                  DefaultRequestLoggingEntries(),
+		rle:                  defaultRequestLoggingEntries,
 	}
 }
 
@@ -191,8 +192,11 @@ func (me AppOptions) WithRequestLogging(b bool) AppOptions {
 
 // WithRequestLoggingEntries replaces the request logging list of the app,
 // so the attributes logged for every handled request can be reset or built
-// from scratch instead of starting from [DefaultRequestLoggingEntries].
-// Append to the list afterwards with [App.AddRequestLoggingEntry].
+// from scratch instead of starting from the defaults: [RleDuration],
+// [RleRemote], [RleMethod], [RlePath], [RleStatus] and [RleError], in that
+// order. Append to the list afterwards with [App.AddRequestLoggingEntry].
+// Every other builtin entry, any Rle* outside that list, is opt-in: it is
+// logged only when it is appended to the list.
 //
 // Each key is trimmed. It panics on an empty or whitespace-only key, on a
 // nil value, or when the same key appears twice in entries. Keys only
@@ -201,7 +205,8 @@ func (me AppOptions) WithRequestLogging(b bool) AppOptions {
 // slice logs no attributes, just the "request handled" message.
 // It returns the same options for chaining.
 //
-// Default: [DefaultRequestLoggingEntries]
+// Default: [RleDuration], [RleRemote], [RleMethod], [RlePath], [RleStatus]
+// and [RleError]
 func (me AppOptions) WithRequestLoggingEntries(entries []RequestLoggingEntry) AppOptions {
 	validated := make([]RequestLoggingEntry, len(entries))
 	for i, e := range entries {

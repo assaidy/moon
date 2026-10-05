@@ -16,8 +16,8 @@ import (
 // Before, when non-nil, runs before the handler chain so the entry can
 // capture request-scoped state (see [RleDuration]).
 //
-// Every app starts with [DefaultRequestLoggingEntries]; replace that list
-// with [AppOptions.WithRequestLoggingEntries] and append to it with
+// Every app starts with the default list; replace it with
+// [AppOptions.WithRequestLoggingEntries] and append to it with
 // [App.AddRequestLoggingEntry].
 type RequestLoggingEntry struct {
 	Before RequestLoggingEntryBefore
@@ -37,17 +37,15 @@ type RequestLoggingEntryBefore func(*Context)
 // matches the error the response carries. Keep it cheap and non-blocking.
 type RequestLoggingEntryValue func(*Context, error) any
 
-// DefaultRequestLoggingEntries returns the entry list every app starts with:
-// [RleDuration], [RleRemote], [RleMethod], [RlePath], [RleStatus] and
-// [RleError], in that order. Each call returns a new slice, so the caller can
-// append to it or reorder it without affecting other apps. Pass it to
-// [AppOptions.WithRequestLoggingEntries] to restore the defaults after
-// resetting the list.
-//
-// Every other builtin entry, any Rle* not listed above, is opt-in: it is
-// logged only when the app puts it in its list.
-func DefaultRequestLoggingEntries() []RequestLoggingEntry {
-	return []RequestLoggingEntry{RleDuration, RleRemote, RleMethod, RlePath, RleStatus, RleError}
+// defaultRequestLoggingEntries is the entry list every app starts with.
+// [New] clones it, so no app ever writes into it.
+var defaultRequestLoggingEntries = []RequestLoggingEntry{
+	RleDuration,
+	RleRemote,
+	RleMethod,
+	RlePath,
+	RleStatus,
+	RleError,
 }
 
 const (
@@ -168,9 +166,10 @@ var (
 
 // AddRequestLoggingEntry appends an entry to the request logging list of
 // this app only, so multiple apps can log differently. The app starts from
-// [DefaultRequestLoggingEntries], or from
-// [AppOptions.WithRequestLoggingEntries] when it was given, and logs the new
-// entry after the ones already in the list.
+// the defaults, [RleDuration], [RleRemote], [RleMethod], [RlePath],
+// [RleStatus] and [RleError] in that order, or from the list given to
+// [AppOptions.WithRequestLoggingEntries], and logs the new entry after the
+// ones already in the list.
 //
 // The key is trimmed. It panics:
 //

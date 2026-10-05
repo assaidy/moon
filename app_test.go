@@ -78,7 +78,7 @@ func TestAppOptions_WithRequestLogging(t *testing.T) {
 func TestAppOptions_WithRequestLoggingEntries(t *testing.T) {
 	t.Run("defaults are the builtin entries", func(t *testing.T) {
 		require.Equal(t,
-			requestLoggingEntryKeys(DefaultRequestLoggingEntries()),
+			requestLoggingEntryKeys(defaultRequestLoggingEntries),
 			requestLoggingEntryKeys(New().options.rle),
 		)
 	})

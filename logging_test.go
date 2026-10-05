@@ -166,22 +166,19 @@ func TestAddRequestLoggingEntry_KeepsAppsAndDefaultsIsolated(t *testing.T) {
 
 	require.Contains(t, requestLoggingEntryKeys(first.options.rle), "only-first")
 	require.NotContains(t, requestLoggingEntryKeys(second.options.rle), "only-first")
-	require.NotContains(t, requestLoggingEntryKeys(DefaultRequestLoggingEntries()), "only-first")
+	require.NotContains(t, requestLoggingEntryKeys(defaultRequestLoggingEntries), "only-first")
 }
 
-// Every call returns a new list, so writing to one result never reaches the
-// defaults of another app.
-func TestDefaultRequestLoggingEntries_FreshListEachCall(t *testing.T) {
-	first := DefaultRequestLoggingEntries()
-	second := DefaultRequestLoggingEntries()
-	require.Equal(t, requestLoggingEntryKeys(first), requestLoggingEntryKeys(second))
+// Every app owns its entry list: writing to it never reaches the defaults
+// shared by every app.
+func TestNew_EntryListDoesNotAliasTheDefaults(t *testing.T) {
+	app := New()
+	app.options.rle[0] = RequestLoggingEntry{Key: "replaced", Value: testEntryValue("v")}
 
-	first[0] = RequestLoggingEntry{Key: "replaced", Value: testEntryValue("v")}
-
-	require.NotEqual(t, requestLoggingEntryKeys(first), requestLoggingEntryKeys(second))
+	require.Equal(t, "duration", defaultRequestLoggingEntries[0].Key)
 	require.Equal(t,
-		[]string{"duration", "remote", "method", "path", "status", "error"},
-		requestLoggingEntryKeys(DefaultRequestLoggingEntries()),
+		[]string{"replaced", "remote", "method", "path", "status", "error"},
+		requestLoggingEntryKeys(app.options.rle),
 	)
 }
 
@@ -300,7 +297,7 @@ func TestAddRequestLoggingEntry_WhileRequestsRun(t *testing.T) {
 	<-added
 
 	require.Len(t, requestLoggingEntryKeys(app.options.rle),
-		len(DefaultRequestLoggingEntries())+extras)
+		len(defaultRequestLoggingEntries)+extras)
 }
 
 func TestLogRequest_Entries(t *testing.T) {
