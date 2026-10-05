@@ -56,8 +56,8 @@ func New(opts ...AppOptions) *App {
 		Assert(len(opts) == 1)
 		options = opts[0]
 	}
-	// Every app owns its entry list, so AddRequestLoggingEntry never writes
-	// into DefaultRequestLoggingEntries or into an app sharing these options.
+	// Every app owns its entry list, so [App.AddRequestLoggingEntry] never
+	// writes into an app sharing these options.
 	options.rle = slices.Clone(options.rle)
 
 	app := &App{
@@ -135,7 +135,7 @@ func NewAppOptions() AppOptions {
 		preforkChildrenCount: runtime.NumCPU(),
 		preforkRetriesCount:  -1,
 		readLimit:            4 << 20, // 4MB
-		rle:                  DefaultRequestLoggingEntries,
+		rle:                  DefaultRequestLoggingEntries(),
 	}
 }
 

@@ -2,6 +2,7 @@ package moon
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -36,26 +37,38 @@ type RequestLoggingEntryBefore func(*Context)
 // matches the error the response carries. Keep it cheap and non-blocking.
 type RequestLoggingEntryValue func(*Context, error) any
 
-// DefaultRequestLoggingEntries is the entry list every app starts with:
+// DefaultRequestLoggingEntries returns the entry list every app starts with:
 // [RleDuration], [RleRemote], [RleMethod], [RlePath], [RleStatus] and
-// [RleError], in that order. Pass it to
+// [RleError], in that order. Each call returns a new slice, so the caller can
+// append to it or reorder it without affecting other apps. Pass it to
 // [AppOptions.WithRequestLoggingEntries] to restore the defaults after
 // resetting the list.
 //
-// The slice is shared by every app, and apps never write into it:
-// [App.AddRequestLoggingEntry] appends to the list owned by the app.
-var DefaultRequestLoggingEntries = []RequestLoggingEntry{
-	RleDuration,
-	RleRemote,
-	RleMethod,
-	RlePath,
-	RleStatus,
-	RleError,
+// Every other builtin entry, any Rle* not listed above, is opt-in: it is
+// logged only when the app puts it in its list.
+func DefaultRequestLoggingEntries() []RequestLoggingEntry {
+	return []RequestLoggingEntry{RleDuration, RleRemote, RleMethod, RlePath, RleStatus, RleError}
 }
 
-const rleDurationStartTimeLocalKey = "moon.rle_duration_start_time_local_key"
+const (
+	rleTimeLocalKey              = "moon.rle_time"
+	rleDurationStartTimeLocalKey = "moon.rle_duration_start_time"
+)
 
 var (
+	// RleTime logs the time the request arrived, captured by its Before hook
+	// before the handler chain runs. The value is a [time.Time].
+	RleTime = RequestLoggingEntry{
+		Before: func(ctx *Context) {
+			ctx.SetLocal(rleTimeLocalKey, time.Now())
+		},
+		Key: "time",
+		Value: func(ctx *Context, err error) any {
+			t, _ := ctx.GetLocal[time.Time](rleTimeLocalKey)
+			return t
+		},
+	}
+
 	// RleDuration logs how long handling the request took, measured from
 	// when the handler chain is about to run, via its Before hook, until
 	// the entry is rendered. The value is a [time.Duration].
@@ -87,12 +100,32 @@ var (
 		},
 	}
 
+	// RleUrl logs the request URL as it was received, path and query, e.g.
+	// "/users/42?page=2". A server request carries no scheme or host, so the
+	// value is [RlePath] plus the query string, which is absent when the
+	// request has none. See [Context.GetUrl].
+	RleUrl = RequestLoggingEntry{
+		Key: "url",
+		Value: func(ctx *Context, err error) any {
+			return ctx.GetUrl().String()
+		},
+	}
+
 	// RlePath logs the request path, e.g. "/users/42".
 	// See [Context.GetPath].
 	RlePath = RequestLoggingEntry{
 		Key: "path",
 		Value: func(ctx *Context, err error) any {
 			return ctx.GetPath()
+		},
+	}
+
+	// RlePattern logs the route pattern that matched the request, e.g.
+	// "/users/:id", or "" when no route matched. See [Context.GetPattern].
+	RlePattern = RequestLoggingEntry{
+		Key: "pattern",
+		Value: func(ctx *Context, err error) any {
+			return ctx.GetPattern()
 		},
 	}
 
@@ -111,6 +144,24 @@ var (
 		Key: "error",
 		Value: func(ctx *Context, err error) any {
 			return err
+		},
+	}
+
+	// RlePid logs the process id of the process that handled the request.
+	// Under prefork every child logs its own pid.
+	RlePid = RequestLoggingEntry{
+		Key: "pid",
+		Value: func(ctx *Context, err error) any {
+			return os.Getpid()
+		},
+	}
+
+	// RleUserAgent logs the User-Agent request header, or "" when the request
+	// carries none. See [Context.GetHeader].
+	RleUserAgent = RequestLoggingEntry{
+		Key: "user_agent",
+		Value: func(ctx *Context, err error) any {
+			return ctx.GetHeader("User-Agent")
 		},
 	}
 )
