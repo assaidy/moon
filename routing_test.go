@@ -924,19 +924,19 @@ func TestRouter_Prefix(t *testing.T) {
 	t.Run("every method shortcut registers its own method", func(t *testing.T) {
 		testCases := []struct {
 			name     string
-			register func(p *Prefix, pattern string, handlers ...Handler)
+			register func(p Prefix, pattern string, handlers ...Handler)
 			method   string
 		}{
-			{"MapGet", func(p *Prefix, pat string, h ...Handler) { p.MapGet(pat, h...) }, http.MethodGet},
-			{"MapHead", func(p *Prefix, pat string, h ...Handler) { p.MapHead(pat, h...) }, http.MethodHead},
-			{"MapPost", func(p *Prefix, pat string, h ...Handler) { p.MapPost(pat, h...) }, http.MethodPost},
-			{"MapPut", func(p *Prefix, pat string, h ...Handler) { p.MapPut(pat, h...) }, http.MethodPut},
-			{"MapPatch", func(p *Prefix, pat string, h ...Handler) { p.MapPatch(pat, h...) }, http.MethodPatch},
-			{"MapDelete", func(p *Prefix, pat string, h ...Handler) { p.MapDelete(pat, h...) }, http.MethodDelete},
-			{"MapConnect", func(p *Prefix, pat string, h ...Handler) { p.MapConnect(pat, h...) }, http.MethodConnect},
-			{"MapOptions", func(p *Prefix, pat string, h ...Handler) { p.MapOptions(pat, h...) }, http.MethodOptions},
-			{"MapTrace", func(p *Prefix, pat string, h ...Handler) { p.MapTrace(pat, h...) }, http.MethodTrace},
-			{"MapQuery", func(p *Prefix, pat string, h ...Handler) { p.MapQuery(pat, h...) }, MethodQuery},
+			{"MapGet", func(p Prefix, pat string, h ...Handler) { p.MapGet(pat, h...) }, http.MethodGet},
+			{"MapHead", func(p Prefix, pat string, h ...Handler) { p.MapHead(pat, h...) }, http.MethodHead},
+			{"MapPost", func(p Prefix, pat string, h ...Handler) { p.MapPost(pat, h...) }, http.MethodPost},
+			{"MapPut", func(p Prefix, pat string, h ...Handler) { p.MapPut(pat, h...) }, http.MethodPut},
+			{"MapPatch", func(p Prefix, pat string, h ...Handler) { p.MapPatch(pat, h...) }, http.MethodPatch},
+			{"MapDelete", func(p Prefix, pat string, h ...Handler) { p.MapDelete(pat, h...) }, http.MethodDelete},
+			{"MapConnect", func(p Prefix, pat string, h ...Handler) { p.MapConnect(pat, h...) }, http.MethodConnect},
+			{"MapOptions", func(p Prefix, pat string, h ...Handler) { p.MapOptions(pat, h...) }, http.MethodOptions},
+			{"MapTrace", func(p Prefix, pat string, h ...Handler) { p.MapTrace(pat, h...) }, http.MethodTrace},
+			{"MapQuery", func(p Prefix, pat string, h ...Handler) { p.MapQuery(pat, h...) }, MethodQuery},
 		}
 
 		for _, tc := range testCases {

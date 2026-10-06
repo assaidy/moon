@@ -471,13 +471,13 @@ func join(prefix string, child string) string {
 //
 // The prefix is only validated here; routes and middlewares registered
 // through it are validated by [App.Map] and [App.Use] when they are added.
-func (me *App) Prefix(pattern string) *Prefix {
+func (me *App) Prefix(pattern string) Prefix {
 	pattern = strings.ToLower(pattern)
 	// catch early for better debugging.
 	Assert(IsValidRoutePattern(pattern), "invalid route pattern")
 	Assert(AreRouteParamNamesUnique(pattern), "duplicate param names are not allowed")
 
-	return &Prefix{
+	return Prefix{
 		pattern: pattern,
 		app:     me,
 	}
@@ -485,7 +485,7 @@ func (me *App) Prefix(pattern string) *Prefix {
 
 // Prefix returns a [Prefix] rooted at this prefix joined with child, so
 // prefixes nest. See [App.Prefix]; it panics on the same conditions.
-func (me *Prefix) Prefix(child string) *Prefix {
+func (me Prefix) Prefix(child string) Prefix {
 	return me.app.Prefix(join(me.pattern, child))
 }
 
@@ -500,13 +500,13 @@ func (me *Prefix) Prefix(child string) *Prefix {
 // See [App.Map] for the method and pattern grammar, the case-insensitive
 // matching, and the panic conditions; they all apply to the joined
 // pattern.
-func (me *Prefix) Map(method string, pattern string, handlers ...Handler) {
+func (me Prefix) Map(method string, pattern string, handlers ...Handler) {
 	me.app.Map(method, join(me.pattern, pattern), handlers...)
 }
 
 // MapGet registers handlers for the GET method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapGet(pattern string, handlers ...Handler) {
+func (me Prefix) MapGet(pattern string, handlers ...Handler) {
 	me.Map(MethodGet, pattern, handlers...)
 }
 
@@ -514,62 +514,62 @@ func (me *Prefix) MapGet(pattern string, handlers ...Handler) {
 // See [Prefix.Map].
 //
 // Handlers must not write bytes to the body of a HEAD response.
-func (me *Prefix) MapHead(pattern string, handlers ...Handler) {
+func (me Prefix) MapHead(pattern string, handlers ...Handler) {
 	me.Map(MethodHead, pattern, handlers...)
 }
 
 // MapPost registers handlers for the POST method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapPost(pattern string, handlers ...Handler) {
+func (me Prefix) MapPost(pattern string, handlers ...Handler) {
 	me.Map(MethodPost, pattern, handlers...)
 }
 
 // MapPut registers handlers for the PUT method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapPut(pattern string, handlers ...Handler) {
+func (me Prefix) MapPut(pattern string, handlers ...Handler) {
 	me.Map(MethodPut, pattern, handlers...)
 }
 
 // MapPatch registers handlers for the PATCH method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapPatch(pattern string, handlers ...Handler) {
+func (me Prefix) MapPatch(pattern string, handlers ...Handler) {
 	me.Map(MethodPatch, pattern, handlers...)
 }
 
 // MapDelete registers handlers for the DELETE method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapDelete(pattern string, handlers ...Handler) {
+func (me Prefix) MapDelete(pattern string, handlers ...Handler) {
 	me.Map(MethodDelete, pattern, handlers...)
 }
 
 // MapConnect registers handlers for the CONNECT method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapConnect(pattern string, handlers ...Handler) {
+func (me Prefix) MapConnect(pattern string, handlers ...Handler) {
 	me.Map(MethodConnect, pattern, handlers...)
 }
 
 // MapOptions registers handlers for the OPTIONS method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapOptions(pattern string, handlers ...Handler) {
+func (me Prefix) MapOptions(pattern string, handlers ...Handler) {
 	me.Map(MethodOptions, pattern, handlers...)
 }
 
 // MapTrace registers handlers for the TRACE method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapTrace(pattern string, handlers ...Handler) {
+func (me Prefix) MapTrace(pattern string, handlers ...Handler) {
 	me.Map(MethodTrace, pattern, handlers...)
 }
 
 // MapQuery registers handlers for the QUERY method under this prefix.
 // See [Prefix.Map].
-func (me *Prefix) MapQuery(pattern string, handlers ...Handler) {
+func (me Prefix) MapQuery(pattern string, handlers ...Handler) {
 	me.Map(MethodQuery, pattern, handlers...)
 }
 
 // MapAll registers handlers for every HTTP method under this prefix,
 // calling [Prefix.Map] once per method. Does nothing if no handlers are
 // given. See [App.MapAll].
-func (me *Prefix) MapAll(pattern string, handlers ...Handler) {
+func (me Prefix) MapAll(pattern string, handlers ...Handler) {
 	if len(handlers) == 0 {
 		return
 	}
@@ -590,13 +590,13 @@ func (me *Prefix) MapAll(pattern string, handlers ...Handler) {
 // Panics on the same conditions as [App.Use] once joined; in particular a
 // prefix holding ":params" cannot register middlewares at all, because
 // middleware patterns have no params.
-func (me *Prefix) Use(pattern string, handlers ...Handler) {
+func (me Prefix) Use(pattern string, handlers ...Handler) {
 	me.app.Use(join(me.pattern, pattern), handlers...)
 }
 
 // UseAll registers middlewares that run for every path under this prefix.
 // It is shorthand for [Prefix.Use] with the catch-all "/*" pattern.
 // See [App.Use] for the middleware chain semantics.
-func (me *Prefix) UseAll(handlers ...Handler) {
+func (me Prefix) UseAll(handlers ...Handler) {
 	me.Use("/*", handlers...)
 }
