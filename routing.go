@@ -8,7 +8,6 @@ import (
 )
 
 // TODO: add static files support (maybe as a middleware)
-// TODO: add route grouping
 
 func (me *App) registerRootHandler() {
 	mux := http.NewServeMux()
@@ -234,6 +233,21 @@ func (me *App) MapQuery(pattern string, handlers ...Handler) {
 	me.Map(MethodQuery, pattern, handlers...)
 }
 
+// allMethods is every HTTP method registered by [App.MapAll] and
+// [Prefix.MapAll].
+var allMethods = []string{
+	MethodGet,
+	MethodHead,
+	MethodPost,
+	MethodPut,
+	MethodPatch,
+	MethodDelete,
+	MethodConnect,
+	MethodOptions,
+	MethodTrace,
+	MethodQuery,
+}
+
 // MapAll registers handlers for every HTTP method on pattern, calling
 // [App.Map] once per method. A request whose method has no dedicated
 // registration still reaches these handlers.
@@ -244,18 +258,7 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 	if len(handlers) == 0 {
 		return
 	}
-	for _, method := range []string{
-		MethodGet,
-		MethodHead,
-		MethodPost,
-		MethodPut,
-		MethodPatch,
-		MethodDelete,
-		MethodConnect,
-		MethodOptions,
-		MethodTrace,
-		MethodQuery,
-	} {
+	for _, method := range allMethods {
 		me.Map(method, pattern, handlers...)
 	}
 }
@@ -400,4 +403,200 @@ func (me MiddlewareEntry) matchPath(path string) bool {
 	compiledRegex := regexp.MustCompile(regexString)
 
 	return compiledRegex.MatchString(path)
+}
+
+// Prefix is a shared path prefix for routes and middlewares. Create one
+// with [App.Prefix] or [Prefix.Prefix]; it registers nothing on its own.
+//
+// Every method forwards to the matching [App] method with the child
+// pattern joined onto the prefix, so prefixes inherit all of [App.Map]
+// and [App.Use] semantics: case-insensitive matching, duplicate
+// registration detection, param extraction, ordering, and 404/405
+// behavior. A prefix is a naming convenience, not a scope: middlewares
+// registered through it apply by path and registration order exactly like
+// [App.Use], so register them before the routes they should cover.
+type Prefix struct {
+	pattern string
+	app     *App
+}
+
+// join returns the effective pattern for registering child under prefix.
+//
+// It owns the seam between the two patterns, case by case:
+//
+//  1. A root prefix adds nothing: join("/", "/users") is "/users", so the
+//     child stands alone.
+//
+//  2. A "/" child is the prefix itself, never the prefix plus a trailing
+//     slash, because "/api/" is not a valid pattern: join("/api", "/") is
+//     "/api". An empty child lands there too by plain concatenation, and
+//     at the root there is no prefix to keep, so join("/", "") stays empty
+//     for [App.Map] to reject like Map("") would.
+//
+//  3. A child on a prefix that already ends in "*" is subsumed: that prefix
+//     matches everything that could follow it, so the child adds nothing and
+//     join("/users/*", "/posts") is "/users/*". This is the general form of
+//     the root catch-all, where join("/*", "/*") is "/*" instead of the
+//     invalid "//*". Two consequences follow: such a prefix holds one
+//     pattern per method, so registering two different children for the same
+//     method panics as a duplicate; and a child's ":params" are dropped,
+//     since the catch-all already covers what they would have captured.
+//
+//  4. Otherwise the two concatenate with exactly one slash between them,
+//     adding the one that is missing: join("/api", "users") is "/api/users",
+//     never the valid-but-wrong "/apiusers" plain concatenation would give.
+//
+// A prefix ending in "*" always has a real wildcard there: [IsValidRoutePattern]
+// forbids "*" inside ":params", so only a wildcard segment can end the
+// pattern, and such a segment always matches whatever comes after it.
+func join(prefix string, child string) string {
+	if child != "" && !strings.HasPrefix(child, "/") {
+		child = "/" + child
+	}
+
+	switch {
+	case prefix == "/":
+		return child
+	case child == "/" || strings.HasSuffix(prefix, "*"):
+		return prefix
+	}
+	return prefix + child
+}
+
+// Prefix returns a [Prefix] rooted at pattern, so nested calls and route
+// registrations are prefixed with it.
+//
+// pattern is lowercased before validation, so it ignores letter case like
+// [App.Map]. Panics on invalid pattern or duplicate param names.
+//
+// The prefix is only validated here; routes and middlewares registered
+// through it are validated by [App.Map] and [App.Use] when they are added.
+func (me *App) Prefix(pattern string) *Prefix {
+	pattern = strings.ToLower(pattern)
+	// catch early for better debugging.
+	Assert(IsValidRoutePattern(pattern), "invalid route pattern")
+	Assert(AreRouteParamNamesUnique(pattern), "duplicate param names are not allowed")
+
+	return &Prefix{
+		pattern: pattern,
+		app:     me,
+	}
+}
+
+// Prefix returns a [Prefix] rooted at this prefix joined with child, so
+// prefixes nest. See [App.Prefix]; it panics on the same conditions.
+func (me *Prefix) Prefix(child string) *Prefix {
+	return me.app.Prefix(join(me.pattern, child))
+}
+
+// Map registers handlers for method + pattern under this prefix, so the
+// effective pattern is the prefix joined with pattern. A pattern of "/"
+// targets the prefix itself instead of the prefix plus a trailing slash.
+//
+// A prefix ending in "*" subsumes every child: all of its registrations
+// collapse onto the prefix itself, so a second one for the same method
+// panics as a duplicate. See [join] for the full set of rules.
+//
+// See [App.Map] for the method and pattern grammar, the case-insensitive
+// matching, and the panic conditions; they all apply to the joined
+// pattern.
+func (me *Prefix) Map(method string, pattern string, handlers ...Handler) {
+	me.app.Map(method, join(me.pattern, pattern), handlers...)
+}
+
+// MapGet registers handlers for the GET method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapGet(pattern string, handlers ...Handler) {
+	me.Map(MethodGet, pattern, handlers...)
+}
+
+// MapHead registers handlers for the HEAD method under this prefix.
+// See [Prefix.Map].
+//
+// Handlers must not write bytes to the body of a HEAD response.
+func (me *Prefix) MapHead(pattern string, handlers ...Handler) {
+	me.Map(MethodHead, pattern, handlers...)
+}
+
+// MapPost registers handlers for the POST method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapPost(pattern string, handlers ...Handler) {
+	me.Map(MethodPost, pattern, handlers...)
+}
+
+// MapPut registers handlers for the PUT method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapPut(pattern string, handlers ...Handler) {
+	me.Map(MethodPut, pattern, handlers...)
+}
+
+// MapPatch registers handlers for the PATCH method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapPatch(pattern string, handlers ...Handler) {
+	me.Map(MethodPatch, pattern, handlers...)
+}
+
+// MapDelete registers handlers for the DELETE method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapDelete(pattern string, handlers ...Handler) {
+	me.Map(MethodDelete, pattern, handlers...)
+}
+
+// MapConnect registers handlers for the CONNECT method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapConnect(pattern string, handlers ...Handler) {
+	me.Map(MethodConnect, pattern, handlers...)
+}
+
+// MapOptions registers handlers for the OPTIONS method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapOptions(pattern string, handlers ...Handler) {
+	me.Map(MethodOptions, pattern, handlers...)
+}
+
+// MapTrace registers handlers for the TRACE method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapTrace(pattern string, handlers ...Handler) {
+	me.Map(MethodTrace, pattern, handlers...)
+}
+
+// MapQuery registers handlers for the QUERY method under this prefix.
+// See [Prefix.Map].
+func (me *Prefix) MapQuery(pattern string, handlers ...Handler) {
+	me.Map(MethodQuery, pattern, handlers...)
+}
+
+// MapAll registers handlers for every HTTP method under this prefix,
+// calling [Prefix.Map] once per method. Does nothing if no handlers are
+// given. See [App.MapAll].
+func (me *Prefix) MapAll(pattern string, handlers ...Handler) {
+	if len(handlers) == 0 {
+		return
+	}
+	for _, method := range allMethods {
+		me.Map(method, pattern, handlers...)
+	}
+}
+
+// Use registers middlewares for pattern under this prefix, so the
+// effective pattern is the prefix joined with pattern. A pattern of "/"
+// targets the prefix itself, and [Prefix.UseAll] is shorthand for the
+// catch-all "/*" under it.
+//
+// See [App.Use] for the pattern grammar, the case-insensitive matching,
+// and the middleware chain semantics; they all apply to the joined
+// pattern. Register middlewares before the routes they should cover.
+//
+// Panics on the same conditions as [App.Use] once joined; in particular a
+// prefix holding ":params" cannot register middlewares at all, because
+// middleware patterns have no params.
+func (me *Prefix) Use(pattern string, handlers ...Handler) {
+	me.app.Use(join(me.pattern, pattern), handlers...)
+}
+
+// UseAll registers middlewares that run for every path under this prefix.
+// It is shorthand for [Prefix.Use] with the catch-all "/*" pattern.
+// See [App.Use] for the middleware chain semantics.
+func (me *Prefix) UseAll(handlers ...Handler) {
+	me.Use("/*", handlers...)
 }

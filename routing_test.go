@@ -749,6 +749,411 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 		resp = app.Test(httptest.NewRequest(http.MethodGet, "/NOPE", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
+
+	t.Run("prefix patterns are lowercased too", func(t *testing.T) {
+		app := New()
+		app.Prefix("/API").MapGet("/Users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		for _, path := range []string{"/api/users", "/API/USERS", "/Api/Users"} {
+			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+		}
+	})
+}
+
+// Every rule documented on Join, pinned as a table: a root prefix adds
+// nothing, a "/" child is the prefix itself, a trailing "*" subsumes the
+// child, and otherwise exactly one slash sits at the seam.
+func TestRouter_Join(t *testing.T) {
+	var testCases = []struct {
+		name   string
+		prefix string
+		child  string
+		want   string
+	}{
+		// ============================================================
+		// A root prefix adds nothing
+		// ============================================================
+		{name: "root prefix with child", prefix: "/", child: "/users", want: "/users"},
+		{name: "root prefix with root child", prefix: "/", child: "/", want: "/"},
+		{name: "root prefix with catch-all child", prefix: "/", child: "/*", want: "/*"},
+		{name: "root prefix with empty child", prefix: "/", child: "", want: ""},
+		{name: "root prefix with slashless child", prefix: "/", child: "users", want: "/users"},
+		// ============================================================
+		// A "/" child is the prefix itself, never prefix + "/"
+		// ============================================================
+		{name: "slash child targets the prefix", prefix: "/api", child: "/", want: "/api"},
+		{name: "empty child targets the prefix", prefix: "/api", child: "", want: "/api"},
+		{name: "deep slash child targets the prefix", prefix: "/api/v1", child: "/", want: "/api/v1"},
+		// ============================================================
+		// A prefix ending in "*" subsumes its children
+		// ============================================================
+		{name: "wildcard prefix swallows the child", prefix: "/users/*", child: "/posts", want: "/users/*"},
+		{name: "wildcard prefix swallows a slash child", prefix: "/users/*", child: "/", want: "/users/*"},
+		{name: "root catch-all does not double", prefix: "/*", child: "/*", want: "/*"},
+		{name: "root catch-all swallows the child", prefix: "/*", child: "/users", want: "/*"},
+		{name: "trailing wildcard segment subsumes", prefix: "/users*", child: "/posts", want: "/users*"},
+		{name: "wildcard inside a segment still joins", prefix: "/us*er", child: "/posts", want: "/us*er/posts"},
+		// ============================================================
+		// Otherwise exactly one slash sits at the seam
+		// ============================================================
+		{name: "plain join", prefix: "/api", child: "/users", want: "/api/users"},
+		{name: "catch-all child", prefix: "/api", child: "/*", want: "/api/*"},
+		{name: "param child", prefix: "/api", child: "/:id", want: "/api/:id"},
+		{name: "param prefix", prefix: "/users/:id", child: "/posts", want: "/users/:id/posts"},
+		{name: "slashless child gains a slash", prefix: "/api", child: "users", want: "/api/users"},
+		{name: "a malformed child is left for App.Map", prefix: "/api", child: "//users", want: "/api//users"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, join(tc.prefix, tc.child))
+		})
+	}
+}
+
+// Prefixes join a path prefix onto every registration, so they inherit
+// Map and Use semantics instead of scoping anything themselves.
+func TestRouter_Prefix(t *testing.T) {
+	ok := func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") }
+
+	t.Run("routes are registered under the prefix", func(t *testing.T) {
+		app := New()
+		api := app.Prefix("/api")
+		api.MapGet("/users", ok)
+		api.MapPost("/users", ok)
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodPost, "/api/users", nil)).StatusCode)
+		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/users", nil)).StatusCode)
+	})
+
+	t.Run("prefixes nest", func(t *testing.T) {
+		app := New()
+		app.Prefix("/api").Prefix("/v1").MapGet("/users", ok)
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)).StatusCode)
+		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
+	})
+
+	t.Run("a slash child targets the prefix itself", func(t *testing.T) {
+		app := New()
+		app.Prefix("/api").MapGet("/", ok)
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api", nil)).StatusCode)
+		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/api/other", nil)).StatusCode)
+	})
+
+	t.Run("the root prefix is a pass-through", func(t *testing.T) {
+		app := New()
+		root := app.Prefix("/")
+		root.MapGet("/users", ok)
+		root.Prefix("/v1").MapGet("/users", ok)
+		app.Prefix("/api").Prefix("/").MapGet("/health", ok)
+
+		for _, path := range []string{"/users", "/v1/users", "/api/health"} {
+			require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, path, nil)).StatusCode, "path: %s", path)
+		}
+	})
+
+	t.Run("params in the prefix are extracted", func(t *testing.T) {
+		app := New()
+		var gotID string
+		app.Prefix("/users/:id").MapGet("/posts", func(ctx *Context) error {
+			gotID = ctx.GetParam("id")
+			return ctx.Write(http.StatusOK, "ok")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/users/42/posts", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "42", gotID)
+	})
+
+	t.Run("a wildcard prefix subsumes its children", func(t *testing.T) {
+		app := New()
+		files := app.Prefix("/files/*")
+		files.MapGet("/download", ok)
+
+		// the prefix already matches anything after it, so the child
+		// collapses onto the prefix instead of extending it
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/download", nil)).StatusCode)
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/a/b/download", nil)).StatusCode)
+
+		// one pattern per method is all such a prefix can hold
+		require.Panics(t, func() { files.MapGet("/upload", ok) })
+		require.NotPanics(t, func() { files.MapPost("/upload", ok) })
+	})
+
+	t.Run("a child missing its leading slash gains one", func(t *testing.T) {
+		app := New()
+		app.Prefix("/api").MapGet("users", ok)
+		app.Prefix("/").MapGet("users", ok)
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/users", nil)).StatusCode)
+	})
+
+	t.Run("a nested prefix under a wildcard stays on the wildcard", func(t *testing.T) {
+		app := New()
+		app.Prefix("/files/*").Prefix("/archive").MapGet("/", ok)
+
+		// naive concatenation would build "/files/*/archive", which needs a
+		// middle segment; the subsumed prefix matches everything after it
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/archive", nil)).StatusCode)
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/a/b/archive", nil)).StatusCode)
+		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/files", nil)).StatusCode)
+	})
+
+	t.Run("colliding registrations panic", func(t *testing.T) {
+		app := New()
+		app.Prefix("/api").MapGet("/users", ok)
+
+		require.Panics(t, func() { app.MapGet("/api/users", ok) })
+		require.Panics(t, func() { app.Prefix("/API").MapGet("/users", ok) })
+		require.Panics(t, func() { app.Prefix("/api").Prefix("/users").MapGet("/", ok) })
+	})
+
+	t.Run("duplicate params across the prefix and the pattern panic", func(t *testing.T) {
+		app := New()
+		require.Panics(t, func() { app.Prefix("/users/:id").MapGet("/:id", ok) })
+		require.Panics(t, func() { app.Prefix("/users/:id").Prefix("/:id") })
+	})
+
+	t.Run("every method shortcut registers its own method", func(t *testing.T) {
+		testCases := []struct {
+			name     string
+			register func(p *Prefix, pattern string, handlers ...Handler)
+			method   string
+		}{
+			{"MapGet", func(p *Prefix, pat string, h ...Handler) { p.MapGet(pat, h...) }, http.MethodGet},
+			{"MapHead", func(p *Prefix, pat string, h ...Handler) { p.MapHead(pat, h...) }, http.MethodHead},
+			{"MapPost", func(p *Prefix, pat string, h ...Handler) { p.MapPost(pat, h...) }, http.MethodPost},
+			{"MapPut", func(p *Prefix, pat string, h ...Handler) { p.MapPut(pat, h...) }, http.MethodPut},
+			{"MapPatch", func(p *Prefix, pat string, h ...Handler) { p.MapPatch(pat, h...) }, http.MethodPatch},
+			{"MapDelete", func(p *Prefix, pat string, h ...Handler) { p.MapDelete(pat, h...) }, http.MethodDelete},
+			{"MapConnect", func(p *Prefix, pat string, h ...Handler) { p.MapConnect(pat, h...) }, http.MethodConnect},
+			{"MapOptions", func(p *Prefix, pat string, h ...Handler) { p.MapOptions(pat, h...) }, http.MethodOptions},
+			{"MapTrace", func(p *Prefix, pat string, h ...Handler) { p.MapTrace(pat, h...) }, http.MethodTrace},
+			{"MapQuery", func(p *Prefix, pat string, h ...Handler) { p.MapQuery(pat, h...) }, MethodQuery},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				app := New()
+				tc.register(app.Prefix("/api"), "/users", ok)
+
+				require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(tc.method, "/api/users", nil)).StatusCode)
+
+				other := http.MethodGet
+				if tc.method == http.MethodGet {
+					other = http.MethodPost
+				}
+				require.Equal(t, http.StatusMethodNotAllowed, app.Test(httptest.NewRequest(other, "/api/users", nil)).StatusCode)
+			})
+		}
+	})
+
+	t.Run("MapAll registers every method", func(t *testing.T) {
+		app := New()
+		app.Prefix("/api").MapAll("/users", ok)
+
+		for _, method := range allMethods {
+			require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(method, "/api/users", nil)).StatusCode, method)
+		}
+	})
+}
+
+func TestRouter_PrefixMiddlewares(t *testing.T) {
+	t.Run("UseAll runs for every path under the prefix", func(t *testing.T) {
+		app := New()
+		var called int
+		admin := app.Prefix("/admin")
+		admin.UseAll(func(ctx *Context) error {
+			called++
+			return ctx.Next()
+		})
+		admin.MapGet("/settings", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "ok")
+		})
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/admin/settings", nil)).StatusCode)
+		require.Equal(t, 1, called)
+
+		// paths outside the prefix do not run it
+		app.Test(httptest.NewRequest(http.MethodGet, "/other", nil))
+		require.Equal(t, 1, called)
+
+		// nor does a sibling path that merely starts with the prefix text
+		app.Test(httptest.NewRequest(http.MethodGet, "/adminx", nil))
+		require.Equal(t, 1, called)
+	})
+
+	t.Run("Use joins the child pattern onto the prefix", func(t *testing.T) {
+		app := New()
+		var called int
+		mw := func(ctx *Context) error {
+			called++
+			return ctx.Next()
+		}
+		api := app.Prefix("/api")
+		api.Use("/admin/*", mw)
+		api.MapGet("/admin/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+		api.MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)).StatusCode)
+		require.Equal(t, 1, called)
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
+		require.Equal(t, 1, called)
+	})
+
+	t.Run("a slash pattern targets the prefix exactly", func(t *testing.T) {
+		app := New()
+		var called int
+		mw := func(ctx *Context) error {
+			called++
+			return ctx.Next()
+		}
+
+		api := app.Prefix("/api")
+		api.Use("/", mw)
+		api.MapGet("/", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+		api.MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api", nil)).StatusCode)
+		require.Equal(t, 1, called)
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
+		require.Equal(t, 1, called)
+	})
+
+	t.Run("middlewares must be registered before the routes they cover", func(t *testing.T) {
+		app := New()
+		var called bool
+		api := app.Prefix("/api")
+		api.MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+		api.Use("/*", func(ctx *Context) error {
+			called = true
+			return ctx.Next()
+		})
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
+		require.False(t, called)
+	})
+
+	t.Run("a catch-all prefix does not double its wildcard", func(t *testing.T) {
+		app := New()
+		var called bool
+		app.Prefix("/*").UseAll(func(ctx *Context) error {
+			called = true
+			return ctx.Next()
+		})
+		app.MapGet("/anything", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/anything", nil)).StatusCode)
+		require.True(t, called)
+	})
+
+	t.Run("a prefix holding params cannot register middlewares", func(t *testing.T) {
+		app := New()
+		require.Panics(t, func() {
+			app.Prefix("/users/:id").UseAll(func(ctx *Context) error { return nil })
+		})
+	})
+
+	t.Run("middlewares do not leak into a sibling prefix", func(t *testing.T) {
+		app := New()
+		var called bool
+		app.Prefix("/admin").UseAll(func(ctx *Context) error {
+			called = true
+			return ctx.Next()
+		})
+		app.Prefix("/public").MapGet("/x", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/public/x", nil)).StatusCode)
+		require.False(t, called)
+	})
+
+	t.Run("prefix middlewares are not a scope", func(t *testing.T) {
+		app := New()
+		var called bool
+		// registered through the prefix, but it is still App.Use: any later
+		// route under the same path observes it, group or not
+		app.Prefix("/api").Use("/*", func(ctx *Context) error {
+			called = true
+			return ctx.Next()
+		})
+		app.MapGet("/api/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
+		require.True(t, called)
+	})
+
+	t.Run("middlewares run when nothing under the prefix matches", func(t *testing.T) {
+		app := New()
+		var called bool
+		app.Prefix("/admin").UseAll(func(ctx *Context) error {
+			called = true
+			return ctx.Next()
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/admin/missing", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.True(t, called)
+	})
+
+	t.Run("middleware patterns are lowercased too", func(t *testing.T) {
+		app := New()
+		var called bool
+		app.Prefix("/API").Use("/*", func(ctx *Context) error {
+			called = true
+			return ctx.Next()
+		})
+		app.Prefix("/API").MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
+
+		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/API/USERS", nil)).StatusCode)
+		require.True(t, called)
+	})
+}
+
+func TestRouter_PrefixPanics(t *testing.T) {
+	invalidPatterns := []string{
+		"",
+		"api",
+		"/api/",
+		"/api//users",
+		"/api/:id/",
+		"//users",
+	}
+
+	for _, pattern := range invalidPatterns {
+		t.Run("invalid prefix "+pattern, func(t *testing.T) {
+			require.Panics(t, func() { New().Prefix(pattern) })
+		})
+	}
+
+	t.Run("invalid nested prefix", func(t *testing.T) {
+		app := New()
+		require.Panics(t, func() { app.Prefix("/api").Prefix("/v1/") })
+	})
+
+	t.Run("invalid pattern under a prefix", func(t *testing.T) {
+		app := New()
+		require.Panics(t, func() {
+			app.Prefix("/api").MapGet("/users/", func(ctx *Context) error { return nil })
+		})
+	})
+
+	t.Run("no handlers does nothing", func(t *testing.T) {
+		app := New()
+		require.NotPanics(t, func() {
+			app.Prefix("/api").MapGet("/users")
+			app.Prefix("/api").MapAll("/all")
+			app.Prefix("/api").UseAll()
+		})
+	})
 }
 
 func TestRouter_Dispatch(t *testing.T) {
