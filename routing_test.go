@@ -269,6 +269,12 @@ func TestRouter_MapPanics(t *testing.T) {
 		app.Map(http.MethodGet, "/api/users", dummy)
 		require.Panics(t, func() { app.Map(http.MethodGet, "/api/users", dummy) })
 	})
+
+	t.Run("method already registered with different pattern case", func(t *testing.T) {
+		app := New()
+		app.Map(http.MethodGet, "/api/users", dummy)
+		require.Panics(t, func() { app.Map(http.MethodGet, "/API/Users", dummy) })
+	})
 }
 
 // Each method shortcut must register exactly its own method via Map.
@@ -622,6 +628,129 @@ func TestRouter_MatchPath(t *testing.T) {
 	}
 }
 
+// Route and middleware matching ignore letter case: App.Map and App.Use
+// lowercase their patterns at registration, and the request path is
+// lowercased before dispatch, so "/API/Users" and "/api/users" are one route.
+func TestRouter_CaseInsensitivePaths(t *testing.T) {
+	t.Run("request path case is ignored", func(t *testing.T) {
+		app := New()
+		app.MapGet("/api/users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		for _, path := range []string{
+			"/api/users",
+			"/API/USERS",
+			"/Api/Users",
+			"/api/Users",
+			"/API/users",
+		} {
+			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+		}
+	})
+
+	t.Run("registered pattern case is ignored", func(t *testing.T) {
+		app := New()
+		app.MapGet("/API/Users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		for _, path := range []string{"/api/users", "/Api/UsErS", "/API/USERS"} {
+			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+		}
+	})
+
+	t.Run("root and trailing slash still match", func(t *testing.T) {
+		app := New()
+		app.MapGet("/", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "root")
+		})
+		app.MapGet("/users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "users")
+		})
+
+		for _, path := range []string{"/", "/USERS", "/Users/"} {
+			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+		}
+	})
+
+	t.Run("parameter route matches case-insensitively", func(t *testing.T) {
+		app := New()
+		var gotPattern, gotPath, gotParam string
+		app.MapGet("/USERS/:id", func(ctx *Context) error {
+			gotPattern = ctx.GetPattern()
+			gotPath = ctx.GetPath()
+			gotParam = ctx.GetParam("id")
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/users/AbC", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// the pattern is stored lowercase, and the whole request path is
+		// lowercased before dispatch, so captured values are lowercase too
+		require.Equal(t, "/users/:id", gotPattern)
+		require.Equal(t, "/users/abc", gotPath)
+		require.Equal(t, "abc", gotParam)
+	})
+
+	t.Run("wildcard route matches case-insensitively", func(t *testing.T) {
+		app := New()
+		app.MapGet("/FILES/*", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/a/B.txt", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("middleware pattern case is ignored", func(t *testing.T) {
+		testCases := []struct {
+			name    string
+			pattern string
+			path    string
+		}{
+			{"uppercase pattern", "/API/*", "/api/users"},
+			{"uppercase path", "/api/*", "/API/USERS"},
+			{"mixed case on both sides", "/Api/*", "/aPi/UsErS"},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				app := New()
+				var ran bool
+				app.Use(tc.pattern, func(ctx *Context) error {
+					ran = true
+					return ctx.Next()
+				})
+				app.MapGet("/api/users", func(ctx *Context) error {
+					return ctx.Write(http.StatusOK, "route")
+				})
+
+				resp := app.Test(httptest.NewRequest(http.MethodGet, tc.path, nil))
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				require.True(t, ran, "middleware %q should run for %q", tc.pattern, tc.path)
+			})
+		}
+	})
+
+	t.Run("case variant of a known path keeps 405 and 404", func(t *testing.T) {
+		app := New()
+		app.MapGet("/users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodPost, "/USERS", nil))
+		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+		resp = app.Test(httptest.NewRequest(http.MethodGet, "/NOPE", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
 func TestRouter_Dispatch(t *testing.T) {
 	var newHandler = func(name string, called *[]string) Handler {
 		return func(ctx *Context) error {
@@ -849,6 +978,18 @@ func TestRouter_Dispatch(t *testing.T) {
 		}
 
 		require.Equal(t, []string{"root", "users", "users"}, called)
+	})
+
+	t.Run("path case is ignored", func(t *testing.T) {
+		app := New()
+		var called []string
+
+		app.Use("/api/*", newHandler("middleware", &called))
+		app.Map(http.MethodGet, "/api/users/:id", newHandler("handler", &called))
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/API/Users/123", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, []string{"middleware", "handler"}, called)
 	})
 
 	t.Run("unknown path returns 404 invalid_endpoint", func(t *testing.T) {

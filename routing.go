@@ -18,6 +18,8 @@ func (me *App) registerRootHandler() {
 		if r.URL.Path != "/" {
 			r.URL.Path = strings.TrimRight(r.URL.Path, "/")
 		}
+		// normalize the path so matching is case-insensitive
+		r.URL.Path = strings.ToLower(r.URL.Path)
 
 		ctx := me.newContext(w, r)
 		me.dispatch(ctx)
@@ -129,6 +131,9 @@ const (
 // " GET " are equivalent. Prefer the [MethodGet], [MethodPost], ...
 // constants, or the [App.MapGet], [App.MapPost], ... shortcuts.
 //
+// pattern is lowercased before validation, so matching ignores letter case:
+// "/API/Users", "/Api/Users" and "/api/users" are the same route.
+//
 // pattern grammar:
 //
 //	route            = "/" + (segment ("/" + segment)*)?
@@ -152,6 +157,7 @@ const (
 // when a route matches, otherwise "".
 func (me *App) Map(method string, pattern string, handlers ...Handler) {
 	method = strings.ToUpper(strings.TrimSpace(method))
+	pattern = strings.ToLower(pattern)
 	Assert(IsValidHttpMethod(method), "invalid http method")
 	Assert(IsValidRoutePattern(pattern), "invalid route pattern")
 	Assert(AreRouteParamNamesUnique(pattern), "duplicate param names are not allowed")
@@ -259,6 +265,8 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 // Matching is exact pattern matching: "/" matches "/" only; use "/*" to
 // match every path. Unlike [App.Map], patterns have no ":param" segments.
 //
+// pattern is lowercased before validation, so matching ignores letter case.
+//
 // pattern grammar:
 //
 //	pattern = "/" + (segment ("/" + segment)*)?
@@ -279,6 +287,7 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 // A middleware that writes a response without calling [Context.Next]
 // short-circuits the chain, so it can serve requests without a route.
 func (me *App) Use(pattern string, handlers ...Handler) {
+	pattern = strings.ToLower(pattern)
 	Assert(IsValidMiddlewarePattern(pattern), "invalid middleware pattern")
 
 	if len(handlers) == 0 {
