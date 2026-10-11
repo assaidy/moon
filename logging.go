@@ -118,15 +118,6 @@ var (
 		},
 	}
 
-	// RlePattern logs the route pattern that matched the request, e.g.
-	// "/users/:id", or "" when no route matched. See [Context.GetPattern].
-	RlePattern = RequestLoggingEntry{
-		Key: "pattern",
-		Value: func(ctx *Context, err error) any {
-			return ctx.GetPattern()
-		},
-	}
-
 	// RleStatus logs the response status code as an int, defaulting to 200
 	// when the handler chain wrote no status. See [Context.GetStatusCode].
 	RleStatus = RequestLoggingEntry{

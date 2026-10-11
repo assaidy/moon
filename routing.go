@@ -1,9 +1,10 @@
 package moon
 
 import (
+	"fmt"
 	"net/http"
-	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -70,7 +71,6 @@ func (me *App) dispatch(ctx *Context) {
 	routes := me.routesPerMethod[ctx.GetMethod()]
 	for i := range routes {
 		if params, ok := routes[i].matchPath(ctx.GetPath()); ok {
-			ctx.pattern = routes[i].pattern
 			ctx.params = params
 			targetRoute = &routes[i]
 			break
@@ -124,6 +124,28 @@ const (
 	MethodQuery   = "QUERY" // RFC 10008
 )
 
+// IsValidHttpMethod reports whether method is a supported HTTP method.
+// It is case sensitive and expects the canonical all-caps form
+// (e.g. "GET", not "get"). See the Method* constants and [App.Map],
+// which normalizes its input with [strings.ToUpper] and [strings.TrimSpace]
+// before validating.
+func IsValidHttpMethod(method string) bool {
+	switch method {
+	case MethodGet,
+		MethodHead,
+		MethodPost,
+		MethodPut,
+		MethodPatch,
+		MethodDelete,
+		MethodConnect,
+		MethodOptions,
+		MethodTrace,
+		MethodQuery:
+		return true
+	}
+	return false
+}
+
 // Map registers one or more handlers for method + pattern.
 //
 // method is trimmed and uppercased before validation, so "get", "GET" and
@@ -133,37 +155,39 @@ const (
 // pattern is lowercased before validation, so matching ignores letter case:
 // "/API/Users", "/Api/Users" and "/api/users" are the same route.
 //
-// pattern grammar:
+// pattern grammar (see ParsePattern):
 //
-//	route            = "/" + (segment ("/" + segment)*)?
-//	segment          = param_segment | wildcard_segment
-//	param_segment    = ":" + name
-//	wildcard_segment = (name | "*")+
-//	name             = (letter | digit | "_" | "-")+
+//	pattern = "/" [ segment { "/" segment } ]
+//	segment = literal | ":name" | ":name?" | "*" | "+"
 //
-// Panics on invalid method/pattern, duplicate param names,
-// or if method is already registered for pattern.
-// Does nothing if no handlers are given. Handlers passed
-// in one call run in order via [Context.Next].
+// A literal holds letters, digits, "_" , "-" and ".". A ":name" segment
+// matches any single non-empty piece and captures it under name.
+// A ":name?" segment may be omitted, capturing "". A "*" segment captures
+// the rest of the path, slashes included, and may be empty; a "+"
+// segment does the same but requires at least one character. A lone "*"
+// is read with GetParam("*"), several as GetParam("*1"), GetParam("*2")
+// (same for "+"). Every segment holds exactly one part: literals and
+// parameters cannot be mixed inside one segment.
+//
+// Panics on invalid method/pattern or duplicate param names. Registering
+// the same method and pattern twice is allowed; the first registration
+// wins and later ones never match. Does nothing if no handlers are given.
+// Handlers passed in one call run in order via [Context.Next].
 //
 // Request flow: middlewares registered with [App.Use] before this call
-// whose pattern matches the request path run first, in registration order,
+// whose prefix matches the request path run first, in registration order,
 // then these handlers. When the path matches but the method is unregistered,
 // the app's [ErrorHandler] is invoked with [ErrMethodNotAllowed] after any
 // matching middlewares; when nothing matches it is invoked with
 // [ErrInvalidEndpoint] after any matching middlewares, so a custom handler
-// can inspect or override them. [Context.GetPattern] holds the route pattern
-// when a route matches, otherwise "".
+// can inspect or override them.
 func (me *App) Map(method string, pattern string, handlers ...Handler) {
 	method = strings.ToUpper(strings.TrimSpace(method))
-	pattern = strings.ToLower(pattern)
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
 	Assert(IsValidHttpMethod(method), "invalid http method")
-	Assert(IsValidRoutePattern(pattern), "invalid route pattern")
-	Assert(AreRouteParamNamesUnique(pattern), "duplicate param names are not allowed")
-	Assert(
-		slices.IndexFunc(me.routesPerMethod[method], func(r RouteEntry) bool { return r.method == method && r.pattern == pattern }) == -1,
-		"method with this pattern already registered",
-	)
+	segments, names, err := ParsePattern(pattern)
+	Assert(err == nil, fmt.Sprintf("invalid pattern: %s", err))
+	Assert(areNamesUnique(names), "duplicate param names are not allowed")
 
 	if len(handlers) == 0 {
 		return
@@ -172,14 +196,12 @@ func (me *App) Map(method string, pattern string, handlers ...Handler) {
 	me.routesPerMethod[method] = append(me.routesPerMethod[method], RouteEntry{
 		method:   method,
 		pattern:  pattern,
+		segments: segments,
+		names:    names,
 		handlers: handlers,
 		order:    int(me.nextRoutingOrder.Add(1)),
 	})
 }
-
-var routePatternRegex = regexp.MustCompile(
-	`^/(?:(?::[A-Za-z0-9_-]+|[A-Za-z0-9_*-]+)(?:/(?::[A-Za-z0-9_-]+|[A-Za-z0-9_*-]+))*)?$`,
-)
 
 // MapGet registers handlers for the GET method. See [App.Map].
 func (me *App) MapGet(pattern string, handlers ...Handler) {
@@ -233,8 +255,7 @@ func (me *App) MapQuery(pattern string, handlers ...Handler) {
 	me.Map(MethodQuery, pattern, handlers...)
 }
 
-// allMethods is every HTTP method registered by [App.MapAll] and
-// [Prefix.MapAll].
+// allMethods is every HTTP method registered by [App.MapAll].
 var allMethods = []string{
 	MethodGet,
 	MethodHead,
@@ -252,8 +273,7 @@ var allMethods = []string{
 // [App.Map] once per method. A request whose method has no dedicated
 // registration still reaches these handlers.
 //
-// Panics if any method is already registered for pattern. Does nothing if
-// no handlers are given. See [App.Map] for the pattern grammar.
+// Does nothing if no handlers are given. See [App.Map] for the pattern grammar.
 func (me *App) MapAll(pattern string, handlers ...Handler) {
 	if len(handlers) == 0 {
 		return
@@ -263,56 +283,52 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 	}
 }
 
-// Use registers middlewares for pattern.
+// Use registers middlewares for prefix.
 //
-// Matching is exact pattern matching: "/" matches "/" only; use "/*" to
-// match every path. Unlike [App.Map], patterns have no ":param" segments.
+// Matching is prefix matching on whole segments: "/" matches every path,
+// "/api" matches "/api" and "/api/users" but not "/apiv2". Prefixes may
+// hold ":param", ":param?", "*" and "+" segments like routes; they are
+// expanded for the match but their values are not captured.
 //
-// pattern is lowercased before validation, so matching ignores letter case.
+// prefix is lowercased before validation, so matching ignores letter case.
 //
-// pattern grammar:
+// See [App.Map] for the pattern grammar.
 //
-//	pattern = "/" + (segment ("/" + segment)*)?
-//	segment = (letter | digit | "_" | "-" | "*")+
-//
-// Panics on invalid pattern. Does nothing if no middlewares are given.
+// Panics on invalid prefix. Does nothing if no middlewares are given.
 // Registration order matters: only [App.Map] routes registered after
 // this call observe it, in registration order.
 //
-// Middlewares run first when their pattern matches the request path, even
+// Middlewares run first when their prefix matches the request path, even
 // when no route matches: the chain is middlewares, then the matched route
 // if any, otherwise [ErrMethodNotAllowed] when another method matches the
-// path, otherwise [ErrInvalidEndpoint]. [Context.GetPattern] holds the
-// route pattern when a route matches, otherwise "".
+// path, otherwise [ErrInvalidEndpoint].
 //
 // Each middleware must call [Context.Next] to continue the chain; a
 // returned error from the chain is passed to the app's [ErrorHandler].
 // A middleware that writes a response without calling [Context.Next]
 // short-circuits the chain, so it can serve requests without a route.
-func (me *App) Use(pattern string, handlers ...Handler) {
-	pattern = strings.ToLower(pattern)
-	Assert(IsValidMiddlewarePattern(pattern), "invalid middleware pattern")
+func (me *App) Use(prefix string, handlers ...Handler) {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	segments, _, err := ParsePattern(prefix)
+	Assert(err == nil, fmt.Sprintf("invalid prefix: %s", err))
 
 	if len(handlers) == 0 {
 		return
 	}
 
 	me.middlewares = append(me.middlewares, MiddlewareEntry{
-		pattern:  pattern,
+		pattern:  prefix,
+		segments: segments,
 		handlers: handlers,
 		order:    int(me.nextRoutingOrder.Add(1)),
 	})
 }
 
-var middlewarePatternRegex = regexp.MustCompile(
-	`^/(?:[A-Za-z0-9_*\-]+(?:/[A-Za-z0-9_*\-]+)*)?$`,
-)
-
 // UseAll registers middlewares that run for every path.
-// It is shorthand for [App.Use] with the catch-all "/*" pattern.
+// It is shorthand for [App.Use] with the "/" prefix.
 // See [App.Use] for the middleware chain semantics.
 func (me *App) UseAll(handlers ...Handler) {
-	me.Use("/*", handlers...)
+	me.Use("/", handlers...)
 }
 
 // Handler is a middleware or route handler.
@@ -328,275 +344,323 @@ func (me *App) UseAll(handlers ...Handler) {
 // the buffer.
 type Handler func(ctx *Context) error
 
+type partKind int8
+
+const (
+	partLiteral partKind = iota
+	partParam
+	partOptional
+	partWildcard
+	partPlus
+)
+
+type part struct {
+	kind partKind
+	text string
+}
+
+type segment []part
+
+// TODO: support mixed segments holding several parts (e.g. "/api-:name",
+// "/files/*.json"). Currently every segment holds exactly one part:
+// a literal, ":name", ":name?", "*" or "+" must be the whole segment.
+func ParsePattern(pattern string) ([]segment, []string, error) {
+	if len(pattern) == 0 || pattern[0] != '/' {
+		return nil, nil, fmt.Errorf("route pattern must start with '/'")
+	}
+	if pattern == "/" {
+		// root has no segments.
+		return nil, nil, nil
+	}
+	if pattern[len(pattern)-1] == '/' {
+		return nil, nil, fmt.Errorf("route pattern must not end with '/'")
+	}
+
+	var segments []segment
+	var names []string
+
+	// ignore the leading '/'; it doesn't count as as segment
+	for text := range strings.SplitSeq(pattern[1:], "/") {
+		if len(text) == 0 {
+			return nil, nil, fmt.Errorf("route pattern must not contain empty segments ('//')")
+		}
+
+		var seg segment
+
+		switch {
+		case text == "*":
+			seg = append(seg, part{kind: partWildcard, text: text})
+		case text == "+":
+			seg = append(seg, part{kind: partPlus, text: text})
+		case text[0] == ':':
+			body := text[1:]
+			if len(body) == 0 {
+				return nil, nil, fmt.Errorf("missing parameter name after ':' in segment %q", text)
+			}
+			optional := false
+			if body[len(body)-1] == '?' {
+				optional = true
+				body = body[:len(body)-1]
+				if len(body) == 0 {
+					return nil, nil, fmt.Errorf("missing parameter name before '?' in segment %q", text)
+				}
+			}
+			for i := 0; i < len(body); i++ {
+				if !isRouteNameChar(body[i]) {
+					return nil, nil, fmt.Errorf("invalid character %q in parameter name %q", body[i], body)
+				}
+			}
+			if optional {
+				seg = append(seg, part{kind: partOptional, text: body})
+			} else {
+				seg = append(seg, part{kind: partParam, text: body})
+			}
+			names = append(names, body)
+		default:
+			for i := 0; i < len(text); i++ {
+				if text[i] == '*' || text[i] == '+' {
+					return nil, nil, fmt.Errorf("wildcard %q must be a whole segment", text)
+				}
+				if !isLiteralChar(text[i]) {
+					return nil, nil, fmt.Errorf("invalid character %q in segment %q", text[i], text)
+				}
+			}
+			seg = append(seg, part{kind: partLiteral, text: text})
+		}
+
+		segments = append(segments, seg)
+	}
+
+	return segments, names, nil
+}
+
+func isRouteNameChar(c byte) bool {
+	return c >= 'a' && c <= 'z' ||
+		c >= 'A' && c <= 'Z' ||
+		c >= '0' && c <= '9' ||
+		c == '_' || c == '-'
+}
+
+func isLiteralChar(c byte) bool {
+	return isRouteNameChar(c) || c == '.'
+}
+
+func areNamesUnique(names []string) bool {
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if _, ok := seen[name]; ok {
+			return false
+		}
+		seen[name] = struct{}{}
+	}
+	return true
+}
+
 // RouteEntry is a handler route (pattern + per-method handlers). See
 // [App.Map]. Middleware patterns live in [MiddlewareEntry]; see [App.Use].
 type RouteEntry struct {
-	// TODO: add support for route metadata to generate apenapi spec.
+	// TODO: add route metadata to generate an OpenAPI spec from the
+	// registered routes: an id plus documentation fields (summary, tags, ...).
+	// The id defaults to empty, identifies the matched route through
+	// the context, and is assigned in [App.dispatch].
 	method   string
 	pattern  string
+	segments []segment
+	names    []string
 	handlers []Handler
 	order    int
-	// TODO: Add route id field. default to empty.
-	// it's used to identify a route inside the context `Context.routeId`
-	// assign it insde [App.dispatch]
 }
 
-var routeParamRegex = regexp.MustCompile(`:([a-zA-Z0-9_\-]+)`)
-var patternWildcardRegex = regexp.MustCompile(`\*`)
-
+// matchPath returns the captured parameters and true on an exact match,
+// nil and false otherwise. The params map is built only on success,
+// so failed candidates cost no allocation for it.
 func (me RouteEntry) matchPath(path string) (map[string]string, bool) {
-	// Collect param names in order so we can use unnamed groups.
-	// Unnamed groups avoid RE2 restrictions on group names (e.g. hyphens
-	// in ":version-id" are valid param names but invalid group names).
-	paramMatches := routeParamRegex.FindAllStringSubmatch(me.pattern, -1)
-	paramNames := make([]string, 0, len(paramMatches))
-	for _, match := range paramMatches {
-		paramNames = append(paramNames, match[1])
-	}
-
-	// Convert standard named placeholders (e.g., ":id") into unnamed groups.
-	// [^/]+ ensures it stops matching at the next forward slash.
-	regexString := routeParamRegex.ReplaceAllString(me.pattern, `([^/]+)`)
-
-	// Convert "*" into a non-capturing, greedy wildcard match (.*)
-	regexString = patternWildcardRegex.ReplaceAllString(regexString, `.*`)
-
-	// Ensure strict matching from start to end of the string
-	regexString = "^" + regexString + "$"
-
-	// Compile final regex
-	compiledRegex := regexp.MustCompile(regexString)
-
-	// Execute the match against the target string
-	matches := compiledRegex.FindStringSubmatch(path)
-	if matches == nil {
+	// The path must already be normalized (lowercase, no trailing
+	// slash, leading '/'); see [App.registerRootHandler].
+	if len(path) == 0 || path[0] != '/' {
 		return nil, false
 	}
 
-	// matches[0] is the full match, matches[1:] map to paramNames in order.
-	// Wildcards use non-capturing .* so they don't shift indices.
-	if len(matches)-1 != len(paramNames) {
+	segs := me.segments
+	if len(segs) == 0 {
+		if path == "/" {
+			return map[string]string{}, true
+		}
 		return nil, false
 	}
-	params := make(map[string]string, len(paramNames))
-	for i, name := range paramNames {
-		params[name] = matches[i+1]
+
+	pieces := strings.Split(path[1:], "/")
+
+	wildTotal, plusTotal := 0, 0
+	for i := range segs {
+		switch segs[i][0].kind {
+		case partWildcard:
+			wildTotal++
+		case partPlus:
+			plusTotal++
+		}
 	}
 
+	type capture struct{ key, value string }
+	captures := make([]capture, 0, len(me.names)+wildTotal+plusTotal)
+
+	var match func(segIdx, pathIdx, wildIdx, plusIdx int) bool
+	match = func(segIdx, pathIdx, wildIdx, plusIdx int) bool {
+		// End: success only if both sides ended together.
+		if segIdx == len(segs) {
+			return pathIdx == len(pieces)
+		}
+		p := segs[segIdx][0]
+		switch p.kind {
+		case partLiteral:
+			// Literal: pieces must equal, else dead end.
+			return pathIdx < len(pieces) && pieces[pathIdx] == p.text && match(segIdx+1, pathIdx+1, wildIdx, plusIdx)
+		case partParam:
+			// :id: any non-empty piece works, saved under its name.
+			if pathIdx >= len(pieces) || len(pieces[pathIdx]) == 0 {
+				return false
+			}
+			captures = append(captures, capture{p.text, pieces[pathIdx]})
+			if match(segIdx+1, pathIdx+1, wildIdx, plusIdx) {
+				return true
+			}
+			captures = captures[:len(captures)-1]
+			return false
+		case partOptional:
+			// :id?: try eating the piece first; if the rest fails,
+			// retry as if it ate nothing (saves ""). Path ended
+			// means only the empty reading.
+			if pathIdx < len(pieces) && len(pieces[pathIdx]) > 0 {
+				captures = append(captures, capture{p.text, pieces[pathIdx]})
+				if match(segIdx+1, pathIdx+1, wildIdx, plusIdx) {
+					return true
+				}
+				captures = captures[:len(captures)-1]
+			}
+			captures = append(captures, capture{p.text, ""})
+			if match(segIdx+1, pathIdx, wildIdx, plusIdx) {
+				return true
+			}
+			captures = captures[:len(captures)-1]
+			return false
+		case partWildcard:
+			// *: tries every split, longest rest first (/v1/*/shop
+			// vs /v1/a/b/shop tries a/b before a). Lone one saved
+			// as "*", several as "*1", "*2".
+			key := "*"
+			if wildTotal > 1 {
+				key = "*" + strconv.Itoa(wildIdx+1)
+			}
+			for k := len(pieces); k >= pathIdx; k-- {
+				captures = append(captures, capture{key, strings.Join(pieces[pathIdx:k], "/")})
+				if match(segIdx+1, k, wildIdx+1, plusIdx) {
+					return true
+				}
+				captures = captures[:len(captures)-1]
+			}
+			return false
+		case partPlus:
+			// +: same as *, but skips the empty rest.
+			key := "+"
+			if plusTotal > 1 {
+				key = "+" + strconv.Itoa(plusIdx+1)
+			}
+			for k := len(pieces); k > pathIdx; k-- {
+				value := strings.Join(pieces[pathIdx:k], "/")
+				if len(value) == 0 {
+					continue
+				}
+				captures = append(captures, capture{key, value})
+				if match(segIdx+1, k, wildIdx, plusIdx+1) {
+					return true
+				}
+				captures = captures[:len(captures)-1]
+			}
+			return false
+		}
+		return false
+	}
+
+	if !match(0, 0, 0, 0) {
+		return nil, false
+	}
+	params := make(map[string]string, len(captures))
+	for _, c := range captures {
+		params[c.key] = c.value
+	}
 	return params, true
 }
 
 type MiddlewareEntry struct {
 	pattern  string
+	segments []segment
 	handlers []Handler
 	order    int
 }
 
+// matchPath reports whether the entry's prefix covers path: every prefix
+// piece must match, leftover path pieces are ignored, so "/api"
+// covers "/api/users" but not "/apiv2". Values are not captured.
 func (me MiddlewareEntry) matchPath(path string) bool {
-	// Convert "*" into a non-capturing, greedy wildcard match (.*)
-	regexString := patternWildcardRegex.ReplaceAllString(me.pattern, `.*`)
-
-	// Ensure strict matching from start to end of the string
-	regexString = "^" + regexString + "$"
-
-	// Compile final regex
-	compiledRegex := regexp.MustCompile(regexString)
-
-	return compiledRegex.MatchString(path)
-}
-
-// Prefix is a shared path prefix for routes and middlewares. Create one
-// with [App.Prefix] or [Prefix.Prefix]; it registers nothing on its own.
-//
-// Every method forwards to the matching [App] method with the child
-// pattern joined onto the prefix, so prefixes inherit all of [App.Map]
-// and [App.Use] semantics: case-insensitive matching, duplicate
-// registration detection, param extraction, ordering, and 404/405
-// behavior. A prefix is a naming convenience, not a scope: middlewares
-// registered through it apply by path and registration order exactly like
-// [App.Use], so register them before the routes they should cover.
-type Prefix struct {
-	pattern string
-	app     *App
-}
-
-// join returns the effective pattern for registering child under prefix.
-//
-// It owns the seam between the two patterns, case by case:
-//
-//  1. A root prefix adds nothing: join("/", "/users") is "/users", so the
-//     child stands alone.
-//
-//  2. A "/" child is the prefix itself, never the prefix plus a trailing
-//     slash, because "/api/" is not a valid pattern: join("/api", "/") is
-//     "/api". An empty child lands there too by plain concatenation, and
-//     at the root there is no prefix to keep, so join("/", "") stays empty
-//     for [App.Map] to reject like Map("") would.
-//
-//  3. A child on a prefix that already ends in "*" is subsumed: that prefix
-//     matches everything that could follow it, so the child adds nothing and
-//     join("/users/*", "/posts") is "/users/*". This is the general form of
-//     the root catch-all, where join("/*", "/*") is "/*" instead of the
-//     invalid "//*". Two consequences follow: such a prefix holds one
-//     pattern per method, so registering two different children for the same
-//     method panics as a duplicate; and a child's ":params" are dropped,
-//     since the catch-all already covers what they would have captured.
-//
-//  4. Otherwise the two concatenate with exactly one slash between them,
-//     adding the one that is missing: join("/api", "users") is "/api/users",
-//     never the valid-but-wrong "/apiusers" plain concatenation would give.
-//
-// A prefix ending in "*" always has a real wildcard there: [IsValidRoutePattern]
-// forbids "*" inside ":params", so only a wildcard segment can end the
-// pattern, and such a segment always matches whatever comes after it.
-func join(prefix string, child string) string {
-	if child != "" && !strings.HasPrefix(child, "/") {
-		child = "/" + child
+	// The path must already be normalized (lowercase, no trailing
+	// slash, leading '/'); see [App.registerRootHandler].
+	if len(path) == 0 || path[0] != '/' {
+		return false
 	}
 
-	switch {
-	case prefix == "/":
-		return child
-	case child == "/" || strings.HasSuffix(prefix, "*"):
-		return prefix
+	segs := me.segments
+	if len(segs) == 0 {
+		return true
 	}
-	return prefix + child
-}
 
-// Prefix returns a [Prefix] rooted at pattern, so nested calls and route
-// registrations are prefixed with it.
-//
-// pattern is lowercased before validation, so it ignores letter case like
-// [App.Map]. Panics on invalid pattern or duplicate param names.
-//
-// The prefix is only validated here; routes and middlewares registered
-// through it are validated by [App.Map] and [App.Use] when they are added.
-func (me *App) Prefix(pattern string) Prefix {
-	pattern = strings.ToLower(pattern)
-	// catch early for better debugging.
-	Assert(IsValidRoutePattern(pattern), "invalid route pattern")
-	Assert(AreRouteParamNamesUnique(pattern), "duplicate param names are not allowed")
+	pieces := strings.Split(path[1:], "/")
 
-	return Prefix{
-		pattern: pattern,
-		app:     me,
+	var match func(segIdx, pathIdx int) bool
+	match = func(segIdx, pathIdx int) bool {
+		// End: prefix matched; leftover path is ignored.
+		if segIdx == len(segs) {
+			return true
+		}
+		p := segs[segIdx][0]
+		switch p.kind {
+		case partLiteral:
+			// Literal: pieces must equal, else dead end.
+			return pathIdx < len(pieces) && pieces[pathIdx] == p.text && match(segIdx+1, pathIdx+1)
+		case partParam:
+			// :id: any non-empty piece works. Value is not saved;
+			// middleware answers yes/no only.
+			return pathIdx < len(pieces) && len(pieces[pathIdx]) > 0 && match(segIdx+1, pathIdx+1)
+		case partOptional:
+			// :id?: try eating the piece first; if the rest fails,
+			// retry as if it ate nothing. Path ended means only
+			// the empty reading.
+			if pathIdx < len(pieces) && len(pieces[pathIdx]) > 0 && match(segIdx+1, pathIdx+1) {
+				return true
+			}
+			return match(segIdx+1, pathIdx)
+		case partWildcard:
+			// *: tries every split, longest rest first. Anything
+			// left after the prefix is ignored.
+			for k := len(pieces); k >= pathIdx; k-- {
+				if match(segIdx+1, k) {
+					return true
+				}
+			}
+			return false
+		case partPlus:
+			// +: same as *, but skips the empty rest.
+			for k := len(pieces); k > pathIdx; k-- {
+				if len(strings.Join(pieces[pathIdx:k], "/")) == 0 {
+					continue
+				}
+				if match(segIdx+1, k) {
+					return true
+				}
+			}
+			return false
+		}
+		return false
 	}
-}
 
-// Prefix returns a [Prefix] rooted at this prefix joined with child, so
-// prefixes nest. See [App.Prefix]; it panics on the same conditions.
-func (me Prefix) Prefix(child string) Prefix {
-	return me.app.Prefix(join(me.pattern, child))
-}
-
-// Map registers handlers for method + pattern under this prefix, so the
-// effective pattern is the prefix joined with pattern. A pattern of "/"
-// targets the prefix itself instead of the prefix plus a trailing slash.
-//
-// A prefix ending in "*" subsumes every child: all of its registrations
-// collapse onto the prefix itself, so a second one for the same method
-// panics as a duplicate. See [join] for the full set of rules.
-//
-// See [App.Map] for the method and pattern grammar, the case-insensitive
-// matching, and the panic conditions; they all apply to the joined
-// pattern.
-func (me Prefix) Map(method string, pattern string, handlers ...Handler) {
-	me.app.Map(method, join(me.pattern, pattern), handlers...)
-}
-
-// MapGet registers handlers for the GET method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapGet(pattern string, handlers ...Handler) {
-	me.Map(MethodGet, pattern, handlers...)
-}
-
-// MapHead registers handlers for the HEAD method under this prefix.
-// See [Prefix.Map].
-//
-// Handlers must not write bytes to the body of a HEAD response.
-func (me Prefix) MapHead(pattern string, handlers ...Handler) {
-	me.Map(MethodHead, pattern, handlers...)
-}
-
-// MapPost registers handlers for the POST method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapPost(pattern string, handlers ...Handler) {
-	me.Map(MethodPost, pattern, handlers...)
-}
-
-// MapPut registers handlers for the PUT method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapPut(pattern string, handlers ...Handler) {
-	me.Map(MethodPut, pattern, handlers...)
-}
-
-// MapPatch registers handlers for the PATCH method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapPatch(pattern string, handlers ...Handler) {
-	me.Map(MethodPatch, pattern, handlers...)
-}
-
-// MapDelete registers handlers for the DELETE method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapDelete(pattern string, handlers ...Handler) {
-	me.Map(MethodDelete, pattern, handlers...)
-}
-
-// MapConnect registers handlers for the CONNECT method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapConnect(pattern string, handlers ...Handler) {
-	me.Map(MethodConnect, pattern, handlers...)
-}
-
-// MapOptions registers handlers for the OPTIONS method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapOptions(pattern string, handlers ...Handler) {
-	me.Map(MethodOptions, pattern, handlers...)
-}
-
-// MapTrace registers handlers for the TRACE method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapTrace(pattern string, handlers ...Handler) {
-	me.Map(MethodTrace, pattern, handlers...)
-}
-
-// MapQuery registers handlers for the QUERY method under this prefix.
-// See [Prefix.Map].
-func (me Prefix) MapQuery(pattern string, handlers ...Handler) {
-	me.Map(MethodQuery, pattern, handlers...)
-}
-
-// MapAll registers handlers for every HTTP method under this prefix,
-// calling [Prefix.Map] once per method. Does nothing if no handlers are
-// given. See [App.MapAll].
-func (me Prefix) MapAll(pattern string, handlers ...Handler) {
-	if len(handlers) == 0 {
-		return
-	}
-	for _, method := range allMethods {
-		me.Map(method, pattern, handlers...)
-	}
-}
-
-// Use registers middlewares for pattern under this prefix, so the
-// effective pattern is the prefix joined with pattern. A pattern of "/"
-// targets the prefix itself, and [Prefix.UseAll] is shorthand for the
-// catch-all "/*" under it.
-//
-// See [App.Use] for the pattern grammar, the case-insensitive matching,
-// and the middleware chain semantics; they all apply to the joined
-// pattern. Register middlewares before the routes they should cover.
-//
-// Panics on the same conditions as [App.Use] once joined; in particular a
-// prefix holding ":params" cannot register middlewares at all, because
-// middleware patterns have no params.
-func (me Prefix) Use(pattern string, handlers ...Handler) {
-	me.app.Use(join(me.pattern, pattern), handlers...)
-}
-
-// UseAll registers middlewares that run for every path under this prefix.
-// It is shorthand for [Prefix.Use] with the catch-all "/*" pattern.
-// See [App.Use] for the middleware chain semantics.
-func (me Prefix) UseAll(handlers ...Handler) {
-	me.Use("/*", handlers...)
+	return match(0, 0)
 }

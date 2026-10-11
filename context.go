@@ -40,7 +40,6 @@ type Context struct {
 	readRequestBodyOnce  sync.Once
 	requestBodyReadError error
 	requestBodyBuffer    *bytes.Buffer
-	pattern              string
 	params               map[string]string
 	handlers             []Handler
 	nextHandlerIndex     int
@@ -222,14 +221,6 @@ func (me *Context) GetRemoteAddress() string {
 // GetMethod returns the request HTTP method (GET, POST, ...).
 func (me *Context) GetMethod() string {
 	return me.request.Method
-}
-
-// GetPattern returns the route pattern that matched the request
-// (e.g. "/users/:id"). It is empty when no route matches, including
-// middleware-only requests and unmatched requests ([ErrInvalidEndpoint],
-// [ErrMethodNotAllowed]). See [App.Map].
-func (me *Context) GetPattern() string {
-	return me.pattern
 }
 
 // GetPath returns the request URL path without the query string.

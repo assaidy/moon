@@ -263,18 +263,6 @@ func TestRouter_MapPanics(t *testing.T) {
 		app := New()
 		require.Panics(t, func() { app.Map(http.MethodGet, "/api/:id/api/:id", dummy) })
 	})
-
-	t.Run("method already registered", func(t *testing.T) {
-		app := New()
-		app.Map(http.MethodGet, "/api/users", dummy)
-		require.Panics(t, func() { app.Map(http.MethodGet, "/api/users", dummy) })
-	})
-
-	t.Run("method already registered with different pattern case", func(t *testing.T) {
-		app := New()
-		app.Map(http.MethodGet, "/api/users", dummy)
-		require.Panics(t, func() { app.Map(http.MethodGet, "/API/Users", dummy) })
-	})
 }
 
 // Each method shortcut must register exactly its own method via Map.
@@ -313,11 +301,6 @@ func TestRouter_MethodShortcuts(t *testing.T) {
 			}
 			resp = app.Test(httptest.NewRequest(other, "/api/users", nil))
 			require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
-
-			// duplicate registration on the same method panics
-			require.Panics(t, func() {
-				tc.register(app, "/api/users", func(ctx *Context) error { return nil })
-			})
 		})
 	}
 }
@@ -338,14 +321,6 @@ func TestRouter_MapAll(t *testing.T) {
 		resp := app.Test(httptest.NewRequest(method, "/api/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode, method)
 	}
-
-	// MapAll panics once any method on the pattern is taken
-	require.Panics(t, func() {
-		app.MapAll("/api/users", func(ctx *Context) error { return nil })
-	})
-	require.Panics(t, func() {
-		app.MapGet("/api/users", func(ctx *Context) error { return nil })
-	})
 }
 
 // MapAll with no handlers does nothing, like Map.
@@ -355,7 +330,7 @@ func TestRouter_MapAll_NoHandlers(t *testing.T) {
 	require.NotPanics(t, func() { app.MapGet("/api/users") })
 }
 
-// UseAll registers the middleware for every path, like Use("/*").
+// UseAll registers the middleware for every path, like Use("/").
 func TestRouter_UseAll(t *testing.T) {
 	app := New()
 
@@ -398,8 +373,11 @@ func TestRouter_UsePanics(t *testing.T) {
 		"api",
 		"/api/",
 		"/api//users",
-		"/:id",
-		"/api/:id",
+		"/:",
+		"/:?",
+		"/api/:a b",
+		"/api/*x",
+		"/api/x*",
 	}
 
 	for _, prefix := range invalidPrefixes {
