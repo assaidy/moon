@@ -60,8 +60,8 @@ type Handler struct {
 // are given. Chain the With* methods on [NewOptions] to configure it, then
 // register [Handler.Handle] in the chain:
 //
-//	app.UseAll(New().Handle)
-//	app.UseAll(New(NewOptions().WithAllowedOrigins([]string{"https://example.com"})).Handle)
+//	app.UseAll(cors.New().Handle)
+//	app.UseAll(cors.New(cors.NewOptions().WithAllowedOrigins([]string{"https://example.com"})).Handle)
 //
 // It panics when credentials are allowed while the allowed origins contain
 // the wildcard "*": a wildcard matches every origin, so pairing it with

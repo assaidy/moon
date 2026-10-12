@@ -52,7 +52,7 @@ type Options struct {
 // are given. Chain [Options.WithProbe] and [Options.WithResponse] to
 // configure it, then register [Handler.Handle] as a terminal endpoint:
 //
-//	app.Map(http.MethodGet, "/healthz", New().Handle)
+//	app.Map(http.MethodGet, "/healthz", health_check.New().Handle)
 //
 // It runs the probe (see [Options.WithProbe]) and passes the outcome to
 // the response func (see [Options.WithResponse]).

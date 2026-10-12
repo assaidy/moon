@@ -2,11 +2,11 @@
 // handler chain took and reports it in a response header. Register
 // [Handler.Handle] as a middleware or a route handler:
 //
-//	app.Use("/*", response_time.New().Handle)
+//	app.UseAll(response_time.New().Handle)
 //
 // Customize the header or skip timing for some requests:
 //
-//	app.Use("/*", response_time.New(response_time.NewOptions().WithHeader("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.NewOptions().WithHeader("X-Took")).Handle)
 //
 // As a middleware it runs before the route is resolved, so the timing
 // covers the full chain and the header is set even for unmatched requests
@@ -40,8 +40,8 @@ type Options struct {
 // are given. Chain the With* methods on [NewOptions] to configure it, then
 // register [Handler.Handle] in the chain:
 //
-//	app.Use("/*", New().Handle)
-//	app.Use("/*", New(NewOptions().WithHeader("X-Took")).Handle)
+//	app.UseAll(response_time.New().Handle)
+//	app.UseAll(response_time.New(response_time.NewOptions().WithHeader("X-Took")).Handle)
 //
 // Default header: "X-Response-Time" (see [Options.WithHeader]).
 // Requests for which the [Options.WithSkip] predicate returns true run the

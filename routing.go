@@ -155,19 +155,7 @@ func IsValidHttpMethod(method string) bool {
 // pattern is lowercased before validation, so matching ignores letter case:
 // "/API/Users", "/Api/Users" and "/api/users" are the same route.
 //
-// pattern grammar (see ParsePattern):
-//
-//	pattern = "/" [ segment { "/" segment } ]
-//	segment = literal | ":name" | ":name?" | "*" | "+"
-//
-// A literal holds letters, digits, "_" , "-" and ".". A ":name" segment
-// matches any single non-empty piece and captures it under name.
-// A ":name?" segment may be omitted, capturing "". A "*" segment captures
-// the rest of the path, slashes included, and may be empty; a "+"
-// segment does the same but requires at least one character. A lone "*"
-// is read with GetParam("*"), several as GetParam("*1"), GetParam("*2")
-// (same for "+"). Every segment holds exactly one part: literals and
-// parameters cannot be mixed inside one segment.
+// See [ParsePattern] for the pattern grammar.
 //
 // Panics on invalid method/pattern or duplicate param names. Registering
 // the same method and pattern twice is allowed; the first registration
@@ -292,7 +280,7 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 //
 // prefix is lowercased before validation, so matching ignores letter case.
 //
-// See [App.Map] for the pattern grammar.
+// See [ParsePattern] for the pattern grammar.
 //
 // Panics on invalid prefix. Does nothing if no middlewares are given.
 // Registration order matters: only [App.Map] routes registered after
@@ -317,7 +305,7 @@ func (me *App) Use(prefix string, handlers ...Handler) {
 	}
 
 	me.middlewares = append(me.middlewares, MiddlewareEntry{
-		pattern:  prefix,
+		prefix:   prefix,
 		segments: segments,
 		handlers: handlers,
 		order:    int(me.nextRoutingOrder.Add(1)),
@@ -361,9 +349,26 @@ type part struct {
 
 type segment []part
 
-// TODO: support mixed segments holding several parts (e.g. "/api-:name",
-// "/files/*.json"). Currently every segment holds exactly one part:
-// a literal, ":name", ":name?", "*" or "+" must be the whole segment.
+// ParsePattern cuts pattern into segments of parts, collecting ":name"
+// names in order for [App.Map] to check.
+//
+// Grammar:
+//
+//	pattern = "/" [ segment { "/" segment } ]
+//	segment = ":" name [ "?" ] | { literal | "*" | "+" }
+//	name    = literal { literal }
+//
+// A ":name" segment takes the whole segment: it matches any single
+// non-empty piece and captures it under name. ":name?" may be omitted,
+// capturing "". A name holds the same chars as a literal (letters,
+// digits, "_", "-" and "."). A ":" always starts a parameter, so a
+// literal colon must be escaped ("\:").
+// A literal holds letters, digits, "_", "-" and ".". A trailing "*"
+// captures the rest of the path, slashes included, and may be empty;
+// a trailing "+" does the same but requires at least one character.
+// Inside a segment they capture up to the next part instead. A lone "*"
+// is read with GetParam("*"), several as GetParam("*1"), GetParam("*2")
+// (same for "+"). A '\' escapes the next char ("\:", "\*", "\+", "\\").
 func ParsePattern(pattern string) ([]segment, []string, error) {
 	if len(pattern) == 0 || pattern[0] != '/' {
 		return nil, nil, fmt.Errorf("route pattern must start with '/'")
@@ -379,53 +384,83 @@ func ParsePattern(pattern string) ([]segment, []string, error) {
 	var segments []segment
 	var names []string
 
-	// ignore the leading '/'; it doesn't count as as segment
-	for text := range strings.SplitSeq(pattern[1:], "/") {
-		if len(text) == 0 {
+	// ignore the leading '/'; it doesn't count as a segment
+	for piece := range strings.SplitSeq(pattern[1:], "/") {
+		if len(piece) == 0 {
 			return nil, nil, fmt.Errorf("route pattern must not contain empty segments ('//')")
 		}
-
 		var seg segment
-
-		switch {
-		case text == "*":
-			seg = append(seg, part{kind: partWildcard, text: text})
-		case text == "+":
-			seg = append(seg, part{kind: partPlus, text: text})
-		case text[0] == ':':
-			body := text[1:]
-			if len(body) == 0 {
-				return nil, nil, fmt.Errorf("missing parameter name after ':' in segment %q", text)
-			}
-			optional := false
-			if body[len(body)-1] == '?' {
-				optional = true
-				body = body[:len(body)-1]
-				if len(body) == 0 {
-					return nil, nil, fmt.Errorf("missing parameter name before '?' in segment %q", text)
+		idx := 0
+		for idx < len(piece) {
+			switch piece[idx] {
+			case '*':
+				if len(seg) != 0 && seg[len(seg)-1].kind != partLiteral {
+					return nil, nil, fmt.Errorf("non-literal parts must be separated by a literal in segment %q", piece)
 				}
-			}
-			for i := 0; i < len(body); i++ {
-				if !isRouteNameChar(body[i]) {
-					return nil, nil, fmt.Errorf("invalid character %q in parameter name %q", body[i], body)
+				seg = append(seg, part{partWildcard, "*"})
+				idx++
+			case '+':
+				if len(seg) != 0 && seg[len(seg)-1].kind != partLiteral {
+					return nil, nil, fmt.Errorf("non-literal parts must be separated by a literal in segment %q", piece)
 				}
-			}
-			if optional {
-				seg = append(seg, part{kind: partOptional, text: body})
-			} else {
-				seg = append(seg, part{kind: partParam, text: body})
-			}
-			names = append(names, body)
-		default:
-			for i := 0; i < len(text); i++ {
-				if text[i] == '*' || text[i] == '+' {
-					return nil, nil, fmt.Errorf("wildcard %q must be a whole segment", text)
+				seg = append(seg, part{partPlus, "+"})
+				idx++
+			case '\\':
+				idx++ // consume the '\'
+				if idx == len(piece) {
+					return nil, nil, fmt.Errorf("dangling escape '\\' at end of segment %q", piece)
 				}
-				if !isLiteralChar(text[i]) {
-					return nil, nil, fmt.Errorf("invalid character %q in segment %q", text[i], text)
+				switch piece[idx] {
+				case '*':
+					seg = append(seg, part{partLiteral, "*"})
+				case '+':
+					seg = append(seg, part{partLiteral, "+"})
+				case ':':
+					seg = append(seg, part{partLiteral, ":"})
+				case '\\':
+					seg = append(seg, part{partLiteral, "\\"})
+				default:
+					return nil, nil, fmt.Errorf("invalid escape '\\%c' in segment %q; only '\\\\', '\\:', '\\*' and '\\+' can be escaped", piece[idx], piece)
 				}
+				idx++ // consume the escaped char
+			case ':':
+				if len(seg) != 0 {
+					return nil, nil, fmt.Errorf("parameter in segment %q must take the whole segment", piece)
+				}
+				idx++ // consume the ':'
+				nameStart := idx
+				for idx < len(piece) && isLiteralChar(piece[idx]) {
+					idx++
+				}
+				if nameStart == idx { // must have a name
+					if idx < len(piece) && piece[idx] == '?' {
+						return nil, nil, fmt.Errorf("missing parameter name before '?' in segment %q", piece)
+					}
+					return nil, nil, fmt.Errorf("missing parameter name after ':' in segment %q", piece)
+				}
+				name := piece[nameStart:idx]
+				names = append(names, name)
+				if idx < len(piece) && piece[idx] == '?' {
+					seg = append(seg, part{partOptional, name})
+					idx++
+				} else {
+					seg = append(seg, part{partParam, name})
+				}
+				if idx != len(piece) {
+					return nil, nil, fmt.Errorf("parameter in segment %q must take the whole segment", piece)
+				}
+			default:
+				literalStart := idx
+				for idx < len(piece) && isLiteralChar(piece[idx]) {
+					idx++
+				}
+				if literalStart == idx {
+					// there must be a char here. if not, it means we encountered a non-literal char,
+					// and it's not a special char as we already check them above.
+					return nil, nil, fmt.Errorf("invalid character %q in segment %q", piece[idx], piece)
+				}
+				seg = append(seg, part{partLiteral, piece[literalStart:idx]})
 			}
-			seg = append(seg, part{kind: partLiteral, text: text})
 		}
 
 		segments = append(segments, seg)
@@ -434,15 +469,20 @@ func ParsePattern(pattern string) ([]segment, []string, error) {
 	return segments, names, nil
 }
 
-func isRouteNameChar(c byte) bool {
+func isLiteralChar(c byte) bool {
 	return c >= 'a' && c <= 'z' ||
 		c >= 'A' && c <= 'Z' ||
 		c >= '0' && c <= '9' ||
-		c == '_' || c == '-'
+		c == '_' || c == '-' || c == '.'
 }
 
-func isLiteralChar(c byte) bool {
-	return isRouteNameChar(c) || c == '.'
+// pieceEnd returns the end of the path piece starting at pos:
+// the next '/' or the end of the path.
+func pieceEnd(path string, pos int) int {
+	if i := strings.IndexByte(path[pos:], '/'); i >= 0 {
+		return pos + i
+	}
+	return len(path)
 }
 
 func areNamesUnique(names []string) bool {
@@ -461,8 +501,7 @@ func areNamesUnique(names []string) bool {
 type RouteEntry struct {
 	// TODO: add route metadata to generate an OpenAPI spec from the
 	// registered routes: an id plus documentation fields (summary, tags, ...).
-	// The id defaults to empty, identifies the matched route through
-	// the context, and is assigned in [App.dispatch].
+	// The id defaults to empty and identifies the matched route.
 	method   string
 	pattern  string
 	segments []segment
@@ -472,8 +511,7 @@ type RouteEntry struct {
 }
 
 // matchPath returns the captured parameters and true on an exact match,
-// nil and false otherwise. The params map is built only on success,
-// so failed candidates cost no allocation for it.
+// nil and false otherwise. The params map is built only on success.
 func (me RouteEntry) matchPath(path string) (map[string]string, bool) {
 	// The path must already be normalized (lowercase, no trailing
 	// slash, leading '/'); see [App.registerRootHandler].
@@ -489,99 +527,126 @@ func (me RouteEntry) matchPath(path string) (map[string]string, bool) {
 		return nil, false
 	}
 
-	pieces := strings.Split(path[1:], "/")
-
 	wildTotal, plusTotal := 0, 0
 	for i := range segs {
-		switch segs[i][0].kind {
-		case partWildcard:
-			wildTotal++
-		case partPlus:
-			plusTotal++
+		for j := range segs[i] {
+			switch segs[i][j].kind {
+			case partWildcard:
+				wildTotal++
+			case partPlus:
+				plusTotal++
+			}
 		}
 	}
 
 	type capture struct{ key, value string }
 	captures := make([]capture, 0, len(me.names)+wildTotal+plusTotal)
 
-	var match func(segIdx, pathIdx, wildIdx, plusIdx int) bool
-	match = func(segIdx, pathIdx, wildIdx, plusIdx int) bool {
-		// End: success only if both sides ended together.
-		if segIdx == len(segs) {
-			return pathIdx == len(pieces)
+	var match func(segIdx, partIdx, pos, wildcIdx, plusIdx int) bool
+	match = func(segIdx, partIdx, pos, wildcIdx, plusIdx int) bool {
+		seg := segs[segIdx]
+		if partIdx == len(seg) {
+			// Segment done: the next one starts at a piece start.
+			// Consume the '/' if present; it may already be gone
+			// (optional skip, empty wildcard), in which case pos
+			// already follows one.
+			if segIdx+1 == len(segs) {
+				return pos == len(path)
+			}
+			if pos < len(path) {
+				if path[pos] == '/' {
+					pos++
+				} else if path[pos-1] != '/' {
+					return false
+				}
+			}
+			return match(segIdx+1, 0, pos, wildcIdx, plusIdx)
 		}
-		p := segs[segIdx][0]
+		p := seg[partIdx]
 		switch p.kind {
 		case partLiteral:
-			// Literal: pieces must equal, else dead end.
-			return pathIdx < len(pieces) && pieces[pathIdx] == p.text && match(segIdx+1, pathIdx+1, wildIdx, plusIdx)
-		case partParam:
-			// :id: any non-empty piece works, saved under its name.
-			if pathIdx >= len(pieces) || len(pieces[pathIdx]) == 0 {
+			// Literal: the path must continue with it, else dead end.
+			if !strings.HasPrefix(path[pos:], p.text) {
 				return false
 			}
-			captures = append(captures, capture{p.text, pieces[pathIdx]})
-			if match(segIdx+1, pathIdx+1, wildIdx, plusIdx) {
+			return match(segIdx, partIdx+1, pos+len(p.text), wildcIdx, plusIdx)
+		case partParam:
+			// :id: any non-empty run up to the next '/' works,
+			// saved under its name. A param owns its segment.
+			end := pieceEnd(path, pos)
+			if end == pos {
+				return false
+			}
+			captures = append(captures, capture{p.text, path[pos:end]})
+			if match(segIdx, partIdx+1, end, wildcIdx, plusIdx) {
 				return true
 			}
 			captures = captures[:len(captures)-1]
 			return false
 		case partOptional:
-			// :id?: try eating the piece first; if the rest fails,
-			// retry as if it ate nothing (saves ""). Path ended
-			// means only the empty reading.
-			if pathIdx < len(pieces) && len(pieces[pathIdx]) > 0 {
-				captures = append(captures, capture{p.text, pieces[pathIdx]})
-				if match(segIdx+1, pathIdx+1, wildIdx, plusIdx) {
+			// :id?: try eating first; if the rest fails, retry
+			// as if it ate nothing (saves "").
+			end := pieceEnd(path, pos)
+			if end > pos {
+				captures = append(captures, capture{p.text, path[pos:end]})
+				if match(segIdx, partIdx+1, end, wildcIdx, plusIdx) {
 					return true
 				}
 				captures = captures[:len(captures)-1]
 			}
 			captures = append(captures, capture{p.text, ""})
-			if match(segIdx+1, pathIdx, wildIdx, plusIdx) {
+			if match(segIdx, partIdx+1, pos, wildcIdx, plusIdx) {
 				return true
 			}
 			captures = captures[:len(captures)-1]
 			return false
 		case partWildcard:
-			// *: tries every split, longest rest first (/v1/*/shop
-			// vs /v1/a/b/shop tries a/b before a). Lone one saved
-			// as "*", several as "*1", "*2".
+			// *: greedy spans, longest first; may be empty and may
+			// span slashes. Lone one saved as "*", several as
+			// "*1", "*2". Spans ending in '/' are tried last, so
+			// separators stay out of captures unless forced.
 			key := "*"
 			if wildTotal > 1 {
-				key = "*" + strconv.Itoa(wildIdx+1)
+				key = "*" + strconv.Itoa(wildcIdx+1)
 			}
-			for k := len(pieces); k >= pathIdx; k-- {
-				captures = append(captures, capture{key, strings.Join(pieces[pathIdx:k], "/")})
-				if match(segIdx+1, k, wildIdx+1, plusIdx) {
-					return true
+			for _, slashEnding := range [2]bool{false, true} {
+				for end := len(path); end >= pos; end-- {
+					slashed := end > pos && path[end-1] == '/'
+					if slashed != slashEnding {
+						continue
+					}
+					captures = append(captures, capture{key, path[pos:end]})
+					if match(segIdx, partIdx+1, end, wildcIdx+1, plusIdx) {
+						return true
+					}
+					captures = captures[:len(captures)-1]
 				}
-				captures = captures[:len(captures)-1]
 			}
 			return false
 		case partPlus:
-			// +: same as *, but skips the empty rest.
+			// +: same as *, but the span must not be empty.
 			key := "+"
 			if plusTotal > 1 {
 				key = "+" + strconv.Itoa(plusIdx+1)
 			}
-			for k := len(pieces); k > pathIdx; k-- {
-				value := strings.Join(pieces[pathIdx:k], "/")
-				if len(value) == 0 {
-					continue
+			for _, slashEnding := range [2]bool{false, true} {
+				for end := len(path); end > pos; end-- {
+					if (path[end-1] == '/') != slashEnding {
+						continue
+					}
+					captures = append(captures, capture{key, path[pos:end]})
+					if match(segIdx, partIdx+1, end, wildcIdx, plusIdx+1) {
+						return true
+					}
+					captures = captures[:len(captures)-1]
 				}
-				captures = append(captures, capture{key, value})
-				if match(segIdx+1, k, wildIdx, plusIdx+1) {
-					return true
-				}
-				captures = captures[:len(captures)-1]
 			}
 			return false
 		}
 		return false
 	}
 
-	if !match(0, 0, 0, 0) {
+	if !match(0, 0, 1, 0, 0) {
 		return nil, false
 	}
 	params := make(map[string]string, len(captures))
@@ -592,14 +657,14 @@ func (me RouteEntry) matchPath(path string) (map[string]string, bool) {
 }
 
 type MiddlewareEntry struct {
-	pattern  string
+	prefix   string
 	segments []segment
 	handlers []Handler
 	order    int
 }
 
 // matchPath reports whether the entry's prefix covers path: every prefix
-// piece must match, leftover path pieces are ignored, so "/api"
+// part must match, leftover path is ignored, so "/api"
 // covers "/api/users" but not "/apiv2". Values are not captured.
 func (me MiddlewareEntry) matchPath(path string) bool {
 	// The path must already be normalized (lowercase, no trailing
@@ -613,47 +678,66 @@ func (me MiddlewareEntry) matchPath(path string) bool {
 		return true
 	}
 
-	pieces := strings.Split(path[1:], "/")
-
-	var match func(segIdx, pathIdx int) bool
-	match = func(segIdx, pathIdx int) bool {
-		// End: prefix matched; leftover path is ignored.
-		if segIdx == len(segs) {
-			return true
+	var match func(segIdx, partIdx, pos int) bool
+	match = func(segIdx, partIdx, pos int) bool {
+		seg := segs[segIdx]
+		if partIdx == len(seg) {
+			// Segment done: the next one starts at a piece start.
+			// Consume the '/' if present; it may already be gone
+			// (optional skip, empty wildcard), in which case pos
+			// already follows one.
+			// Leftover path after the last one is ignored.
+			if segIdx+1 == len(segs) {
+				// Prefix done: the current piece must be fully
+				// eaten; anything after it is ignored.
+				return pos == pieceEnd(path, pos)
+			}
+			if pos < len(path) {
+				if path[pos] == '/' {
+					pos++
+				} else if path[pos-1] != '/' {
+					return false
+				}
+			}
+			return match(segIdx+1, 0, pos)
 		}
-		p := segs[segIdx][0]
+		p := seg[partIdx]
 		switch p.kind {
 		case partLiteral:
-			// Literal: pieces must equal, else dead end.
-			return pathIdx < len(pieces) && pieces[pathIdx] == p.text && match(segIdx+1, pathIdx+1)
+			// Literal: the path must continue with it, else dead end.
+			if !strings.HasPrefix(path[pos:], p.text) {
+				return false
+			}
+			return match(segIdx, partIdx+1, pos+len(p.text))
 		case partParam:
-			// :id: any non-empty piece works. Value is not saved;
-			// middleware answers yes/no only.
-			return pathIdx < len(pieces) && len(pieces[pathIdx]) > 0 && match(segIdx+1, pathIdx+1)
+			// :id: any non-empty run up to the next '/' works. Value
+			// is not saved; middleware answers yes/no only.
+			end := pieceEnd(path, pos)
+			if end == pos {
+				return false
+			}
+			return match(segIdx, partIdx+1, end)
 		case partOptional:
-			// :id?: try eating the piece first; if the rest fails,
-			// retry as if it ate nothing. Path ended means only
-			// the empty reading.
-			if pathIdx < len(pieces) && len(pieces[pathIdx]) > 0 && match(segIdx+1, pathIdx+1) {
+			// :id?: try eating first; if the rest fails, retry
+			// as if it ate nothing.
+			end := pieceEnd(path, pos)
+			if end > pos && match(segIdx, partIdx+1, end) {
 				return true
 			}
-			return match(segIdx+1, pathIdx)
+			return match(segIdx, partIdx+1, pos)
 		case partWildcard:
-			// *: tries every split, longest rest first. Anything
-			// left after the prefix is ignored.
-			for k := len(pieces); k >= pathIdx; k-- {
-				if match(segIdx+1, k) {
+			// *: greedy spans, longest first; anything left after
+			// the prefix is ignored.
+			for end := len(path); end >= pos; end-- {
+				if match(segIdx, partIdx+1, end) {
 					return true
 				}
 			}
 			return false
 		case partPlus:
-			// +: same as *, but skips the empty rest.
-			for k := len(pieces); k > pathIdx; k-- {
-				if len(strings.Join(pieces[pathIdx:k], "/")) == 0 {
-					continue
-				}
-				if match(segIdx+1, k) {
+			// +: same as *, but the span must not be empty.
+			for end := len(path); end > pos; end-- {
+				if match(segIdx, partIdx+1, end) {
 					return true
 				}
 			}
@@ -662,5 +746,5 @@ func (me MiddlewareEntry) matchPath(path string) bool {
 		return false
 	}
 
-	return match(0, 0)
+	return match(0, 0, 1)
 }

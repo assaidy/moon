@@ -1,11 +1,11 @@
 // Package helmet provides a handler that sets security-related response
 // headers. Register [Handler.Handle] as a middleware or a route handler:
 //
-//	app.Use("/*", helmet.New().Handle)
+//	app.UseAll(helmet.New().Handle)
 //
 // Customize or disable individual headers:
 //
-//	app.Use("/*", helmet.New(helmet.NewOptions().WithXFrameOptions("DENY").WithHstsMaxAge(31536000)).Handle)
+//	app.UseAll(helmet.New(helmet.NewOptions().WithXFrameOptions("DENY").WithHstsMaxAge(31536000)).Handle)
 //
 // As a middleware it runs before the route is resolved, so the headers are
 // set even for unmatched requests ([moon.ErrInvalidEndpoint],
@@ -54,8 +54,8 @@ type Options struct {
 // are given. Chain the With* methods on [NewOptions] to configure it, then
 // register [Handler.Handle] in the chain:
 //
-//	app.Use("/*", New().Handle)
-//	app.Use("/*", New(NewOptions().WithXFrameOptions("DENY")).Handle)
+//	app.UseAll(helmet.New().Handle)
+//	app.UseAll(helmet.New(helmet.NewOptions().WithXFrameOptions("DENY")).Handle)
 //
 // HSTS, Content-Security-Policy and Permissions-Policy are disabled by
 // default (see [Options.WithHstsMaxAge],

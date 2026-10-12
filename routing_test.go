@@ -13,237 +13,114 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRouter_IsValidMiddlewarePattern(t *testing.T) {
-	var testCases = []struct {
-		name   string
-		prefix string
-		want   bool
-	}{
-		// ============================================================
-		// Empty and root prefixes
-		// ============================================================
-		{name: "root", prefix: "/", want: true},
-		{name: "empty string", prefix: "", want: false},
-		// ============================================================
-		// Literal segments
-		// ============================================================
-		{name: "single literal", prefix: "/api", want: true},
-		{name: "multiple literal segments", prefix: "/api/v1/users", want: true},
-		{name: "digits", prefix: "/123", want: true},
-		{name: "mixed letters and digits", prefix: "/api123", want: true},
-		{name: "underscore", prefix: "/user_id", want: true},
-		{name: "hyphen", prefix: "/user-id", want: true},
-		{name: "underscore and hyphen", prefix: "/user_id-123", want: true},
-		{name: "single character", prefix: "/a", want: true},
-		{name: "multiple segments with special allowed chars", prefix: "/api/v1/user_id/profile-name", want: true},
-		// ============================================================
-		// Empty segments and repeated slashes
-		// ============================================================
-		{name: "double slash at beginning", prefix: "//xyz", want: false},
-		{name: "double slash in middle", prefix: "/api//users", want: false},
-		{name: "double slash at end", prefix: "/api//", want: false},
-		{name: "trailing slash", prefix: "/api/", want: false},
-		{name: "multiple consecutive slashes", prefix: "///", want: false},
-		{name: "slash between every character", prefix: "/a//b//c", want: false},
-		// ============================================================
-		// Route pattern syntax is not allowed
-		// ============================================================
-		{name: "parameter", prefix: "/:id", want: false},
-		{name: "parameter with underscore", prefix: "/:user_id", want: false},
-		{name: "parameter in middle of route", prefix: "/users/:id", want: false},
-		// ============================================================
-		// Wildcards match any sequence
-		// ============================================================
-		{name: "wildcard", prefix: "/*", want: true},
-		{name: "wildcard after literal", prefix: "/api/*", want: true},
-		{name: "wildcard inside literal", prefix: "/us*er", want: true},
-		{name: "multiple wildcards", prefix: "/a*b*c", want: true},
-		// ============================================================
-		// Invalid characters
-		// ============================================================
-		{name: "space", prefix: "/hello world", want: false},
-		{name: "dot", prefix: "/api.users", want: false},
-		{name: "question mark", prefix: "/users?", want: false},
-		{name: "hash", prefix: "/users#section", want: false},
-		{name: "percent", prefix: "/users%20", want: false},
-		{name: "at sign", prefix: "/users@home", want: false},
-		{name: "plus sign", prefix: "/users+", want: false},
-		{name: "equals sign", prefix: "/users=id", want: false},
-		{name: "comma", prefix: "/users,id", want: false},
-		{name: "semicolon", prefix: "/users;id", want: false},
-		{name: "backslash", prefix: `/users\id`, want: false},
-		// ============================================================
-		// Unicode characters
-		// ============================================================
-		{name: "Arabic letters", prefix: "/مستخدم", want: false},
-		{name: "Chinese letters", prefix: "/用户", want: false},
-		{name: "emoji", prefix: "/🚀", want: false},
-		// ============================================================
-		// Anchoring and malformed paths
-		// ============================================================
-		{name: "missing leading slash", prefix: "api/users", want: false},
-		{name: "leading whitespace", prefix: " /api", want: false},
-		{name: "trailing whitespace", prefix: "/api ", want: false},
-		{name: "newline at end", prefix: "/api\n", want: false},
-		{name: "newline at beginning", prefix: "\n/api", want: false},
-		{name: "query string", prefix: "/api?foo=bar", want: false},
-		{name: "fragment", prefix: "/api#users", want: false},
-		{name: "full URL", prefix: "https://example.com/api", want: false},
-		{name: "leading double slash URL-like", prefix: "//example.com/api", want: false},
-	}
+func TestRouter_ParsePattern(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		valid := []string{
+			"/",
+			"/api",
+			"/api/v1/users",
+			"/file.json",
+			"/:id",
+			"/:name.json",
+			"/users/:id",
+			"/user/:name?",
+			"/a/:x?/b",
+			"/*",
+			"/api/*",
+			"/+",
+			"/user/+",
+			"/v1/*/shop/*",
+			"/files/*.json",
+			"/a\\\\b",
+			`/v1/some/resource/name\:customVerb`,
+			`/\*`,
+			"/*v1*/proxy",
+			"/api/:id/x*",
+		}
+		for _, pattern := range valid {
+			_, _, err := ParsePattern(pattern)
+			require.NoError(t, err, "pattern: %s", pattern)
+		}
+	})
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, IsValidMiddlewarePattern(tc.prefix))
-		})
-	}
-}
+	t.Run("invalid", func(t *testing.T) {
+		invalid := []string{
+			"",
+			"api",
+			"/api/",
+			"/api//users",
+			"/:",
+			"/:?",
+			"/:sign:param",
+			"/:a:b",
+			"/:a?:b",
+			"/:from-:to",
+			"/:genus.:species",
+			"/api-:name",
+			"/shop/product/color::color",
+			"/*:id",
+			"/:id*",
+			"/*+",
+			"/**",
+			"/user/*?",
+			"/user/+?",
+			"/trailing\\",
+			"/\\q",
+			"/hello world",
+			"/users?",
+			"/api/:id/x y",
+		}
+		for _, pattern := range invalid {
+			_, _, err := ParsePattern(pattern)
+			require.Error(t, err, "pattern: %s", pattern)
+		}
+	})
 
-func TestRouter_IsValidRoutePattern(t *testing.T) {
-	var testCases = []struct {
-		name  string
-		route string
-		want  bool
-	}{
-		// ============================================================
-		// Empty and root routes
-		// ============================================================
-		{name: "root", route: "/", want: true},
-		{name: "empty string", route: "", want: false},
-		// ============================================================
-		// Literal segments
-		// ============================================================
-		{name: "single literal", route: "/api", want: true},
-		{name: "multiple literal segments", route: "/api/v1/users", want: true},
-		{name: "digits", route: "/123", want: true},
-		{name: "mixed letters and digits", route: "/api123", want: true},
-		{name: "underscore", route: "/user_id", want: true},
-		{name: "hyphen", route: "/user-id", want: true},
-		{name: "underscore and hyphen", route: "/user_id-123", want: true},
-		{name: "single character", route: "/a", want: true},
-		{name: "multiple segments with special allowed chars", route: "/api/v1/user_id/profile-name", want: true},
-		// ============================================================
-		// Parameter segments
-		// ============================================================
-		{name: "single parameter", route: "/:id", want: true},
-		{name: "parameter with underscore", route: "/:user_id", want: true},
-		{name: "parameter with hyphen", route: "/:user-id", want: true},
-		{name: "parameter with digits", route: "/:user123", want: true},
-		{name: "literal followed by parameter", route: "/users/:id", want: true},
-		{name: "parameter followed by literal", route: "/:id/profile", want: true},
-		{name: "multiple parameters", route: "/:user_id/:post_id", want: true},
-		{name: "parameter between literals", route: "/api/:version/users/:id", want: true},
-		{name: "parameter at root", route: "/:id", want: true},
-		// ============================================================
-		// Wildcard segments
-		// ============================================================
-		{name: "standalone wildcard", route: "/*", want: true},
-		{name: "wildcard after literal", route: "/api/*", want: true},
-		{name: "wildcard before literal", route: "/*/users", want: true},
-		{name: "wildcard between literals", route: "/api/*/users", want: true},
-		{name: "wildcard before name", route: "/*user", want: true},
-		{name: "wildcard after name", route: "/user*", want: true},
-		{name: "wildcard inside name", route: "/us*er", want: true},
-		{name: "wildcard surrounding name", route: "/*user*", want: true},
-		{name: "multiple wildcards", route: "/a*b*c", want: true},
-		{name: "only wildcards", route: "/***", want: true},
-		{name: "wildcard in multiple segments", route: "/api/*user*/posts/*id*", want: true},
-		{name: "wildcard with underscore and hyphen", route: "/user_*-id", want: true},
-		// ============================================================
-		// Parameters must not contain wildcards
-		// ============================================================
-		{name: "parameter ending with wildcard", route: "/:user_*", want: false},
-		{name: "parameter starting with wildcard", route: "/:*user", want: false},
-		{name: "parameter containing wildcard", route: "/:us*er", want: false},
-		{name: "parameter only wildcard", route: "/:*", want: false},
-		{name: "parameter with multiple wildcards", route: "/:a*b*c", want: false},
-		{name: "parameter wildcard in middle of route", route: "/api/:user_*/posts", want: false},
-		{name: "wildcard followed by parameter", route: "/*/:id", want: true},
-		// ============================================================
-		// Empty segments and repeated slashes
-		// ============================================================
-		{name: "double slash at beginning", route: "//xyz", want: false},
-		{name: "double slash in middle", route: "/api//users", want: false},
-		{name: "double slash at end", route: "/api//", want: false},
-		{name: "trailing slash", route: "/api/", want: false},
-		{name: "trailing slash after parameter", route: "/api/:id/", want: false},
-		{name: "trailing slash after wildcard", route: "/api/*/", want: false},
-		{name: "multiple consecutive slashes", route: "///", want: false},
-		{name: "slash between every character", route: "/a//b//c", want: false},
-		// ============================================================
-		// Invalid parameter syntax
-		// ============================================================
-		{name: "empty parameter", route: "/:", want: false},
-		{name: "parameter with only underscore", route: "/:_", want: true},
-		{name: "parameter with only hyphen", route: "/:-", want: true},
-		{name: "parameter with space", route: "/:user id", want: false},
-		{name: "parameter with dot", route: "/:user.id", want: false},
-		{name: "parameter with dollar sign", route: "/:$id", want: false},
-		{name: "parameter with percent", route: "/:%id", want: false},
-		{name: "parameter with slash", route: "/:user/id", want: true},
-		// ============================================================
-		// Invalid characters in literal/wildcard segments
-		// ============================================================
-		{name: "space", route: "/hello world", want: false},
-		{name: "dot", route: "/api.users", want: false},
-		{name: "question mark", route: "/users?", want: false},
-		{name: "hash", route: "/users#section", want: false},
-		{name: "percent", route: "/users%20", want: false},
-		{name: "at sign", route: "/users@home", want: false},
-		{name: "plus sign", route: "/users+", want: false},
-		{name: "equals sign", route: "/users=id", want: false},
-		{name: "comma", route: "/users,id", want: false},
-		{name: "semicolon", route: "/users;id", want: false},
-		{name: "backslash", route: `/users\id`, want: false},
-		// ============================================================
-		// Unicode characters
-		// ============================================================
-		{name: "Arabic letters", route: "/مستخدم", want: false},
-		{name: "Chinese letters", route: "/用户", want: false},
-		{name: "emoji", route: "/🚀", want: false},
-		// ============================================================
-		// Anchoring and malformed paths
-		// ============================================================
-		{name: "missing leading slash", route: "api/users", want: false},
-		{name: "leading whitespace", route: " /api", want: false},
-		{name: "trailing whitespace", route: "/api ", want: false},
-		{name: "newline at end", route: "/api\n", want: false},
-		{name: "newline at beginning", route: "\n/api", want: false},
-		{name: "query string", route: "/api?foo=bar", want: false},
-		{name: "fragment", route: "/api#users", want: false},
-		{name: "full URL", route: "https://example.com/api", want: false},
-		{name: "leading double slash URL-like", route: "//example.com/api", want: false},
-	}
+	t.Run("structure", func(t *testing.T) {
+		segs, names, err := ParsePattern(`/v1/some/resource/name\:customVerb`)
+		require.NoError(t, err)
+		require.Len(t, segs, 4)
+		require.Equal(t, segment{
+			{kind: partLiteral, text: "name"},
+			{kind: partLiteral, text: ":"},
+			{kind: partLiteral, text: "customVerb"},
+		}, segs[3])
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, IsValidRoutePattern(tc.route))
-		})
-	}
-}
+		segs, _, err = ParsePattern(`/\*`)
+		require.NoError(t, err)
+		require.Len(t, segs, 1)
+		require.Equal(t, segment{{kind: partLiteral, text: "*"}}, segs[0])
 
-func TestRouter_AreParamNamesUnique(t *testing.T) {
-	var testCases = []struct {
-		name    string
-		pattern string
-		want    bool
-	}{
-		{name: "root", pattern: "/", want: true},
-		{name: "static", pattern: "/api", want: true},
-		{name: "single parameter", pattern: "/users/:id", want: true},
-		{name: "distinct parameters", pattern: "/users/:user_id/posts/:post_id", want: true},
-		{name: "distinct root parameters", pattern: "/:category/:slug", want: true},
-		{name: "parameter with hyphen", pattern: "/api/:version-id", want: true},
-		{name: "duplicate parameters", pattern: "/api/:id/api/:id", want: false},
-		{name: "duplicate root parameters", pattern: "/:id/:id", want: false},
-		{name: "duplicate nested parameters", pattern: "/users/:id/posts/:id", want: false},
-	}
+		segs, _, err = ParsePattern("/*v1*/proxy")
+		require.NoError(t, err)
+		require.Len(t, segs, 2)
+		require.Equal(t, segment{
+			{kind: partWildcard, text: "*"},
+			{kind: partLiteral, text: "v1"},
+			{kind: partWildcard, text: "*"},
+		}, segs[0])
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, AreRouteParamNamesUnique(tc.pattern))
-		})
-	}
+		segs, names, err = ParsePattern("/:version-id")
+		require.NoError(t, err)
+		require.Equal(t, []string{"version-id"}, names)
+		require.Equal(t, segment{
+			{kind: partParam, text: "version-id"},
+		}, segs[0])
+
+		segs, _, err = ParsePattern("/files/*.json")
+		require.NoError(t, err)
+		require.Len(t, segs, 2)
+		require.Equal(t, segment{
+			{kind: partWildcard, text: "*"},
+			{kind: partLiteral, text: ".json"},
+		}, segs[1])
+	})
+
+	t.Run("duplicate names", func(t *testing.T) {
+		_, names, err := ParsePattern("/api/:id/posts/:id")
+		require.NoError(t, err)
+		require.False(t, areNamesUnique(names))
+	})
 }
 
 func TestRouter_MapPanics(t *testing.T) {
@@ -376,8 +253,6 @@ func TestRouter_UsePanics(t *testing.T) {
 		"/:",
 		"/:?",
 		"/api/:a b",
-		"/api/*x",
-		"/api/x*",
 	}
 
 	for _, prefix := range invalidPrefixes {
@@ -433,175 +308,88 @@ func TestRouter_MatchPath(t *testing.T) {
 		wantParams map[string]string
 		wantMatch  bool
 	}{
-		// ============================================================
-		// Static match
-		// ============================================================
-		{
-			name:       "static match",
-			pattern:    "/users",
-			path:       "/users",
-			wantParams: map[string]string{},
-			wantMatch:  true,
-		},
-		{
-			name:       "static multi-segment match",
-			pattern:    "/api/users",
-			path:       "/api/users",
-			wantParams: map[string]string{},
-			wantMatch:  true,
-		},
-		// ============================================================
-		// Parameter extraction
-		// ============================================================
-		{
-			name:       "single parameter",
-			pattern:    "/users/:id",
-			path:       "/users/123",
-			wantParams: map[string]string{"id": "123"},
-			wantMatch:  true,
-		},
-		{
-			name:       "parameter stops at slash",
-			pattern:    "/users/:id",
-			path:       "/users/123/profile",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		{
-			name:       "parameter with string value",
-			pattern:    "/users/:id",
-			path:       "/users/abc",
-			wantParams: map[string]string{"id": "abc"},
-			wantMatch:  true,
-		},
-		// ============================================================
-		// Multiple parameters
-		// ============================================================
-		{
-			name:       "multiple parameters",
-			pattern:    "/users/:user_id/posts/:post_id",
-			path:       "/users/123/posts/456",
-			wantParams: map[string]string{"user_id": "123", "post_id": "456"},
-			wantMatch:  true,
-		},
-		{
-			name:       "multiple parameters with strings",
-			pattern:    "/:category/:slug",
-			path:       "/books/go-programming",
-			wantParams: map[string]string{"category": "books", "slug": "go-programming"},
-			wantMatch:  true,
-		},
-		// ============================================================
-		// Mismatch
-		// ============================================================
-		{
-			name:       "different static segment",
-			pattern:    "/users",
-			path:       "/posts",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		{
-			name:       "different segment with parameter route",
-			pattern:    "/users/:id",
-			path:       "/posts/123",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		{
-			name:       "missing segment",
-			pattern:    "/users/:id",
-			path:       "/users",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		{
-			name:       "extra segment",
-			pattern:    "/users/:id",
-			path:       "/users/123/profile",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		// ============================================================
-		// Strict ^$ matching
-		// ============================================================
-		{
-			name:       "prefix is not enough",
-			pattern:    "/users",
-			path:       "/users/123",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		{
-			name:       "suffix is not allowed",
-			pattern:    "/users",
-			path:       "prefix/users",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		{
-			name:       "trailing slash does not match",
-			pattern:    "/users",
-			path:       "/users/",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		// ============================================================
-		// Wildcard
-		// ============================================================
-		{
-			name:       "standalone wildcard",
-			pattern:    "/files/*",
-			path:       "/files/a/b/c.txt",
-			wantParams: map[string]string{},
-			wantMatch:  true,
-		},
-		{
-			name:       "wildcard inside segment",
-			pattern:    "/users/*-profile",
-			path:       "/users/123-profile",
-			wantParams: map[string]string{},
-			wantMatch:  true,
-		},
-		{
-			name:       "wildcard before parameter",
-			pattern:    "/files/*/:id",
-			path:       "/files/a/b/123",
-			wantParams: map[string]string{"id": "123"},
-			wantMatch:  true,
-		},
-		{
-			name:       "wildcard mismatch",
-			pattern:    "/files/*/123",
-			path:       "/files/a/b",
-			wantParams: nil,
-			wantMatch:  false,
-		},
-		// ============================================================
-		// Root route
-		// ============================================================
-		{
-			name:       "root match",
-			pattern:    "/",
-			path:       "/",
-			wantParams: map[string]string{},
-			wantMatch:  true,
-		},
-		{
-			name:       "root does not match extra path",
-			pattern:    "/",
-			path:       "/users",
-			wantParams: nil,
-			wantMatch:  false,
-		},
+		{name: "static match", pattern: "/users", path: "/users", wantParams: map[string]string{}, wantMatch: true},
+		{name: "static multi-segment match", pattern: "/api/users", path: "/api/users", wantParams: map[string]string{}, wantMatch: true},
+		{name: "single parameter", pattern: "/users/:id", path: "/users/123", wantParams: map[string]string{"id": "123"}, wantMatch: true},
+		{name: "parameter with string value", pattern: "/users/:id", path: "/users/abc", wantParams: map[string]string{"id": "abc"}, wantMatch: true},
+		{name: "parameter stops at slash", pattern: "/users/:id", path: "/users/123/profile", wantParams: nil, wantMatch: false},
+		{name: "multiple parameters", pattern: "/users/:user_id/posts/:post_id", path: "/users/123/posts/456", wantParams: map[string]string{"user_id": "123", "post_id": "456"}, wantMatch: true},
+		{name: "multiple parameters with strings", pattern: "/:category/:slug", path: "/books/go-programming", wantParams: map[string]string{"category": "books", "slug": "go-programming"}, wantMatch: true},
+		{name: "different static segment", pattern: "/users", path: "/posts", wantParams: nil, wantMatch: false},
+		{name: "different segment with parameter route", pattern: "/users/:id", path: "/posts/123", wantParams: nil, wantMatch: false},
+		{name: "missing segment", pattern: "/users/:id", path: "/users", wantParams: nil, wantMatch: false},
+		{name: "extra segment", pattern: "/users/:id", path: "/users/123/profile", wantParams: nil, wantMatch: false},
+		{name: "prefix is not enough", pattern: "/users", path: "/users/123", wantParams: nil, wantMatch: false},
+		{name: "missing leading slash does not match", pattern: "/users", path: "prefix/users", wantParams: nil, wantMatch: false},
+		{name: "optional present", pattern: "/user/:name?", path: "/user/bob", wantParams: map[string]string{"name": "bob"}, wantMatch: true},
+		{name: "optional missing", pattern: "/user/:name?", path: "/user", wantParams: map[string]string{"name": ""}, wantMatch: true},
+		{name: "optional with extra segment", pattern: "/user/:name?", path: "/user/a/b", wantParams: nil, wantMatch: false},
+		{name: "optional in the middle skipped", pattern: "/a/:x?/b", path: "/a/b", wantParams: map[string]string{"x": ""}, wantMatch: true},
+		{name: "optional in the middle taken", pattern: "/a/:x?/b", path: "/a/c/b", wantParams: map[string]string{"x": "c"}, wantMatch: true},
+		{name: "standalone wildcard", pattern: "/files/*", path: "/files/a/b/c.txt", wantParams: map[string]string{"*": "a/b/c.txt"}, wantMatch: true},
+		{name: "wildcard matches empty", pattern: "/files/*", path: "/files", wantParams: map[string]string{"*": ""}, wantMatch: true},
+		{name: "wildcard mismatch", pattern: "/files/*/123", path: "/files/a/b", wantParams: nil, wantMatch: false},
+		{name: "wildcard in the middle", pattern: "/v1/*/shop", path: "/v1/a/b/shop", wantParams: map[string]string{"*": "a/b"}, wantMatch: true},
+		{name: "wildcard in the middle mismatch", pattern: "/v1/*/shop", path: "/v1/a/b/store", wantParams: nil, wantMatch: false},
+		{name: "multiple wildcards", pattern: "/v1/*/shop/*", path: "/v1/a/b/shop/c/d", wantParams: map[string]string{"*1": "a/b", "*2": "c/d"}, wantMatch: true},
+		{name: "plus needs content", pattern: "/user/+", path: "/user/a/b", wantParams: map[string]string{"+": "a/b"}, wantMatch: true},
+		{name: "plus rejects empty", pattern: "/user/+", path: "/user", wantParams: nil, wantMatch: false},
+		{name: "wildcard with literal suffix", pattern: "/files/*.json", path: "/files/a/b.json", wantParams: map[string]string{"*": "a/b"}, wantMatch: true},
+		{name: "wildcard with literal suffix mismatch", pattern: "/files/*.json", path: "/files/a.txt", wantParams: nil, wantMatch: false},
+		{name: "wildcard after literal", pattern: "/x*", path: "/xabc", wantParams: map[string]string{"*": "abc"}, wantMatch: true},
+		{name: "escaped star is literal", pattern: `/\*`, path: "/*", wantParams: map[string]string{}, wantMatch: true},
+		{name: "escaped colon is literal", pattern: `/v1/some/resource/name\:customVerb`, path: "/v1/some/resource/name:customVerb", wantParams: map[string]string{}, wantMatch: true},
+		{name: "root match", pattern: "/", path: "/", wantParams: map[string]string{}, wantMatch: true},
+		{name: "root does not match extra path", pattern: "/", path: "/users", wantParams: nil, wantMatch: false},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			route := RouteEntry{pattern: tc.pattern}
+			segs, names, err := ParsePattern(tc.pattern)
+			require.NoError(t, err)
+			route := RouteEntry{pattern: tc.pattern, segments: segs, names: names}
 			gotParams, gotMatch := route.matchPath(tc.path)
 			require.Equal(t, tc.wantMatch, gotMatch)
 			require.Equal(t, tc.wantParams, gotParams)
+		})
+	}
+}
+
+func TestRouter_MiddlewareMatchPath(t *testing.T) {
+	var testCases = []struct {
+		name   string
+		prefix string
+		path   string
+		want   bool
+	}{
+		{name: "root matches everything", prefix: "/", path: "/anything/at/all", want: true},
+		{name: "exact prefix", prefix: "/api", path: "/api", want: true},
+		{name: "prefix with sub path", prefix: "/api", path: "/api/users", want: true},
+		{name: "prefix with deep sub path", prefix: "/api", path: "/api/users/42", want: true},
+		{name: "no slash boundary", prefix: "/api", path: "/apiv2", want: false},
+		{name: "different prefix", prefix: "/api", path: "/other", want: false},
+		{name: "prefix longer than path", prefix: "/api", path: "/", want: false},
+		{name: "param prefix", prefix: "/users/:id", path: "/users/42", want: true},
+		{name: "param prefix with sub path", prefix: "/users/:id", path: "/users/42/posts", want: true},
+		{name: "param prefix missing value", prefix: "/users/:id", path: "/users", want: false},
+		{name: "optional prefix", prefix: "/a/:x?/b", path: "/a/b/c", want: true},
+		{name: "optional prefix taken", prefix: "/a/:x?/b", path: "/a/c/b/d", want: true},
+		{name: "optional prefix mismatch", prefix: "/a/:x?/b", path: "/a/c/d", want: false},
+		{name: "wildcard prefix", prefix: "/api/*", path: "/api/x/y", want: true},
+		{name: "wildcard prefix exact", prefix: "/api/*", path: "/api", want: true},
+		{name: "wildcard prefix mismatch", prefix: "/api/*", path: "/other", want: false},
+		{name: "plus prefix", prefix: "/u/+", path: "/u/a", want: true},
+		{name: "plus prefix empty", prefix: "/u/+", path: "/u", want: false},
+		{name: "mixed prefix", prefix: "/files/*.json", path: "/files/a.json/x", want: true},
+		{name: "mixed prefix mismatch", prefix: "/files/*.json", path: "/files/a.txt", want: false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			segs, _, err := ParsePattern(tc.prefix)
+			require.NoError(t, err)
+			mw := MiddlewareEntry{prefix: tc.prefix, segments: segs}
+			require.Equal(t, tc.want, mw.matchPath(tc.path))
 		})
 	}
 }
@@ -657,9 +445,8 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 
 	t.Run("parameter route matches case-insensitively", func(t *testing.T) {
 		app := New()
-		var gotPattern, gotPath, gotParam string
+		var gotPath, gotParam string
 		app.MapGet("/USERS/:id", func(ctx *Context) error {
-			gotPattern = ctx.GetPattern()
 			gotPath = ctx.GetPath()
 			gotParam = ctx.GetParam("id")
 			return ctx.Write(http.StatusOK, "route")
@@ -668,9 +455,8 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/users/AbC", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// the pattern is stored lowercase, and the whole request path is
-		// lowercased before dispatch, so captured values are lowercase too
-		require.Equal(t, "/users/:id", gotPattern)
+		// the whole request path is lowercased before dispatch,
+		// so captured values are lowercase too
 		require.Equal(t, "/users/abc", gotPath)
 		require.Equal(t, "abc", gotParam)
 	})
@@ -728,9 +514,9 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 
-	t.Run("prefix patterns are lowercased too", func(t *testing.T) {
+	t.Run("route patterns are lowercased too", func(t *testing.T) {
 		app := New()
-		app.Prefix("/API").MapGet("/Users", func(ctx *Context) error {
+		app.MapGet("/API/Users", func(ctx *Context) error {
 			return ctx.Write(http.StatusOK, "route")
 		})
 
@@ -738,399 +524,6 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
 			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
 		}
-	})
-}
-
-// Every rule documented on Join, pinned as a table: a root prefix adds
-// nothing, a "/" child is the prefix itself, a trailing "*" subsumes the
-// child, and otherwise exactly one slash sits at the seam.
-func TestRouter_Join(t *testing.T) {
-	var testCases = []struct {
-		name   string
-		prefix string
-		child  string
-		want   string
-	}{
-		// ============================================================
-		// A root prefix adds nothing
-		// ============================================================
-		{name: "root prefix with child", prefix: "/", child: "/users", want: "/users"},
-		{name: "root prefix with root child", prefix: "/", child: "/", want: "/"},
-		{name: "root prefix with catch-all child", prefix: "/", child: "/*", want: "/*"},
-		{name: "root prefix with empty child", prefix: "/", child: "", want: ""},
-		{name: "root prefix with slashless child", prefix: "/", child: "users", want: "/users"},
-		// ============================================================
-		// A "/" child is the prefix itself, never prefix + "/"
-		// ============================================================
-		{name: "slash child targets the prefix", prefix: "/api", child: "/", want: "/api"},
-		{name: "empty child targets the prefix", prefix: "/api", child: "", want: "/api"},
-		{name: "deep slash child targets the prefix", prefix: "/api/v1", child: "/", want: "/api/v1"},
-		// ============================================================
-		// A prefix ending in "*" subsumes its children
-		// ============================================================
-		{name: "wildcard prefix swallows the child", prefix: "/users/*", child: "/posts", want: "/users/*"},
-		{name: "wildcard prefix swallows a slash child", prefix: "/users/*", child: "/", want: "/users/*"},
-		{name: "root catch-all does not double", prefix: "/*", child: "/*", want: "/*"},
-		{name: "root catch-all swallows the child", prefix: "/*", child: "/users", want: "/*"},
-		{name: "trailing wildcard segment subsumes", prefix: "/users*", child: "/posts", want: "/users*"},
-		{name: "wildcard inside a segment still joins", prefix: "/us*er", child: "/posts", want: "/us*er/posts"},
-		// ============================================================
-		// Otherwise exactly one slash sits at the seam
-		// ============================================================
-		{name: "plain join", prefix: "/api", child: "/users", want: "/api/users"},
-		{name: "catch-all child", prefix: "/api", child: "/*", want: "/api/*"},
-		{name: "param child", prefix: "/api", child: "/:id", want: "/api/:id"},
-		{name: "param prefix", prefix: "/users/:id", child: "/posts", want: "/users/:id/posts"},
-		{name: "slashless child gains a slash", prefix: "/api", child: "users", want: "/api/users"},
-		{name: "a malformed child is left for App.Map", prefix: "/api", child: "//users", want: "/api//users"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, join(tc.prefix, tc.child))
-		})
-	}
-}
-
-// Prefixes join a path prefix onto every registration, so they inherit
-// Map and Use semantics instead of scoping anything themselves.
-func TestRouter_Prefix(t *testing.T) {
-	ok := func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") }
-
-	t.Run("routes are registered under the prefix", func(t *testing.T) {
-		app := New()
-		api := app.Prefix("/api")
-		api.MapGet("/users", ok)
-		api.MapPost("/users", ok)
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodPost, "/api/users", nil)).StatusCode)
-		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/users", nil)).StatusCode)
-	})
-
-	t.Run("prefixes nest", func(t *testing.T) {
-		app := New()
-		app.Prefix("/api").Prefix("/v1").MapGet("/users", ok)
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)).StatusCode)
-		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
-	})
-
-	t.Run("a slash child targets the prefix itself", func(t *testing.T) {
-		app := New()
-		app.Prefix("/api").MapGet("/", ok)
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api", nil)).StatusCode)
-		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/api/other", nil)).StatusCode)
-	})
-
-	t.Run("the root prefix is a pass-through", func(t *testing.T) {
-		app := New()
-		root := app.Prefix("/")
-		root.MapGet("/users", ok)
-		root.Prefix("/v1").MapGet("/users", ok)
-		app.Prefix("/api").Prefix("/").MapGet("/health", ok)
-
-		for _, path := range []string{"/users", "/v1/users", "/api/health"} {
-			require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, path, nil)).StatusCode, "path: %s", path)
-		}
-	})
-
-	t.Run("params in the prefix are extracted", func(t *testing.T) {
-		app := New()
-		var gotID string
-		app.Prefix("/users/:id").MapGet("/posts", func(ctx *Context) error {
-			gotID = ctx.GetParam("id")
-			return ctx.Write(http.StatusOK, "ok")
-		})
-
-		resp := app.Test(httptest.NewRequest(http.MethodGet, "/users/42/posts", nil))
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, "42", gotID)
-	})
-
-	t.Run("a wildcard prefix subsumes its children", func(t *testing.T) {
-		app := New()
-		files := app.Prefix("/files/*")
-		files.MapGet("/download", ok)
-
-		// the prefix already matches anything after it, so the child
-		// collapses onto the prefix instead of extending it
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/download", nil)).StatusCode)
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/a/b/download", nil)).StatusCode)
-
-		// one pattern per method is all such a prefix can hold
-		require.Panics(t, func() { files.MapGet("/upload", ok) })
-		require.NotPanics(t, func() { files.MapPost("/upload", ok) })
-	})
-
-	t.Run("a child missing its leading slash gains one", func(t *testing.T) {
-		app := New()
-		app.Prefix("/api").MapGet("users", ok)
-		app.Prefix("/").MapGet("users", ok)
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/users", nil)).StatusCode)
-	})
-
-	t.Run("a nested prefix under a wildcard stays on the wildcard", func(t *testing.T) {
-		app := New()
-		app.Prefix("/files/*").Prefix("/archive").MapGet("/", ok)
-
-		// naive concatenation would build "/files/*/archive", which needs a
-		// middle segment; the subsumed prefix matches everything after it
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/archive", nil)).StatusCode)
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/files/a/b/archive", nil)).StatusCode)
-		require.Equal(t, http.StatusNotFound, app.Test(httptest.NewRequest(http.MethodGet, "/files", nil)).StatusCode)
-	})
-
-	t.Run("colliding registrations panic", func(t *testing.T) {
-		app := New()
-		app.Prefix("/api").MapGet("/users", ok)
-
-		require.Panics(t, func() { app.MapGet("/api/users", ok) })
-		require.Panics(t, func() { app.Prefix("/API").MapGet("/users", ok) })
-		require.Panics(t, func() { app.Prefix("/api").Prefix("/users").MapGet("/", ok) })
-	})
-
-	t.Run("duplicate params across the prefix and the pattern panic", func(t *testing.T) {
-		app := New()
-		require.Panics(t, func() { app.Prefix("/users/:id").MapGet("/:id", ok) })
-		require.Panics(t, func() { app.Prefix("/users/:id").Prefix("/:id") })
-	})
-
-	t.Run("every method shortcut registers its own method", func(t *testing.T) {
-		testCases := []struct {
-			name     string
-			register func(p Prefix, pattern string, handlers ...Handler)
-			method   string
-		}{
-			{"MapGet", func(p Prefix, pat string, h ...Handler) { p.MapGet(pat, h...) }, http.MethodGet},
-			{"MapHead", func(p Prefix, pat string, h ...Handler) { p.MapHead(pat, h...) }, http.MethodHead},
-			{"MapPost", func(p Prefix, pat string, h ...Handler) { p.MapPost(pat, h...) }, http.MethodPost},
-			{"MapPut", func(p Prefix, pat string, h ...Handler) { p.MapPut(pat, h...) }, http.MethodPut},
-			{"MapPatch", func(p Prefix, pat string, h ...Handler) { p.MapPatch(pat, h...) }, http.MethodPatch},
-			{"MapDelete", func(p Prefix, pat string, h ...Handler) { p.MapDelete(pat, h...) }, http.MethodDelete},
-			{"MapConnect", func(p Prefix, pat string, h ...Handler) { p.MapConnect(pat, h...) }, http.MethodConnect},
-			{"MapOptions", func(p Prefix, pat string, h ...Handler) { p.MapOptions(pat, h...) }, http.MethodOptions},
-			{"MapTrace", func(p Prefix, pat string, h ...Handler) { p.MapTrace(pat, h...) }, http.MethodTrace},
-			{"MapQuery", func(p Prefix, pat string, h ...Handler) { p.MapQuery(pat, h...) }, MethodQuery},
-		}
-
-		for _, tc := range testCases {
-			t.Run(tc.name, func(t *testing.T) {
-				app := New()
-				tc.register(app.Prefix("/api"), "/users", ok)
-
-				require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(tc.method, "/api/users", nil)).StatusCode)
-
-				other := http.MethodGet
-				if tc.method == http.MethodGet {
-					other = http.MethodPost
-				}
-				require.Equal(t, http.StatusMethodNotAllowed, app.Test(httptest.NewRequest(other, "/api/users", nil)).StatusCode)
-			})
-		}
-	})
-
-	t.Run("MapAll registers every method", func(t *testing.T) {
-		app := New()
-		app.Prefix("/api").MapAll("/users", ok)
-
-		for _, method := range allMethods {
-			require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(method, "/api/users", nil)).StatusCode, method)
-		}
-	})
-}
-
-func TestRouter_PrefixMiddlewares(t *testing.T) {
-	t.Run("UseAll runs for every path under the prefix", func(t *testing.T) {
-		app := New()
-		var called int
-		admin := app.Prefix("/admin")
-		admin.UseAll(func(ctx *Context) error {
-			called++
-			return ctx.Next()
-		})
-		admin.MapGet("/settings", func(ctx *Context) error {
-			return ctx.Write(http.StatusOK, "ok")
-		})
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/admin/settings", nil)).StatusCode)
-		require.Equal(t, 1, called)
-
-		// paths outside the prefix do not run it
-		app.Test(httptest.NewRequest(http.MethodGet, "/other", nil))
-		require.Equal(t, 1, called)
-
-		// nor does a sibling path that merely starts with the prefix text
-		app.Test(httptest.NewRequest(http.MethodGet, "/adminx", nil))
-		require.Equal(t, 1, called)
-	})
-
-	t.Run("Use joins the child pattern onto the prefix", func(t *testing.T) {
-		app := New()
-		var called int
-		mw := func(ctx *Context) error {
-			called++
-			return ctx.Next()
-		}
-		api := app.Prefix("/api")
-		api.Use("/admin/*", mw)
-		api.MapGet("/admin/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-		api.MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)).StatusCode)
-		require.Equal(t, 1, called)
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
-		require.Equal(t, 1, called)
-	})
-
-	t.Run("a slash pattern targets the prefix exactly", func(t *testing.T) {
-		app := New()
-		var called int
-		mw := func(ctx *Context) error {
-			called++
-			return ctx.Next()
-		}
-
-		api := app.Prefix("/api")
-		api.Use("/", mw)
-		api.MapGet("/", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-		api.MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api", nil)).StatusCode)
-		require.Equal(t, 1, called)
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
-		require.Equal(t, 1, called)
-	})
-
-	t.Run("middlewares must be registered before the routes they cover", func(t *testing.T) {
-		app := New()
-		var called bool
-		api := app.Prefix("/api")
-		api.MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-		api.Use("/*", func(ctx *Context) error {
-			called = true
-			return ctx.Next()
-		})
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
-		require.False(t, called)
-	})
-
-	t.Run("a catch-all prefix does not double its wildcard", func(t *testing.T) {
-		app := New()
-		var called bool
-		app.Prefix("/*").UseAll(func(ctx *Context) error {
-			called = true
-			return ctx.Next()
-		})
-		app.MapGet("/anything", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/anything", nil)).StatusCode)
-		require.True(t, called)
-	})
-
-	t.Run("a prefix holding params cannot register middlewares", func(t *testing.T) {
-		app := New()
-		require.Panics(t, func() {
-			app.Prefix("/users/:id").UseAll(func(ctx *Context) error { return nil })
-		})
-	})
-
-	t.Run("middlewares do not leak into a sibling prefix", func(t *testing.T) {
-		app := New()
-		var called bool
-		app.Prefix("/admin").UseAll(func(ctx *Context) error {
-			called = true
-			return ctx.Next()
-		})
-		app.Prefix("/public").MapGet("/x", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/public/x", nil)).StatusCode)
-		require.False(t, called)
-	})
-
-	t.Run("prefix middlewares are not a scope", func(t *testing.T) {
-		app := New()
-		var called bool
-		// registered through the prefix, but it is still App.Use: any later
-		// route under the same path observes it, group or not
-		app.Prefix("/api").Use("/*", func(ctx *Context) error {
-			called = true
-			return ctx.Next()
-		})
-		app.MapGet("/api/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil)).StatusCode)
-		require.True(t, called)
-	})
-
-	t.Run("middlewares run when nothing under the prefix matches", func(t *testing.T) {
-		app := New()
-		var called bool
-		app.Prefix("/admin").UseAll(func(ctx *Context) error {
-			called = true
-			return ctx.Next()
-		})
-
-		resp := app.Test(httptest.NewRequest(http.MethodGet, "/admin/missing", nil))
-		require.Equal(t, http.StatusNotFound, resp.StatusCode)
-		require.True(t, called)
-	})
-
-	t.Run("middleware patterns are lowercased too", func(t *testing.T) {
-		app := New()
-		var called bool
-		app.Prefix("/API").Use("/*", func(ctx *Context) error {
-			called = true
-			return ctx.Next()
-		})
-		app.Prefix("/API").MapGet("/users", func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") })
-
-		require.Equal(t, http.StatusOK, app.Test(httptest.NewRequest(http.MethodGet, "/API/USERS", nil)).StatusCode)
-		require.True(t, called)
-	})
-}
-
-func TestRouter_PrefixPanics(t *testing.T) {
-	invalidPatterns := []string{
-		"",
-		"api",
-		"/api/",
-		"/api//users",
-		"/api/:id/",
-		"//users",
-	}
-
-	for _, pattern := range invalidPatterns {
-		t.Run("invalid prefix "+pattern, func(t *testing.T) {
-			require.Panics(t, func() { New().Prefix(pattern) })
-		})
-	}
-
-	t.Run("invalid nested prefix", func(t *testing.T) {
-		app := New()
-		require.Panics(t, func() { app.Prefix("/api").Prefix("/v1/") })
-	})
-
-	t.Run("invalid pattern under a prefix", func(t *testing.T) {
-		app := New()
-		require.Panics(t, func() {
-			app.Prefix("/api").MapGet("/users/", func(ctx *Context) error { return nil })
-		})
-	})
-
-	t.Run("no handlers does nothing", func(t *testing.T) {
-		app := New()
-		require.NotPanics(t, func() {
-			app.Prefix("/api").MapGet("/users")
-			app.Prefix("/api").MapAll("/all")
-			app.Prefix("/api").UseAll()
-		})
 	})
 }
 
@@ -1214,7 +607,7 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, []string{"middleware", "post"}, called)
 	})
 
-	t.Run("exact pattern matching", func(t *testing.T) {
+	t.Run("prefix matching", func(t *testing.T) {
 		app := New()
 		var called []string
 
@@ -1229,7 +622,12 @@ func TestRouter_Dispatch(t *testing.T) {
 		called = nil
 		resp = app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Equal(t, []string{"users"}, called)
+		require.Equal(t, []string{"middleware", "users"}, called)
+
+		called = nil
+		resp = app.Test(httptest.NewRequest(http.MethodGet, "/apiv2", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.Empty(t, called)
 	})
 
 	t.Run("catch-all runs for every endpoint", func(t *testing.T) {
@@ -1291,25 +689,25 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, []string{"middleware"}, called)
 	})
 
-	t.Run("middleware sees empty pattern when no route matches", func(t *testing.T) {
+	t.Run("middleware runs when no route matches", func(t *testing.T) {
 		app := New()
-		var got string
+		var ran bool
 
 		app.Use("/api/*", func(ctx *Context) error {
-			got = ctx.GetPattern()
+			ran = true
 			return ctx.Next()
 		})
 		app.Map(http.MethodGet, "/other", func(ctx *Context) error { return nil })
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/missing", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
-		require.Equal(t, "", got)
+		require.True(t, ran)
 	})
 
-	t.Run("unmatched with no middleware has empty pattern", func(t *testing.T) {
-		var got string
+	t.Run("unmatched with no middleware", func(t *testing.T) {
+		var ran bool
 		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
-			got = ctx.GetPattern()
+			ran = true
 			ctx.WriteStatus(http.StatusNotFound)
 			return err
 		}))
@@ -1317,7 +715,7 @@ func TestRouter_Dispatch(t *testing.T) {
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
-		require.Equal(t, "", got)
+		require.True(t, ran)
 	})
 
 	t.Run("middleware can short-circuit without a route", func(t *testing.T) {
@@ -1413,11 +811,9 @@ func TestRouter_Dispatch(t *testing.T) {
 
 	t.Run("unknown path reaches custom error handler as invalid_endpoint", func(t *testing.T) {
 		var captured error
-		var pattern string
 
 		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 			captured = err
-			pattern = ctx.GetPattern()
 			ctx.WriteAs(http.StatusNotFound, CodecJson, ErrInvalidEndpoint)
 			return err
 		}))
@@ -1426,16 +822,13 @@ func TestRouter_Dispatch(t *testing.T) {
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 		require.ErrorIs(t, captured, ErrInvalidEndpoint)
-		require.Equal(t, "", pattern)
 	})
 
 	t.Run("wrong method reaches custom error handler as method_not_allowed", func(t *testing.T) {
 		var captured error
-		var pattern string
 
 		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
 			captured = err
-			pattern = ctx.GetPattern()
 			ctx.WriteAs(http.StatusMethodNotAllowed, CodecJson, ErrMethodNotAllowed)
 			return err
 		}))
@@ -1444,7 +837,6 @@ func TestRouter_Dispatch(t *testing.T) {
 		resp := app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
 		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 		require.ErrorIs(t, captured, ErrMethodNotAllowed)
-		require.Equal(t, "", pattern)
 	})
 
 	t.Run("middleware Next chain and error bubbling to errorHandler", func(t *testing.T) {

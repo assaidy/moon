@@ -19,8 +19,8 @@ import (
 )
 
 // Context is the per-request handle passed to every [Handler].
-// It carries the request and response, the matched route pattern and
-// parameters, per-request locals, app-shared state, and the typed
+// It carries the request and response, the matched route parameters,
+// per-request locals, app-shared state, and the typed
 // dependencies registered on the app and services started on the app
 // (see [Context.GetDependency] and [Context.GetService]). A new Context is created for each request, so
 // locals never leak between requests.
@@ -251,7 +251,8 @@ func (me *Context) GetAllQueries() map[string][]string {
 }
 
 // GetParam returns the path parameter value for key,
-// or "" when the key is missing.
+// or "" when the key is missing. See [ParsePattern] for key names
+// ("*" and "+1" included).
 func (me *Context) GetParam(key string) string {
 	return me.params[key]
 }

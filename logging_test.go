@@ -487,26 +487,6 @@ func TestRle_BuiltinEntries(t *testing.T) {
 			loggedAttr[string](t, loggedAttrs(t, logs), "path"))
 	})
 
-	t.Run("pattern", func(t *testing.T) {
-		t.Run("logs the pattern that matched the route", func(t *testing.T) {
-			app, logs := testEntryApp(t, RlePattern, nil)
-
-			app.Test(httptest.NewRequest(http.MethodGet, "/users/42", nil))
-
-			require.Equal(t, "/users/:id",
-				loggedAttr[string](t, loggedAttrs(t, logs), "pattern"))
-		})
-
-		t.Run("empty when no route matched", func(t *testing.T) {
-			app, logs := testEntryApp(t, RlePattern, nil)
-
-			app.Test(httptest.NewRequest(http.MethodGet, "/missing", nil))
-
-			require.Equal(t, "",
-				loggedAttr[string](t, loggedAttrs(t, logs), "pattern"))
-		})
-	})
-
 	t.Run("status", func(t *testing.T) {
 		t.Run("logs the status written by the handler chain", func(t *testing.T) {
 			app, logs := testEntryApp(t, RleStatus, func(ctx *Context) error {

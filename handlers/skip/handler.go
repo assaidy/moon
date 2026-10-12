@@ -2,7 +2,7 @@
 // handler. Register [Handler.Handle] as a middleware or a route handler:
 //
 //	h := skip.New(handler, predicate)
-//	app.Use("/*", h.Handle)
+//	app.UseAll(h.Handle)
 //
 // As a middleware it runs before the route is resolved, so the predicate
 // runs even for requests with no route: a bypassed request simply continues
@@ -24,8 +24,8 @@ type Handler struct {
 // chain continues via [moon.Context.Next]. It panics if handler or predicate
 // is nil. Register [Handler.Handle] in the chain:
 //
-//	h := New(handler, predicate)
-//	app.Use("/*", h.Handle)
+//	h := skip.New(handler, predicate)
+//	app.UseAll(h.Handle)
 //
 // The predicate runs once per request, before handler; use it to skip work
 // (auth, rate limiting, ...) for requests matching some condition.

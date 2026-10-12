@@ -3,11 +3,11 @@
 // handlers via [GetFromContext]. Register [Handler.Handle] as a middleware
 // or a route handler:
 //
-//	app.Use("/*", request_id.New().Handle)
+//	app.UseAll(request_id.New().Handle)
 //
 // Customize the header or generator:
 //
-//	app.Use("/*", request_id.New(request_id.NewOptions().WithHeader("X-Correlation-ID")).Handle)
+//	app.UseAll(request_id.New(request_id.NewOptions().WithHeader("X-Correlation-ID")).Handle)
 //
 // As a middleware it runs before the route is resolved, so every matching
 // request gets an ID — including requests with no route
@@ -45,8 +45,8 @@ type Options struct {
 // are given. Chain the With* methods on [NewOptions] to configure it, then
 // register [Handler.Handle] in the chain:
 //
-//	app.Use("/*", New().Handle)
-//	app.Use("/*", New(NewOptions().WithHeader("X-Correlation-ID")).Handle)
+//	app.UseAll(request_id.New().Handle)
+//	app.UseAll(request_id.New(request_id.NewOptions().WithHeader("X-Correlation-ID")).Handle)
 //
 // The incoming request header is reused when it is a valid ID: non-empty
 // printable ASCII (0x20-0x7E, inside spaces allowed). It arrives pre-trimmed
@@ -57,9 +57,9 @@ type Options struct {
 // To include the ID in request logs, add
 // [Handler.GetRequestLoggingEntry] to the app:
 //
-//	h := New()
+//	h := request_id.New()
 //	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-//	app.Use("/*", h.Handle)
+//	app.UseAll(h.Handle)
 //
 // Default header: "X-Request-ID" (see [Options.WithHeader]).
 // Requests for which the [Options.WithSkip] predicate returns true run the
@@ -149,9 +149,9 @@ func (me Options) WithRequestLoggingEntryValue(f moon.RequestLoggingEntryValue) 
 // GetRequestLoggingEntry returns the request logging entry carrying the ID.
 // Add it to the app to include the ID in request logs:
 //
-//	h := New()
+//	h := request_id.New()
 //	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-//	app.Use("/*", h.Handle)
+//	app.UseAll(h.Handle)
 //
 // Customize the key and value with [Options.WithRequestLoggingEntryKey]
 // and [Options.WithRequestLoggingEntryValue].
