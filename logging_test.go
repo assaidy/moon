@@ -36,7 +36,7 @@ func loggedAttrKeys(t *testing.T, h *captureLogHandler) []string {
 }
 
 func testLoggedApp(logs *captureLogHandler) *App {
-	return New(NewAppOptions().WithLogger(slog.New(logs)).WithRequestLogging(true))
+	return New(AppOption_Logger(slog.New(logs)), AppOption_RequestLogging(true))
 }
 
 func testEntryValue(v string) RequestLoggingEntryValue {
@@ -60,10 +60,10 @@ func testEntryApp(t *testing.T, entry RequestLoggingEntry, route Handler) (*App,
 		route = func(ctx *Context) error { return ctx.Write(http.StatusOK, "ok") }
 	}
 	logs := &captureLogHandler{}
-	app := New(NewAppOptions().
-		WithLogger(slog.New(logs)).
-		WithRequestLogging(true).
-		WithRequestLoggingEntries([]RequestLoggingEntry{entry}))
+	app := New(
+		AppOption_Logger(slog.New(logs)),
+		AppOption_RequestLogging(true),
+		AppOption_RequestLoggingEntries([]RequestLoggingEntry{entry}))
 	app.Map(http.MethodGet, "/users/:id", route)
 	return app, logs
 }
@@ -121,7 +121,7 @@ func TestAddRequestLoggingEntry(t *testing.T) {
 	})
 
 	t.Run("default key is allowed after a reset", func(t *testing.T) {
-		app := New(NewAppOptions().WithRequestLoggingEntries([]RequestLoggingEntry{
+		app := New(AppOption_RequestLoggingEntries([]RequestLoggingEntry{
 			{Key: "method", Value: testEntryValue("v")},
 		}))
 
@@ -158,9 +158,8 @@ func TestAddRequestLoggingEntry_PerApp(t *testing.T) {
 }
 
 func TestAddRequestLoggingEntry_KeepsAppsAndDefaultsIsolated(t *testing.T) {
-	opts := NewAppOptions()
-	first := New(opts)
-	second := New(opts)
+	first := New()
+	second := New()
 
 	first.AddRequestLoggingEntry(RequestLoggingEntry{Key: "only-first", Value: testEntryValue("v")})
 
@@ -368,10 +367,10 @@ func TestLogRequest_Error(t *testing.T) {
 
 	t.Run("logs what a custom error handler returns", func(t *testing.T) {
 		logs := &captureLogHandler{}
-		app := New(NewAppOptions().
-			WithLogger(slog.New(logs)).
-			WithRequestLogging(true).
-			WithErrorHandler(func(ctx *Context, err error) error {
+		app := New(
+			AppOption_Logger(slog.New(logs)),
+			AppOption_RequestLogging(true),
+			AppOption_ErrorHandler(func(ctx *Context, err error) error {
 				ctx.WriteStatus(http.StatusTeapot)
 				return nil
 			}))

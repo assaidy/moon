@@ -6,7 +6,7 @@
 //
 // Customize the header or skip timing for some requests:
 //
-//	app.UseAll(response_time.New(response_time.NewOptions().WithHeader("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.Option_Header("X-Took")).Handle)
 //
 // As a middleware it runs before the route is resolved, so the timing
 // covers the full chain and the header is set even for unmatched requests
@@ -21,66 +21,62 @@ import (
 )
 
 // Handler measures the handler chain duration and reports it in a
-// response header. Use [New] to construct it, passing [NewOptions] chained
-// with the With* methods to configure it, then register [Handler.Handle]
+// response header. Use [New] to construct it, passing [Option]s
+// to configure it, then register [Handler.Handle]
 // in the chain.
 type Handler struct {
-	options Options
+	options options
 }
 
-// Options holds the configuration of a [Handler]. All fields are private;
-// build one with [NewOptions] for the defaults and chain the With* methods
-// to configure it, then pass it to [New].
-type Options struct {
+// options holds the configuration of a [Handler]. All fields are private;
+// pass [Option]s to [New] to configure it.
+type options struct {
 	skip   func(ctx *moon.Context) bool
 	header string
 }
 
-// New returns a handler built from the given options, or defaults when none
-// are given. Chain the With* methods on [NewOptions] to configure it, then
-// register [Handler.Handle] in the chain:
+// New returns a handler built from sensible defaults, customized by the given
+// options, then register [Handler.Handle] in the chain:
 //
 //	app.UseAll(response_time.New().Handle)
-//	app.UseAll(response_time.New(response_time.NewOptions().WithHeader("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.Option_Header("X-Took")).Handle)
 //
-// Default header: "X-Response-Time" (see [Options.WithHeader]).
-// Requests for which the [Options.WithSkip] predicate returns true run the
+// Default header: "X-Response-Time" (see [Option_Header]).
+// Requests for which the [Option_Skip] predicate returns true run the
 // chain without recording anything.
-func New(opts ...Options) *Handler {
-	options := NewOptions()
-	if len(opts) > 0 {
-		moon.Assert(len(opts) == 1)
-		options = opts[0]
+func New(opts ...Option) *Handler {
+	options := options{header: "X-Response-Time"}
+	for _, opt := range opts {
+		opt(&options)
 	}
 	return &Handler{options: options}
 }
 
-// NewOptions returns an Options populated with the default values.
-// See the With* methods for each default.
-func NewOptions() Options {
-	return Options{header: "X-Response-Time"}
-}
+// Option configures a [Handler]. Pass them to [New]:
+//
+//	app.UseAll(response_time.New(response_time.Option_Header("X-Took")).Handle)
+type Option func(*options)
 
-// WithSkip skips timing for requests where f returns true.
-// The chain still runs; only the header is omitted. It returns the same
-// options for chaining.
+// Option_Skip skips timing for requests where f returns true.
+// The chain still runs; only the header is omitted. Pass it to [New].
 //
 // Default: nil (nothing is skipped)
-func (me Options) WithSkip(f func(ctx *moon.Context) bool) Options {
-	me.skip = f
-	return me
+func Option_Skip(f func(ctx *moon.Context) bool) Option {
+	return func(o *options) {
+		o.skip = f
+	}
 }
 
-// WithHeader sets the response header carrying the duration.
-// Surrounding whitespace is trimmed. It panics on an empty name. It returns
-// the same options for chaining.
+// Option_Header sets the response header carrying the duration.
+// Surrounding whitespace is trimmed. It panics on an empty name. Pass it to [New].
 //
 // Default: "X-Response-Time"
-func (me Options) WithHeader(s string) Options {
-	s = strings.TrimSpace(s)
-	moon.Assert(s != "", "header cannot be empty or whitespace")
-	me.header = s
-	return me
+func Option_Header(s string) Option {
+	return func(o *options) {
+		s = strings.TrimSpace(s)
+		moon.Assert(s != "", "header cannot be empty or whitespace")
+		o.header = s
+	}
 }
 
 // Handle measures the handler chain duration and sets it as a response

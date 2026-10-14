@@ -17,7 +17,7 @@
 // with a probe config deciding when the endpoint reports unhealthy:
 //
 //	app.MapGet(health_check.ReadinessEndpoint, health_check.New(
-//		health_check.NewOptions().WithProbe(
+//		health_check.Option_Probe(
 //			func(ctx *moon.Context) bool {
 //				err := db.Ping()
 //				return err == nil
@@ -33,59 +33,53 @@ import (
 )
 
 // Handler runs a probe and renders its result. Use [New] to construct it,
-// passing [NewOptions] chained with [Options.WithProbe] and
-// [Options.WithResponse] to configure it, then register [Handler.Handle]
-// as a terminal endpoint.
+// passing [Option_Probe] and [Option_Response] to configure it,
+// then register [Handler.Handle] as a terminal endpoint.
 type Handler struct {
-	options Options
+	options options
 }
 
-// Options holds the configuration of a [Handler]. All fields are private;
-// build one with [NewOptions] for the defaults and chain the With* methods
-// to configure it, then pass it to [New].
-type Options struct {
+// options holds the configuration of a [Handler]. All fields are private;
+// pass [Option]s to [New] to configure it.
+type options struct {
 	probe    func(ctx *moon.Context) bool
 	response func(ctx *moon.Context, ok bool) error
 }
 
-// New returns a handler built from the given options, or defaults when none
-// are given. Chain [Options.WithProbe] and [Options.WithResponse] to
+// New returns a handler built from sensible defaults, customized by the given
+// options. Chain [Option_Probe] and [Option_Response] to
 // configure it, then register [Handler.Handle] as a terminal endpoint:
 //
 //	app.Map(http.MethodGet, "/healthz", health_check.New().Handle)
 //
-// It runs the probe (see [Options.WithProbe]) and passes the outcome to
-// the response func (see [Options.WithResponse]).
+// It runs the probe (see [Option_Probe]) and passes the outcome to
+// the response func (see [Option_Response]).
 //
 // Default behavior: the probe reports ok, and the response writes
 // 200 OK when it succeeds or 503 Service Unavailable when it fails.
-func New(opts ...Options) *Handler {
-	options := NewOptions()
-	if len(opts) > 0 {
-		moon.Assert(len(opts) == 1)
-		options = opts[0]
+func New(opts ...Option) *Handler {
+	options := options{
+		probe:    defaultProbe,
+		response: defaultResponse,
+	}
+	for _, opt := range opts {
+		opt(&options)
 	}
 	return &Handler{options: options}
 }
 
-// NewOptions returns an Options populated with the default values.
-// See [Options.WithProbe] and [Options.WithResponse] for each default.
-func NewOptions() Options {
-	return Options{
-		probe:    defaultProbe,
-		response: defaultResponse,
-	}
-}
+// Option configures a [Handler]. Pass them to [New].
+type Option func(*options)
 
-// WithProbe sets the probe deciding whether the endpoint reports healthy:
-// true means ok, false means unhealthy. It panics if f is nil. It returns
-// the same options for chaining.
+// Option_Probe sets the probe deciding whether the endpoint reports healthy:
+// true means ok, false means unhealthy. It panics if f is nil. Pass it to [New].
 //
 // Default: always reports ok (true).
-func (me Options) WithProbe(f func(ctx *moon.Context) bool) Options {
-	moon.Assert(f != nil, "probe func cannot be nil")
-	me.probe = f
-	return me
+func Option_Probe(f func(ctx *moon.Context) bool) Option {
+	return func(o *options) {
+		moon.Assert(f != nil, "probe func cannot be nil")
+		o.probe = f
+	}
 }
 
 // defaultProbe always reports ok (true).
@@ -93,16 +87,17 @@ func defaultProbe(_ *moon.Context) bool {
 	return true
 }
 
-// WithResponse sets the func rendering the probe result; ok is what the
+// Option_Response sets the func rendering the probe result; ok is what the
 // probe returned. Returning an error hands it to the error handler.
-// It panics if f is nil. It returns the same options for chaining.
+// It panics if f is nil. Pass it to [New].
 //
 // Default: 200 OK when ok, 503 Service Unavailable otherwise. When writing
 // your own response, never write body bytes if the request method is HEAD.
-func (me Options) WithResponse(f func(ctx *moon.Context, ok bool) error) Options {
-	moon.Assert(f != nil, "response func cannot be nil")
-	me.response = f
-	return me
+func Option_Response(f func(ctx *moon.Context, ok bool) error) Option {
+	return func(o *options) {
+		moon.Assert(f != nil, "response func cannot be nil")
+		o.response = f
+	}
 }
 
 // defaultResponse writes 200 OK when ok, 503 Service Unavailable otherwise.

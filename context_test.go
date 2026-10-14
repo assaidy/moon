@@ -381,7 +381,7 @@ func TestContext_Body(t *testing.T) {
 	})
 
 	t.Run("Read over limit errors", func(t *testing.T) {
-		app := New(NewAppOptions().WithReadLimit(5))
+		app := New(AppOption_ReadLimit(5))
 		app.MapAll("/", func(ctx *Context) error {
 			_, err := ctx.Read()
 			require.Error(t, err)
@@ -392,7 +392,7 @@ func TestContext_Body(t *testing.T) {
 	})
 
 	t.Run("Declared over limit rejected without running handlers", func(t *testing.T) {
-		app := New(NewAppOptions().WithReadLimit(5))
+		app := New(AppOption_ReadLimit(5))
 		ran := false
 		app.MapAll("/", func(ctx *Context) error {
 			ran = true
@@ -407,7 +407,7 @@ func TestContext_Body(t *testing.T) {
 	})
 
 	t.Run("Declared at limit passes to handlers", func(t *testing.T) {
-		app := New(NewAppOptions().WithReadLimit(5))
+		app := New(AppOption_ReadLimit(5))
 		app.MapAll("/", func(ctx *Context) error {
 			raw, err := ctx.Read()
 			require.NoError(t, err)
@@ -1132,7 +1132,7 @@ func TestContext_Locals(t *testing.T) {
 	})
 
 	t.Run("passLocalsToContext true mirrors and delete shadows nil", func(t *testing.T) {
-		app := New(NewAppOptions().WithPassLocalsToContext(true))
+		app := New(AppOption_PassLocalsToContext(true))
 		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			ctx.SetLocal("k", "v")
 			require.Equal(t, "v", ctx.Value("k"))
@@ -1268,7 +1268,7 @@ func TestContext_IsMiddleware(t *testing.T) {
 	t.Run("route only and unmatched are not middleware", func(t *testing.T) {
 		var mids []bool
 
-		app := New(NewAppOptions().WithErrorHandler(func(ctx *Context, err error) error {
+		app := New(AppOption_ErrorHandler(func(ctx *Context, err error) error {
 			mids = append(mids, ctx.IsMiddleware())
 			ctx.WriteStatus(http.StatusNotFound)
 			return err

@@ -23,7 +23,7 @@ func TestHandle_Defaults(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Map(http.MethodGet, "/healthz", New(NewOptions().WithProbe(func(*moon.Context) bool {
+			app.Map(http.MethodGet, "/healthz", New(Option_Probe(func(*moon.Context) bool {
 				return tc.probeOk
 			})).Handle)
 
@@ -48,7 +48,7 @@ func TestHandle_DefaultProbeReportsOk(t *testing.T) {
 func TestHandle_ProbeReceivesContext(t *testing.T) {
 	app := moon.New()
 	var gotPath string
-	app.Map(http.MethodGet, "/readyz", New(NewOptions().WithProbe(func(ctx *moon.Context) bool {
+	app.Map(http.MethodGet, "/readyz", New(Option_Probe(func(ctx *moon.Context) bool {
 		gotPath = ctx.GetPath()
 		return true
 	})).Handle)
@@ -60,9 +60,9 @@ func TestHandle_ProbeReceivesContext(t *testing.T) {
 
 func TestHandle_CustomResponse(t *testing.T) {
 	app := moon.New()
-	app.Map(http.MethodGet, "/healthz", New(NewOptions().
-		WithProbe(func(*moon.Context) bool { return false }).
-		WithResponse(func(ctx *moon.Context, ok bool) error {
+	app.Map(http.MethodGet, "/healthz", New(
+		Option_Probe(func(*moon.Context) bool { return false }),
+		Option_Response(func(ctx *moon.Context, ok bool) error {
 			if ok {
 				return ctx.Write(http.StatusOK, "up")
 			}
@@ -91,9 +91,9 @@ func TestHandle_ResponseReceivesProbeResult(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Map(http.MethodGet, "/healthz", New(NewOptions().
-				WithProbe(func(*moon.Context) bool { return tc.probeOk }).
-				WithResponse(func(ctx *moon.Context, ok bool) error {
+			app.Map(http.MethodGet, "/healthz", New(
+				Option_Probe(func(*moon.Context) bool { return tc.probeOk }),
+				Option_Response(func(ctx *moon.Context, ok bool) error {
 					return ctx.Write(http.StatusOK, map[bool]string{true: "true", false: "false"}[ok])
 				})).Handle)
 
@@ -129,12 +129,12 @@ func TestHandle_DoesNotContinueChain(t *testing.T) {
 	require.Empty(t, body)
 }
 
-func TestWithProbe_NilPanics(t *testing.T) {
-	require.Panics(t, func() { New(NewOptions().WithProbe(nil)) })
+func TestOption_Probe_NilPanics(t *testing.T) {
+	require.Panics(t, func() { New(Option_Probe(nil)) })
 }
 
-func TestWithResponse_NilPanics(t *testing.T) {
-	require.Panics(t, func() { New(NewOptions().WithResponse(nil)) })
+func TestOption_Response_NilPanics(t *testing.T) {
+	require.Panics(t, func() { New(Option_Response(nil)) })
 }
 
 func TestEndpoints(t *testing.T) {

@@ -101,9 +101,9 @@ var (
 // inspect or override them.
 // Use the [Context] Write methods to send the response, then return the
 // error to log: request logging, when enabled via
-// [AppOptions.WithRequestLogging], logs the returned error, so returning
+// [AppOption_RequestLogging], logs the returned error, so returning
 // nil keeps the failure out of the request record.
-// It is set via [AppOptions.WithErrorHandler].
+// It is set via [AppOption_ErrorHandler].
 type ErrorHandler func(ctx *Context, err error) error
 
 // DefaultErrorHandler writes an [Error] as JSON with its status code,

@@ -7,7 +7,7 @@
 //
 // Customize the header or generator:
 //
-//	app.UseAll(request_id.New(request_id.NewOptions().WithHeader("X-Correlation-ID")).Handle)
+//	app.UseAll(request_id.New(request_id.Option_Header("X-Correlation-ID")).Handle)
 //
 // As a middleware it runs before the route is resolved, so every matching
 // request gets an ID — including requests with no route
@@ -24,16 +24,15 @@ import (
 const localKey = "moon.handlers.request_id.local_key"
 
 // Handler ensures every request has a request ID. Use [New] to construct
-// it, passing [NewOptions] chained with the With* methods to configure it,
+// it, passing [Option]s to configure it,
 // then register [Handler.Handle] in the chain.
 type Handler struct {
-	options Options
+	options options
 }
 
-// Options holds the configuration of a [Handler]. All fields are private;
-// build one with [NewOptions] for the defaults and chain the With* methods
-// to configure it, then pass it to [New].
-type Options struct {
+// options holds the configuration of a [Handler]. All fields are private;
+// pass [Option]s to [New] to configure it.
+type options struct {
 	skip      func(*moon.Context) bool
 	header    string
 	generator func() string
@@ -41,17 +40,16 @@ type Options struct {
 	rleValue  moon.RequestLoggingEntryValue
 }
 
-// New returns a handler built from the given options, or defaults when none
-// are given. Chain the With* methods on [NewOptions] to configure it, then
-// register [Handler.Handle] in the chain:
+// New returns a handler built from sensible defaults, customized by the given
+// options, then register [Handler.Handle] in the chain:
 //
 //	app.UseAll(request_id.New().Handle)
-//	app.UseAll(request_id.New(request_id.NewOptions().WithHeader("X-Correlation-ID")).Handle)
+//	app.UseAll(request_id.New(request_id.Option_Header("X-Correlation-ID")).Handle)
 //
 // The incoming request header is reused when it is a valid ID: non-empty
 // printable ASCII (0x20-0x7E, inside spaces allowed). It arrives pre-trimmed
 // because the HTTP server strips edge whitespace while parsing; otherwise
-// an ID is generated (see [Options.WithGenerator]). The ID is echoed in
+// an ID is generated (see [Option_Generator]). The ID is echoed in
 // the response header and stored for [GetFromContext], then the chain runs.
 //
 // To include the ID in request logs, add
@@ -61,89 +59,90 @@ type Options struct {
 //	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 //	app.UseAll(h.Handle)
 //
-// Default header: "X-Request-ID" (see [Options.WithHeader]).
-// Requests for which the [Options.WithSkip] predicate returns true run the
+// Default header: "X-Request-ID" (see [Option_Header]).
+// Requests for which the [Option_Skip] predicate returns true run the
 // chain untouched: no header is set and [GetFromContext] returns "".
-func New(opts ...Options) *Handler {
-	options := NewOptions()
-	if len(opts) > 0 {
-		moon.Assert(len(opts) == 1)
-		options = opts[0]
-	}
-	return &Handler{options: options}
-}
-
-// NewOptions returns an Options populated with the default values.
-// See the With* methods for each default.
-func NewOptions() Options {
-	return Options{
+func New(opts ...Option) *Handler {
+	options := options{
 		header:    "X-Request-ID",
 		generator: func() string { return moon.GenerateSecureToken() },
 		rleKey:    "request_id",
 		rleValue:  func(ctx *moon.Context, err error) any { return GetFromContext(ctx) },
 	}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return &Handler{options: options}
 }
 
-// WithSkip skips ID assignment for requests where f returns true.
+// Option configures a [Handler]. Pass them to [New]:
+//
+//	app.UseAll(request_id.New(request_id.Option_Header("X-Correlation-ID")).Handle)
+type Option func(*options)
+
+// Option_Skip skips ID assignment for requests where f returns true.
 // The chain still runs; no header is set and [GetFromContext] returns "".
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: nil (nothing is skipped)
-func (me Options) WithSkip(f func(ctx *moon.Context) bool) Options {
-	me.skip = f
-	return me
+func Option_Skip(f func(ctx *moon.Context) bool) Option {
+	return func(o *options) {
+		o.skip = f
+	}
 }
 
-// WithHeader sets the request/response header carrying the ID.
-// Surrounding whitespace is trimmed. It panics on an empty name. It returns
-// the same options for chaining.
+// Option_Header sets the request/response header carrying the ID.
+// Surrounding whitespace is trimmed. It panics on an empty name. Pass it to [New].
 //
 // Default: "X-Request-ID"
-func (me Options) WithHeader(s string) Options {
-	s = strings.TrimSpace(s)
-	moon.Assert(s != "", "header cannot be empty or whitespace")
-	me.header = s
-	return me
+func Option_Header(s string) Option {
+	return func(o *options) {
+		s = strings.TrimSpace(s)
+		moon.Assert(s != "", "header cannot be empty or whitespace")
+		o.header = s
+	}
 }
 
-// WithGenerator sets the ID generator. Its output is trimmed and tried up to
+// Option_Generator sets the ID generator. Its output is trimmed and tried up to
 // 3 times until it produces a valid ID; afterwards [moon.GenerateSecureToken]
-// is used as a fallback. It panics on a nil generator. It returns the same
-// options for chaining.
+// is used as a fallback. It panics on a nil generator. Pass it to [New].
 //
 // Default: [moon.GenerateSecureToken].
-func (me Options) WithGenerator(f func() string) Options {
-	moon.Assert(f != nil, "generator func cannot be nil")
-	me.generator = f
-	return me
+func Option_Generator(f func() string) Option {
+	return func(o *options) {
+		moon.Assert(f != nil, "generator func cannot be nil")
+		o.generator = f
+	}
 }
 
-// WithRequestLoggingEntryKey sets the request logging entry key returned by
+// Option_RequestLoggingEntryKey sets the request logging entry key returned by
 // [Handler.GetRequestLoggingEntry].
 // Surrounding whitespace is trimmed. It panics on an empty key, and
 // adding the same key twice to one app panics (see
 // [moon.App.AddRequestLoggingEntry]): multiple instances on the same app
-// need distinct keys. It returns the same options for chaining.
+// need distinct keys. Pass it to [New].
 //
 // Default: "request_id".
-func (me Options) WithRequestLoggingEntryKey(s string) Options {
-	s = strings.TrimSpace(s)
-	moon.Assert(s != "", "key cannot be empty or whitespace")
-	me.rleKey = s
-	return me
+func Option_RequestLoggingEntryKey(s string) Option {
+	return func(o *options) {
+		s = strings.TrimSpace(s)
+		moon.Assert(s != "", "key cannot be empty or whitespace")
+		o.rleKey = s
+	}
 }
 
-// WithRequestLoggingEntryValue sets the func rendering the request
+// Option_RequestLoggingEntryValue sets the func rendering the request
 // logging entry value returned by [Handler.GetRequestLoggingEntry]. It runs
 // after the handler chain with the app's [moon.ErrorHandler] result as err,
 // nil when the chain succeeded.
-// It panics on a nil func. It returns the same options for chaining.
+// It panics on a nil func. Pass it to [New].
 //
 // Default: the request ID from [GetFromContext].
-func (me Options) WithRequestLoggingEntryValue(f moon.RequestLoggingEntryValue) Options {
-	moon.Assert(f != nil, "value func cannot be nil")
-	me.rleValue = f
-	return me
+func Option_RequestLoggingEntryValue(f moon.RequestLoggingEntryValue) Option {
+	return func(o *options) {
+		moon.Assert(f != nil, "value func cannot be nil")
+		o.rleValue = f
+	}
 }
 
 // GetRequestLoggingEntry returns the request logging entry carrying the ID.
@@ -153,8 +152,8 @@ func (me Options) WithRequestLoggingEntryValue(f moon.RequestLoggingEntryValue) 
 //	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 //	app.UseAll(h.Handle)
 //
-// Customize the key and value with [Options.WithRequestLoggingEntryKey]
-// and [Options.WithRequestLoggingEntryValue].
+// Customize the key and value with [Option_RequestLoggingEntryKey]
+// and [Option_RequestLoggingEntryValue].
 func (me *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry {
 	return moon.RequestLoggingEntry{
 		Key:   me.options.rleKey,
@@ -164,7 +163,7 @@ func (me *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry {
 
 // Handle ensures every request has a request ID. The incoming request header
 // is reused when valid, otherwise an ID is generated (see
-// [Options.WithGenerator]). The ID is echoed in the response header and
+// [Option_Generator]). The ID is echoed in the response header and
 // stored for [GetFromContext], then the chain runs.
 func (me *Handler) Handle(ctx *moon.Context) error {
 	if me.options.skip != nil && me.options.skip(ctx) {

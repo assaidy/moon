@@ -50,7 +50,7 @@ func TestNew(t *testing.T) {
 	t.Run("credentials with the default wildcard origin panics", func(t *testing.T) {
 		require.PanicsWithValue(t,
 			"credentials cannot be allowed when allowed origins contain a wildcard '*'",
-			func() { New(NewOptions().WithAllowCredentials(true)) },
+			func() { New(Option_AllowCredentials(true)) },
 		)
 	})
 
@@ -58,28 +58,30 @@ func TestNew(t *testing.T) {
 		require.PanicsWithValue(t,
 			"credentials cannot be allowed when allowed origins contain a wildcard '*'",
 			func() {
-				New(NewOptions().WithAllowedOrigins([]string{"*"}).WithAllowCredentials(true))
+				New(Option_AllowedOrigins([]string{"*"}), Option_AllowCredentials(true))
 			},
 		)
 	})
 
 	t.Run("credentials with explicit origins are allowed", func(t *testing.T) {
 		require.NotPanics(t, func() {
-			New(NewOptions().
-				WithAllowedOrigins([]string{"https://app.example"}).
-				WithAllowCredentials(true))
+			New(
+				Option_AllowedOrigins([]string{"https://app.example"}),
+				Option_AllowCredentials(true))
 		})
 	})
 
-	t.Run("more than one options panics", func(t *testing.T) {
-		require.Panics(t, func() { New(NewOptions(), NewOptions()) })
+	t.Run("multiple options combine", func(t *testing.T) {
+		h := New(Option_MaxAge(10), Option_AllowPrivateNetwork(true))
+		require.Equal(t, 10, h.options.maxAge)
+		require.True(t, h.options.allowPrivateNetwork)
 	})
 }
 
-func TestNewOptions(t *testing.T) {
-	opts := NewOptions()
+func TestNew_Defaults(t *testing.T) {
+	opts := New().options
 
-	require.Equal(t, []string{"*"}, opts.allowedOrogins)
+	require.Equal(t, []string{"*"}, opts.allowedOrigins)
 	require.Equal(t, []string{
 		moon.MethodHead,
 		moon.MethodGet,
@@ -101,69 +103,69 @@ func TestNewOptions(t *testing.T) {
 	require.Empty(t, opts.exposedHeadersString)
 }
 
-func TestWithAllowedOrigins(t *testing.T) {
+func TestOption_AllowedOrigins(t *testing.T) {
 	t.Run("normalizes entries", func(t *testing.T) {
-		opts := NewOptions().WithAllowedOrigins([]string{
+		opts := New(Option_AllowedOrigins([]string{
 			" HTTPS://Example.COM/ ",
 			"http://sub.Example.com:80",
 			"HTTPS://example.com:443",
 			"null",
-		})
+		})).options
 		require.Equal(t, []string{
 			"https://example.com",
 			"http://sub.example.com",
 			"https://example.com",
 			"null",
-		}, opts.allowedOrogins)
+		}, opts.allowedOrigins)
 	})
 
 	t.Run("keeps non default ports", func(t *testing.T) {
-		opts := NewOptions().WithAllowedOrigins([]string{"https://example.com:8443"})
-		require.Equal(t, []string{"https://example.com:8443"}, opts.allowedOrogins)
+		opts := New(Option_AllowedOrigins([]string{"https://example.com:8443"})).options
+		require.Equal(t, []string{"https://example.com:8443"}, opts.allowedOrigins)
 	})
 
 	t.Run("lone wildcard is kept verbatim", func(t *testing.T) {
-		opts := NewOptions().WithAllowedOrigins([]string{" * "})
-		require.Equal(t, []string{"*"}, opts.allowedOrogins)
+		opts := New(Option_AllowedOrigins([]string{" * "})).options
+		require.Equal(t, []string{"*"}, opts.allowedOrigins)
 	})
 
 	t.Run("wildcard combined with other origins panics", func(t *testing.T) {
 		require.PanicsWithValue(t, "wildcard '*' cannot be combined with other origins", func() {
-			NewOptions().WithAllowedOrigins([]string{"*", "https://app.example"})
+			New(Option_AllowedOrigins([]string{"*", "https://app.example"}))
 		})
 	})
 
 	t.Run("normalizes subdomain wildcards", func(t *testing.T) {
-		opts := NewOptions().WithAllowedOrigins([]string{
+		opts := New(Option_AllowedOrigins([]string{
 			" HTTPS://*.Example.COM/ ",
 			"http://*.example.com:80",
 			"https://*.example.com:8443",
-		})
+		})).options
 		require.Equal(t, []string{
 			"https://*.example.com",
 			"http://*.example.com",
 			"https://*.example.com:8443",
-		}, opts.allowedOrogins)
+		}, opts.allowedOrigins)
 	})
 
 	t.Run("subdomain wildcards combine with other origins", func(t *testing.T) {
-		opts := NewOptions().WithAllowedOrigins([]string{
+		opts := New(Option_AllowedOrigins([]string{
 			"https://*.example.com",
 			"https://app.example",
 			"null",
-		})
+		})).options
 		require.Equal(t, []string{
 			"https://*.example.com",
 			"https://app.example",
 			"null",
-		}, opts.allowedOrogins)
+		}, opts.allowedOrigins)
 	})
 
 	t.Run("subdomain wildcards may be paired with credentials", func(t *testing.T) {
 		require.NotPanics(t, func() {
-			New(NewOptions().
-				WithAllowedOrigins([]string{"https://*.example.com"}).
-				WithAllowCredentials(true))
+			New(
+				Option_AllowedOrigins([]string{"https://*.example.com"}),
+				Option_AllowCredentials(true))
 		})
 	})
 
@@ -192,14 +194,14 @@ func TestWithAllowedOrigins(t *testing.T) {
 	for _, tc := range invalidOrigins {
 		t.Run("invalid origin "+tc.name+" panics", func(t *testing.T) {
 			require.PanicsWithValue(t, `invalid origin "`+tc.origin+`" at index 0`, func() {
-				NewOptions().WithAllowedOrigins([]string{tc.origin})
+				New(Option_AllowedOrigins([]string{tc.origin}))
 			})
 		})
 	}
 
 	t.Run("reports the index of the invalid origin", func(t *testing.T) {
 		require.PanicsWithValue(t, `invalid origin "bad" at index 1`, func() {
-			NewOptions().WithAllowedOrigins([]string{"https://app.example", "bad"})
+			New(Option_AllowedOrigins([]string{"https://app.example", "bad"}))
 		})
 	})
 }
@@ -410,9 +412,9 @@ func TestOriginMatches(t *testing.T) {
 }
 
 func TestSubdomainWildcards(t *testing.T) {
-	handler := New(NewOptions().
-		WithAllowedOrigins([]string{"https://*.example.com"}).
-		WithAllowCredentials(true))
+	handler := New(
+		Option_AllowedOrigins([]string{"https://*.example.com"}),
+		Option_AllowCredentials(true))
 	app := newTestApp(handler)
 
 	allowedOrigins := []string{
@@ -499,7 +501,7 @@ func TestHandleGeneralRequest(t *testing.T) {
 		},
 		{
 			name:    "listed origin is echoed and varies",
-			handler: New(NewOptions().WithAllowedOrigins([]string{"https://app.example"})),
+			handler: New(Option_AllowedOrigins([]string{"https://app.example"})),
 			headers: map[string]string{headerOrigin: "https://app.example"},
 			wantHeader: map[string]string{
 				headerAccessControlAllowOrigin: "https://app.example",
@@ -509,7 +511,7 @@ func TestHandleGeneralRequest(t *testing.T) {
 		},
 		{
 			name:    "request origin is normalized before matching",
-			handler: New(NewOptions().WithAllowedOrigins([]string{"https://app.example"})),
+			handler: New(Option_AllowedOrigins([]string{"https://app.example"})),
 			headers: map[string]string{headerOrigin: "HTTPS://App.Example/"},
 			wantHeader: map[string]string{
 				headerAccessControlAllowOrigin: "https://app.example",
@@ -518,7 +520,7 @@ func TestHandleGeneralRequest(t *testing.T) {
 		},
 		{
 			name:    "unlisted origin gets no allow origin",
-			handler: New(NewOptions().WithAllowedOrigins([]string{"https://app.example"})),
+			handler: New(Option_AllowedOrigins([]string{"https://app.example"})),
 			headers: map[string]string{headerOrigin: "https://evil.example"},
 			wantHeader: map[string]string{
 				headerVary: "Origin",
@@ -531,21 +533,21 @@ func TestHandleGeneralRequest(t *testing.T) {
 		},
 		{
 			name:       "no origin header with restricted origins still varies",
-			handler:    New(NewOptions().WithAllowedOrigins([]string{"https://app.example"})),
+			handler:    New(Option_AllowedOrigins([]string{"https://app.example"})),
 			wantHeader: map[string]string{headerVary: "Origin"},
 			wantAbsent: []string{headerAccessControlAllowOrigin},
 		},
 		{
 			name: "malformed request origin is rejected",
-			handler: New(NewOptions().
-				WithAllowedOrigins([]string{"https://app.example"})),
+			handler: New(
+				Option_AllowedOrigins([]string{"https://app.example"})),
 			headers:    map[string]string{headerOrigin: "not an origin"},
 			wantHeader: map[string]string{headerVary: "Origin"},
 			wantAbsent: []string{headerAccessControlAllowOrigin},
 		},
 		{
 			name:    "literal null origin is matched",
-			handler: New(NewOptions().WithAllowedOrigins([]string{"null"})),
+			handler: New(Option_AllowedOrigins([]string{"null"})),
 			headers: map[string]string{headerOrigin: "null"},
 			wantHeader: map[string]string{
 				headerAccessControlAllowOrigin: "null",
@@ -554,10 +556,10 @@ func TestHandleGeneralRequest(t *testing.T) {
 		},
 		{
 			name: "credentials and exposed headers",
-			handler: New(NewOptions().
-				WithAllowedOrigins([]string{"https://app.example"}).
-				WithAllowCredentials(true).
-				WithExposedHeaders([]string{"X-Total-Count", "X-Page"})),
+			handler: New(
+				Option_AllowedOrigins([]string{"https://app.example"}),
+				Option_AllowCredentials(true),
+				Option_ExposedHeaders([]string{"X-Total-Count", "X-Page"})),
 			headers: map[string]string{headerOrigin: "https://app.example"},
 			wantHeader: map[string]string{
 				headerAccessControlAllowOrigin:      "https://app.example",
@@ -568,9 +570,9 @@ func TestHandleGeneralRequest(t *testing.T) {
 		},
 		{
 			name: "exposed headers are not set when the origin is denied",
-			handler: New(NewOptions().
-				WithAllowedOrigins([]string{"https://app.example"}).
-				WithExposedHeaders([]string{"X-Total-Count"})),
+			handler: New(
+				Option_AllowedOrigins([]string{"https://app.example"}),
+				Option_ExposedHeaders([]string{"X-Total-Count"})),
 			headers: map[string]string{headerOrigin: "https://evil.example"},
 			wantHeader: map[string]string{
 				headerVary: "Origin",
@@ -596,9 +598,9 @@ func TestHandleGeneralRequest(t *testing.T) {
 func TestAllowedOriginsFunc(t *testing.T) {
 	t.Run("consulted when the list does not match", func(t *testing.T) {
 		calledWith := ""
-		handler := New(NewOptions().
-			WithAllowedOrigins([]string{"https://app.example"}).
-			WithAllowedOriginsFunc(func(origin string) bool {
+		handler := New(
+			Option_AllowedOrigins([]string{"https://app.example"}),
+			Option_AllowedOriginsFunc(func(origin string) bool {
 				calledWith = origin
 				return origin == "https://dynamic.example"
 			}))
@@ -613,9 +615,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 
 	t.Run("raw origin is passed to the func", func(t *testing.T) {
 		calledWith := ""
-		handler := New(NewOptions().
-			WithAllowedOrigins([]string{"https://app.example"}).
-			WithAllowedOriginsFunc(func(origin string) bool {
+		handler := New(
+			Option_AllowedOrigins([]string{"https://app.example"}),
+			Option_AllowedOriginsFunc(func(origin string) bool {
 				calledWith = origin
 				return true
 			}))
@@ -628,9 +630,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 	})
 
 	t.Run("rejecting func emits no allow origin", func(t *testing.T) {
-		handler := New(NewOptions().
-			WithAllowedOrigins([]string{"https://app.example"}).
-			WithAllowedOriginsFunc(func(string) bool { return false }))
+		handler := New(
+			Option_AllowedOrigins([]string{"https://app.example"}),
+			Option_AllowedOriginsFunc(func(string) bool { return false }))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
 			map[string]string{headerOrigin: "https://dynamic.example"})
@@ -641,9 +643,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 
 	t.Run("the list wins and the func is not consulted", func(t *testing.T) {
 		called := false
-		handler := New(NewOptions().
-			WithAllowedOrigins([]string{"https://app.example"}).
-			WithAllowedOriginsFunc(func(string) bool {
+		handler := New(
+			Option_AllowedOrigins([]string{"https://app.example"}),
+			Option_AllowedOriginsFunc(func(string) bool {
 				called = true
 				return false
 			}))
@@ -657,9 +659,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 
 	t.Run("wildcard wins and the func is not consulted", func(t *testing.T) {
 		called := false
-		handler := New(NewOptions().
-			WithAllowedOrigins([]string{"*"}).
-			WithAllowedOriginsFunc(func(string) bool {
+		handler := New(
+			Option_AllowedOrigins([]string{"*"}),
+			Option_AllowedOriginsFunc(func(string) bool {
 				called = true
 				return false
 			}))
@@ -674,9 +676,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 
 	t.Run("malformed origin is rejected before the func", func(t *testing.T) {
 		called := false
-		handler := New(NewOptions().
-			WithAllowedOrigins([]string{"https://app.example"}).
-			WithAllowedOriginsFunc(func(string) bool {
+		handler := New(
+			Option_AllowedOrigins([]string{"https://app.example"}),
+			Option_AllowedOriginsFunc(func(string) bool {
 				called = true
 				return true
 			}))
@@ -733,9 +735,9 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name: "allowed headers and max age",
-			handler: New(NewOptions().
-				WithAllowedHeaders([]string{"Content-Type", "Authorization"}).
-				WithMaxAge(600)),
+			handler: New(
+				Option_AllowedHeaders([]string{"Content-Type", "Authorization"}),
+				Option_MaxAge(600)),
 			headers: map[string]string{
 				headerOrigin:                      "https://any.example",
 				headerAccessControlRequestMethod:  moon.MethodPost,
@@ -751,7 +753,7 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name:    "max age zero is written",
-			handler: New(NewOptions().WithMaxAge(0)),
+			handler: New(Option_MaxAge(0)),
 			headers: map[string]string{
 				headerOrigin:                     "https://any.example",
 				headerAccessControlRequestMethod: moon.MethodGet,
@@ -760,7 +762,7 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name:    "negative max age is omitted",
-			handler: New(NewOptions().WithMaxAge(-1)),
+			handler: New(Option_MaxAge(-1)),
 			headers: map[string]string{
 				headerOrigin:                     "https://any.example",
 				headerAccessControlRequestMethod: moon.MethodGet,
@@ -769,8 +771,8 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name: "private network is answered when requested",
-			handler: New(NewOptions().
-				WithAllowPrivateNetwork(true)),
+			handler: New(
+				Option_AllowPrivateNetwork(true)),
 			headers: map[string]string{
 				headerOrigin:                             "https://any.example",
 				headerAccessControlRequestMethod:         moon.MethodPost,
@@ -780,7 +782,7 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name:    "private network is absent when not requested",
-			handler: New(NewOptions().WithAllowPrivateNetwork(true)),
+			handler: New(Option_AllowPrivateNetwork(true)),
 			headers: map[string]string{
 				headerOrigin:                     "https://any.example",
 				headerAccessControlRequestMethod: moon.MethodPost,
@@ -789,7 +791,7 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name:    "listed origin is echoed",
-			handler: New(NewOptions().WithAllowedOrigins([]string{"https://app.example"})),
+			handler: New(Option_AllowedOrigins([]string{"https://app.example"})),
 			headers: map[string]string{
 				headerOrigin:                     "https://app.example",
 				headerAccessControlRequestMethod: moon.MethodPut,
@@ -801,7 +803,7 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name:    "unlisted origin gets no allow origin",
-			handler: New(NewOptions().WithAllowedOrigins([]string{"https://app.example"})),
+			handler: New(Option_AllowedOrigins([]string{"https://app.example"})),
 			headers: map[string]string{
 				headerOrigin:                     "https://evil.example",
 				headerAccessControlRequestMethod: moon.MethodPost,
@@ -814,9 +816,9 @@ func TestHandlePreflight(t *testing.T) {
 		},
 		{
 			name: "credentials are advertised on the preflight",
-			handler: New(NewOptions().
-				WithAllowedOrigins([]string{"https://app.example"}).
-				WithAllowCredentials(true)),
+			handler: New(
+				Option_AllowedOrigins([]string{"https://app.example"}),
+				Option_AllowCredentials(true)),
 			headers: map[string]string{
 				headerOrigin:                     "https://app.example",
 				headerAccessControlRequestMethod: moon.MethodPost,
@@ -938,7 +940,7 @@ func TestHandleGetWithPreflightHeadersIsNotAPreflight(t *testing.T) {
 }
 
 func TestHandleSkip(t *testing.T) {
-	handler := New(NewOptions().WithSkip(func(*moon.Context) bool { return true }))
+	handler := New(Option_Skip(func(*moon.Context) bool { return true }))
 	resp := request(newTestApp(handler), http.MethodGet, "/resource", map[string]string{
 		headerOrigin: "https://app.example",
 	})

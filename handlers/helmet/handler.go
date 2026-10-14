@@ -5,7 +5,7 @@
 //
 // Customize or disable individual headers:
 //
-//	app.UseAll(helmet.New(helmet.NewOptions().WithXFrameOptions("DENY").WithHstsMaxAge(31536000)).Handle)
+//	app.UseAll(helmet.New(helmet.Option_XFrameOptions("DENY"), helmet.Option_HstsMaxAge(31536000)).Handle)
 //
 // As a middleware it runs before the route is resolved, so the headers are
 // set even for unmatched requests ([moon.ErrInvalidEndpoint],
@@ -20,16 +20,15 @@ import (
 )
 
 // Handler sets security-related response headers. Use [New] to construct
-// it, passing [NewOptions] chained with the With* methods to configure it,
+// it, passing [Option]s to configure it,
 // then register [Handler.Handle] in the chain.
 type Handler struct {
-	options Options
+	options options
 }
 
-// Options holds the configuration of a [Handler]. All fields are private;
-// build one with [NewOptions] for the defaults and chain the With* methods
-// to configure it, then pass it to [New].
-type Options struct {
+// options holds the configuration of a [Handler]. All fields are private;
+// pass [Option]s to [New] to configure it.
+type options struct {
 	skip                      func(*moon.Context) bool
 	xssProtection             string
 	contentTypeNoSniff        string
@@ -50,31 +49,19 @@ type Options struct {
 	xPermittedCrossDomain     string
 }
 
-// New returns a handler built from the given options, or defaults when none
-// are given. Chain the With* methods on [NewOptions] to configure it, then
-// register [Handler.Handle] in the chain:
+// New returns a handler built from sensible defaults, customized by the given
+// options, then register [Handler.Handle] in the chain:
 //
 //	app.UseAll(helmet.New().Handle)
-//	app.UseAll(helmet.New(helmet.NewOptions().WithXFrameOptions("DENY")).Handle)
+//	app.UseAll(helmet.New(helmet.Option_XFrameOptions("DENY")).Handle)
 //
 // HSTS, Content-Security-Policy and Permissions-Policy are disabled by
-// default (see [Options.WithHstsMaxAge],
-// [Options.WithContentSecurityPolicy] and [Options.WithPermissionPolicy]).
-// Requests for which the [Options.WithSkip] predicate returns true run the
+// default (see [Option_HstsMaxAge],
+// [Option_ContentSecurityPolicy] and [Option_PermissionPolicy]).
+// Requests for which the [Option_Skip] predicate returns true run the
 // chain untouched: no headers are set.
-func New(opts ...Options) *Handler {
-	options := NewOptions()
-	if len(opts) > 0 {
-		moon.Assert(len(opts) == 1)
-		options = opts[0]
-	}
-	return &Handler{options: options}
-}
-
-// NewOptions returns an Options populated with the default values.
-// See the With* methods for each default.
-func NewOptions() Options {
-	return Options{
+func New(opts ...Option) *Handler {
+	options := options{
 		xssProtection:             "0",
 		contentTypeNoSniff:        "nosniff",
 		xFrameOptions:             "SAMEORIGIN",
@@ -88,196 +75,222 @@ func NewOptions() Options {
 		xPermittedCrossDomain:     "none",
 		hstsIncludeSubdomains:     true,
 	}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return &Handler{options: options}
 }
 
-// WithSkip skips setting headers for requests where f returns true.
-// The chain still runs; only the headers are omitted. It returns the same
-// options for chaining.
+// Option configures a [Handler]. Pass them to [New]:
+//
+//	app.UseAll(helmet.New(helmet.Option_XFrameOptions("DENY")).Handle)
+type Option func(*options)
+
+// Option_Skip skips setting headers for requests where f returns true.
+// The chain still runs; only the headers are omitted. Pass it to [New].
 //
 // Default: nil (nothing is skipped)
-func (me Options) WithSkip(f func(*moon.Context) bool) Options {
-	me.skip = f
-	return me
+func Option_Skip(f func(*moon.Context) bool) Option {
+	return func(o *options) {
+		o.skip = f
+	}
 }
 
-// WithXssProtection sets the X-XSS-Protection header value.
+// Option_XssProtection sets the X-XSS-Protection header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "0"
-func (me Options) WithXssProtection(s string) Options {
-	me.xssProtection = strings.TrimSpace(s)
-	return me
+func Option_XssProtection(s string) Option {
+	return func(o *options) {
+		o.xssProtection = strings.TrimSpace(s)
+	}
 }
 
-// WithContentTypeNoSniff sets the X-Content-Type-Options header value.
+// Option_ContentTypeNoSniff sets the X-Content-Type-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "nosniff"
-func (me Options) WithContentTypeNoSniff(s string) Options {
-	me.contentTypeNoSniff = strings.TrimSpace(s)
-	return me
+func Option_ContentTypeNoSniff(s string) Option {
+	return func(o *options) {
+		o.contentTypeNoSniff = strings.TrimSpace(s)
+	}
 }
 
-// WithXFrameOptions sets the X-Frame-Options header value.
+// Option_XFrameOptions sets the X-Frame-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "SAMEORIGIN"
-func (me Options) WithXFrameOptions(s string) Options {
-	me.xFrameOptions = strings.TrimSpace(s)
-	return me
+func Option_XFrameOptions(s string) Option {
+	return func(o *options) {
+		o.xFrameOptions = strings.TrimSpace(s)
+	}
 }
 
-// WithHstsMaxAge sets the max-age (in seconds) of the
+// Option_HstsMaxAge sets the max-age (in seconds) of the
 // Strict-Transport-Security header. It panics on a negative value.
-// Zero disables the header. It returns the same options for chaining.
+// Zero disables the header. Pass it to [New].
 //
 // Default: 0 (disabled)
-func (me Options) WithHstsMaxAge(seconds int) Options {
-	moon.Assert(seconds >= 0, "hsts max age cannot be negative")
-	me.hstsMaxAge = seconds
-	return me
+func Option_HstsMaxAge(seconds int) Option {
+	return func(o *options) {
+		moon.Assert(seconds >= 0, "hsts max age cannot be negative")
+		o.hstsMaxAge = seconds
+	}
 }
 
-// WithHstsIncludeSubdomains controls whether the includeSubDomains directive
+// Option_HstsIncludeSubdomains controls whether the includeSubDomains directive
 // is added to the Strict-Transport-Security header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: true
-func (me Options) WithHstsIncludeSubdomains(b bool) Options {
-	me.hstsIncludeSubdomains = b
-	return me
+func Option_HstsIncludeSubdomains(b bool) Option {
+	return func(o *options) {
+		o.hstsIncludeSubdomains = b
+	}
 }
 
-// WithHstsPreloadEnabled controls whether the preload directive is added to
+// Option_HstsPreloadEnabled controls whether the preload directive is added to
 // the Strict-Transport-Security header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: false
-func (me Options) WithHstsPreloadEnabled(b bool) Options {
-	me.hstsPreloadEnabled = b
-	return me
+func Option_HstsPreloadEnabled(b bool) Option {
+	return func(o *options) {
+		o.hstsPreloadEnabled = b
+	}
 }
 
-// WithContentSecurityPolicy sets the Content-Security-Policy header value
+// Option_ContentSecurityPolicy sets the Content-Security-Policy header value
 // (or the Content-Security-Policy-Report-Only header when
-// [Options.WithCspReportOnly] is enabled).
+// [Option_CspReportOnly] is enabled).
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "" (disabled)
-func (me Options) WithContentSecurityPolicy(s string) Options {
-	me.contentSecurityPolicy = strings.TrimSpace(s)
-	return me
+func Option_ContentSecurityPolicy(s string) Option {
+	return func(o *options) {
+		o.contentSecurityPolicy = strings.TrimSpace(s)
+	}
 }
 
-// WithCspReportOnly switches the Content-Security-Policy header to
+// Option_CspReportOnly switches the Content-Security-Policy header to
 // Content-Security-Policy-Report-Only.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: false
-func (me Options) WithCspReportOnly(reportOnly bool) Options {
-	me.cspReportOnly = reportOnly
-	return me
+func Option_CspReportOnly(reportOnly bool) Option {
+	return func(o *options) {
+		o.cspReportOnly = reportOnly
+	}
 }
 
-// WithReferrerPolicy sets the Referrer-Policy header value.
+// Option_ReferrerPolicy sets the Referrer-Policy header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "no-referrer"
-func (me Options) WithReferrerPolicy(s string) Options {
-	me.referrerPolicy = strings.TrimSpace(s)
-	return me
+func Option_ReferrerPolicy(s string) Option {
+	return func(o *options) {
+		o.referrerPolicy = strings.TrimSpace(s)
+	}
 }
 
-// WithPermissionPolicy sets the Permissions-Policy header value.
+// Option_PermissionPolicy sets the Permissions-Policy header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "" (disabled)
-func (me Options) WithPermissionPolicy(s string) Options {
-	me.permissionPolicy = strings.TrimSpace(s)
-	return me
+func Option_PermissionPolicy(s string) Option {
+	return func(o *options) {
+		o.permissionPolicy = strings.TrimSpace(s)
+	}
 }
 
-// WithCrossOriginEmbedderPolicy sets the Cross-Origin-Embedder-Policy header
+// Option_CrossOriginEmbedderPolicy sets the Cross-Origin-Embedder-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same options for chaining.
+// header. Pass it to [New].
 //
 // Default: "require-corp"
-func (me Options) WithCrossOriginEmbedderPolicy(s string) Options {
-	me.crossOriginEmbedderPolicy = strings.TrimSpace(s)
-	return me
+func Option_CrossOriginEmbedderPolicy(s string) Option {
+	return func(o *options) {
+		o.crossOriginEmbedderPolicy = strings.TrimSpace(s)
+	}
 }
 
-// WithCrossOriginOpenerPolicy sets the Cross-Origin-Opener-Policy header
+// Option_CrossOriginOpenerPolicy sets the Cross-Origin-Opener-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same options for chaining.
+// header. Pass it to [New].
 //
 // Default: "same-origin"
-func (me Options) WithCrossOriginOpenerPolicy(s string) Options {
-	me.crossOriginOpenerPolicy = strings.TrimSpace(s)
-	return me
+func Option_CrossOriginOpenerPolicy(s string) Option {
+	return func(o *options) {
+		o.crossOriginOpenerPolicy = strings.TrimSpace(s)
+	}
 }
 
-// WithCrossOriginResourcePolicy sets the Cross-Origin-Resource-Policy header
+// Option_CrossOriginResourcePolicy sets the Cross-Origin-Resource-Policy header
 // value. Surrounding whitespace is trimmed. An empty value disables the
-// header. It returns the same options for chaining.
+// header. Pass it to [New].
 //
 // Default: "same-origin"
-func (me Options) WithCrossOriginResourcePolicy(s string) Options {
-	me.crossOriginResourcePolicy = strings.TrimSpace(s)
-	return me
+func Option_CrossOriginResourcePolicy(s string) Option {
+	return func(o *options) {
+		o.crossOriginResourcePolicy = strings.TrimSpace(s)
+	}
 }
 
-// WithOriginAgentCluster sets the Origin-Agent-Cluster header value.
+// Option_OriginAgentCluster sets the Origin-Agent-Cluster header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "?1"
-func (me Options) WithOriginAgentCluster(s string) Options {
-	me.originAgentCluster = strings.TrimSpace(s)
-	return me
+func Option_OriginAgentCluster(s string) Option {
+	return func(o *options) {
+		o.originAgentCluster = strings.TrimSpace(s)
+	}
 }
 
-// WithXDnsPrefetchControl sets the X-DNS-Prefetch-Control header value.
+// Option_XDnsPrefetchControl sets the X-DNS-Prefetch-Control header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "off"
-func (me Options) WithXDnsPrefetchControl(s string) Options {
-	me.xDnsPrefetchControl = strings.TrimSpace(s)
-	return me
+func Option_XDnsPrefetchControl(s string) Option {
+	return func(o *options) {
+		o.xDnsPrefetchControl = strings.TrimSpace(s)
+	}
 }
 
-// WithXDownloadOptions sets the X-Download-Options header value.
+// Option_XDownloadOptions sets the X-Download-Options header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "noopen"
-func (me Options) WithXDownloadOptions(s string) Options {
-	me.xDownloadOptions = strings.TrimSpace(s)
-	return me
+func Option_XDownloadOptions(s string) Option {
+	return func(o *options) {
+		o.xDownloadOptions = strings.TrimSpace(s)
+	}
 }
 
-// WithXPermittedCrossDomainPolicies sets the
+// Option_XPermittedCrossDomainPolicies sets the
 // X-Permitted-Cross-Domain-Policies header value.
 // Surrounding whitespace is trimmed. An empty value disables the header.
-// It returns the same options for chaining.
+// Pass it to [New].
 //
 // Default: "none"
-func (me Options) WithXPermittedCrossDomainPolicies(s string) Options {
-	me.xPermittedCrossDomain = strings.TrimSpace(s)
-	return me
+func Option_XPermittedCrossDomainPolicies(s string) Option {
+	return func(o *options) {
+		o.xPermittedCrossDomain = strings.TrimSpace(s)
+	}
 }
 
 // Handle sets the configured security headers, then runs the chain.
 // Headers with empty values are omitted, and Strict-Transport-Security is
 // only set when a positive max-age is configured (see
-// [Options.WithHstsMaxAge]).
+// [Option_HstsMaxAge]).
 func (me *Handler) Handle(ctx *moon.Context) error {
 	if me.options.skip != nil && me.options.skip(ctx) {
 		return ctx.Next()

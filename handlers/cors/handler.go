@@ -7,12 +7,12 @@
 //
 // By default every origin is allowed with "*", the methods HEAD, GET, POST,
 // PUT, PATCH, DELETE and QUERY are allowed, no custom headers are exposed
-// and no preflight max age is set. Restrict that with the With* methods:
+// and no preflight max age is set. Restrict that with [Option]s:
 //
-//	app.UseAll(cors.New(cors.NewOptions().
-//		WithAllowedOrigins([]string{"https://example.com", "https://www.example.com"}).
-//		WithAllowedHeaders([]string{"Content-Type", "Authorization"}).
-//		WithAllowCredentials(true),
+//	app.UseAll(cors.New(
+//		cors.Option_AllowedOrigins([]string{"https://example.com", "https://www.example.com"}),
+//		cors.Option_AllowedHeaders([]string{"Content-Type", "Authorization"}),
+//		cors.Option_AllowCredentials(true),
 //	).Handle)
 //
 // Allowed origins may be written exactly ("https://app.example.com"), as a
@@ -50,45 +50,57 @@ import (
 )
 
 // Handler sets CORS response headers. Use [New] to construct it, passing
-// [NewOptions] chained with the With* methods to configure it, then register
+// [Option]s to configure it, then register
 // [Handler.Handle] in the chain.
 type Handler struct {
-	options Options
+	options options
 }
 
-// New returns a handler built from the given options, or defaults when none
-// are given. Chain the With* methods on [NewOptions] to configure it, then
-// register [Handler.Handle] in the chain:
+// New returns a handler built from sensible defaults, customized by the given
+// options, then register [Handler.Handle] in the chain:
 //
 //	app.UseAll(cors.New().Handle)
-//	app.UseAll(cors.New(cors.NewOptions().WithAllowedOrigins([]string{"https://example.com"})).Handle)
+//	app.UseAll(cors.New(cors.Option_AllowedOrigins([]string{"https://example.com"})).Handle)
 //
 // It panics when credentials are allowed while the allowed origins contain
 // the wildcard "*": a wildcard matches every origin, so pairing it with
 // Access-Control-Allow-Credentials would let any site make credentialed
 // requests to the server, which is a security risk. List the origins
-// explicitly with [Options.WithAllowedOrigins] instead.
-func New(options ...Options) *Handler {
-	opts := NewOptions()
-	if len(options) > 0 {
-		moon.Assert(len(options) == 1)
-		opts = options[0]
+// explicitly with [Option_AllowedOrigins] instead.
+func New(opts ...Option) *Handler {
+	methods := []string{
+		moon.MethodHead,
+		moon.MethodGet,
+		moon.MethodPost,
+		moon.MethodPut,
+		moon.MethodPatch,
+		moon.MethodDelete,
+		moon.MethodQuery,
+	}
+
+	options := options{
+		allowedOrigins:       []string{"*"},
+		allowedMethods:       methods,
+		allowedMethodsString: strings.Join(methods, ", "),
+		maxAge:               -1,
+	}
+	for _, opt := range opts {
+		opt(&options)
 	}
 
 	moon.Assert(
-		!(opts.allowCredentials && slices.Contains(opts.allowedOrogins, "*")),
+		!(options.allowCredentials && slices.Contains(options.allowedOrigins, "*")),
 		"credentials cannot be allowed when allowed origins contain a wildcard '*'",
 	)
 
-	return &Handler{options: opts}
+	return &Handler{options: options}
 }
 
-// Options holds the configuration of a [Handler]. All fields are private;
-// build one with [NewOptions] for the defaults and chain the With* methods
-// to configure it, then pass it to [New].
-type Options struct {
+// options holds the configuration of a [Handler]. All fields are private;
+// pass [Option]s to [New] to configure it.
+type options struct {
 	skip                 func(ctx *moon.Context) bool
-	allowedOrogins       []string
+	allowedOrigins       []string
 	allowedOriginsFunc   func(origin string) bool
 	allowedMethods       []string
 	allowedMethodsString string
@@ -101,42 +113,23 @@ type Options struct {
 	maxAge               int
 }
 
-// NewOptions returns an Options populated with the default values: every
-// origin allowed with "*", the methods HEAD, GET, POST, PUT, PATCH, DELETE
-// and QUERY allowed, and no allowed headers, exposed headers, credentials,
-// private network access or preflight max age.
-// See the With* methods for each default.
-func NewOptions() Options {
-	methods := []string{
-		moon.MethodHead,
-		moon.MethodGet,
-		moon.MethodPost,
-		moon.MethodPut,
-		moon.MethodPatch,
-		moon.MethodDelete,
-		moon.MethodQuery,
-	}
+// Option configures a [Handler]. Pass them to [New]:
+//
+//	app.UseAll(cors.New(cors.Option_AllowedOrigins([]string{"https://example.com"})).Handle)
+type Option func(*options)
 
-	return Options{
-		allowedOrogins:       []string{"*"},
-		allowedMethods:       methods,
-		allowedMethodsString: strings.Join(methods, ", "),
-		maxAge:               -1,
-	}
-}
-
-// WithSkip skips CORS handling for requests where f returns true: the chain
-// still runs, but no CORS headers are set. It returns the same options for
-// chaining.
+// Option_Skip skips CORS handling for requests where f returns true: the chain
+// still runs, but no CORS headers are set. Pass it to [New].
 //
 // Default: nil (nothing is skipped)
-func (me Options) WithSkip(f func(ctx *moon.Context) bool) Options {
-	me.skip = f
-	return me
+func Option_Skip(f func(ctx *moon.Context) bool) Option {
+	return func(o *options) {
+		o.skip = f
+	}
 }
 
 // normalizeAllowedOrigin validates an entry of
-// [Options.WithAllowedOrigins]: entries carrying a wildcard go through
+// [Option_AllowedOrigins]: entries carrying a wildcard go through
 // [normalizeOriginPattern], plain origins through [normalizeOrigin].
 func normalizeAllowedOrigin(raw string) (string, bool) {
 	if strings.Contains(strings.TrimSpace(raw), "*") {
@@ -223,8 +216,7 @@ func matchSubdomain(normalized, entry string) bool {
 		!strings.Contains(sub, "..")
 }
 
-// WithAllowedOrigins sets the origins that may read responses. It returns
-// the same options for chaining.
+// Option_AllowedOrigins sets the origins that may read responses. Pass it to [New].
 //
 // Each entry is trimmed and normalized to its canonical form (lowercase
 // scheme and host, no path, no default port), so origins may be written in
@@ -238,7 +230,7 @@ func matchSubdomain(normalized, entry string) bool {
 // example.com at any depth (https://app.example.com,
 // https://api.v2.example.com) but not the apex https://example.com itself.
 // Wildcards may be combined with other origins, and unlike the all-origins
-// wildcard they may be paired with [Options.WithAllowCredentials], since
+// wildcard they may be paired with [Option_AllowCredentials], since
 // they only ever match your own subdomains.
 //
 // A wildcard is only accepted as a whole first label:
@@ -246,137 +238,139 @@ func matchSubdomain(normalized, entry string) bool {
 // subdomain patterns and are rejected.
 //
 // The wildcard "*" allows every origin, may not be combined with other
-// origins, and cannot be paired with [Options.WithAllowCredentials]: every
+// origins, and cannot be paired with [Option_AllowCredentials]: every
 // site could then make credentialed requests to the server, which is a
 // security risk.
 //
 // It panics on an entry that is not a valid origin or pattern.
 //
 // Default: []string{"*"}
-func (me Options) WithAllowedOrigins(origins []string) Options {
-	for i, o := range origins {
-		o = strings.TrimSpace(o)
-		moon.Assert(!(o == "*" && len(origins) > 1), "wildcard '*' cannot be combined with other origins")
-		if o != "*" {
-			normalized, ok := normalizeAllowedOrigin(o)
-			moon.Assert(ok, fmt.Sprintf("invalid origin %q at index %d", o, i))
-			o = normalized
+func Option_AllowedOrigins(origins []string) Option {
+	return func(o *options) {
+		for i, o := range origins {
+			o = strings.TrimSpace(o)
+			moon.Assert(!(o == "*" && len(origins) > 1), "wildcard '*' cannot be combined with other origins")
+			if o != "*" {
+				normalized, ok := normalizeAllowedOrigin(o)
+				moon.Assert(ok, fmt.Sprintf("invalid origin %q at index %d", o, i))
+				o = normalized
+			}
+			origins[i] = o
 		}
-		origins[i] = o
+		o.allowedOrigins = origins
 	}
-	me.allowedOrogins = origins
-	return me
 }
 
-// WithAllowedOriginsFunc sets a function that decides whether the request
+// Option_AllowedOriginsFunc sets a function that decides whether the request
 // origin is allowed, based on application logic. It receives the raw value
 // of the Origin request header and returns true to allow it, and it is only
 // consulted when the origin does not match the list given to
-// [Options.WithAllowedOrigins]; when it allows the origin, that origin is
-// echoed back in Access-Control-Allow-Origin. It returns the same options
-// for chaining.
+// [Option_AllowedOrigins]; when it allows the origin, that origin is
+// echoed back in Access-Control-Allow-Origin. Pass it to [New].
 //
 // Warning: never let the function return true for every origin. This is
-// particularly crucial when [Options.WithAllowCredentials] is set to true:
+// particularly crucial when [Option_AllowCredentials] is set to true:
 // doing so bypasses the restriction of a wildcard origin with credentials,
 // exposing your application to serious security threats. If you need to
-// allow every origin, use the wildcard "*" in [Options.WithAllowedOrigins]
+// allow every origin, use the wildcard "*" in [Option_AllowedOrigins]
 // instead of a function.
 //
 // Default: nil (only the static list decides)
-func (me Options) WithAllowedOriginsFunc(f func(origin string) bool) Options {
-	me.allowedOriginsFunc = f
-	return me
+func Option_AllowedOriginsFunc(f func(origin string) bool) Option {
+	return func(o *options) {
+		o.allowedOriginsFunc = f
+	}
 }
 
-// WithAllowedMethods sets the methods listed in
+// Option_AllowedMethods sets the methods listed in
 // Access-Control-Allow-Methods on preflight responses. Surrounding
 // whitespace is trimmed and each method is uppercased; it panics on a value
-// that is not a valid HTTP method. It returns the same options for
-// chaining.
+// that is not a valid HTTP method. Pass it to [New].
 //
 // Default: HEAD, GET, POST, PUT, PATCH, DELETE and QUERY
-func (me Options) WithAllowedMethods(methods []string) Options {
-	for i, m := range methods {
-		m = strings.ToUpper(strings.TrimSpace(m))
-		moon.Assert(moon.IsValidHttpMethod(m))
-		methods[i] = m
+func Option_AllowedMethods(methods []string) Option {
+	return func(o *options) {
+		for i, m := range methods {
+			m = strings.ToUpper(strings.TrimSpace(m))
+			moon.Assert(moon.IsValidHttpMethod(m))
+			methods[i] = m
+		}
+		o.allowedMethods = methods
+		o.allowedMethodsString = strings.Join(methods, ", ")
 	}
-	me.allowedMethods = methods
-	me.allowedMethodsString = strings.Join(methods, ", ")
-	return me
 }
 
-// WithAllowedHeaders sets the headers listed in Access-Control-Allow-Headers
+// Option_AllowedHeaders sets the headers listed in Access-Control-Allow-Headers
 // on preflight responses: the browser only sends the listed request headers
 // in the actual request. Surrounding whitespace is trimmed; it panics on an
-// empty value. It returns the same options for chaining.
+// empty value. Pass it to [New].
 //
 // Default: none
-func (me Options) WithAllowedHeaders(headers []string) Options {
-	for i, h := range headers {
-		h = strings.TrimSpace(h)
-		moon.Assert(h != "", fmt.Sprintf("empty header value at index %d", i))
-		headers[i] = h
+func Option_AllowedHeaders(headers []string) Option {
+	return func(o *options) {
+		for i, h := range headers {
+			h = strings.TrimSpace(h)
+			moon.Assert(h != "", fmt.Sprintf("empty header value at index %d", i))
+			headers[i] = h
+		}
+		o.allowedHeaders = headers
+		o.allowedHeadersString = strings.Join(headers, ", ")
 	}
-	me.allowedHeaders = headers
-	me.allowedHeadersString = strings.Join(headers, ", ")
-	return me
 }
 
-// WithExposedHeaders sets the headers listed in
+// Option_ExposedHeaders sets the headers listed in
 // Access-Control-Expose-Headers: by default scripts on another origin may
 // only read a short list of response headers, and this widens it. Surrounding
-// whitespace is trimmed; it panics on an empty value. It returns the same
-// options for chaining.
+// whitespace is trimmed; it panics on an empty value. Pass it to [New].
 //
 // Default: none
-func (me Options) WithExposedHeaders(headers []string) Options {
-	for i, h := range headers {
-		h = strings.TrimSpace(h)
-		moon.Assert(h != "", fmt.Sprintf("empty header value at index %d", i))
-		headers[i] = h
+func Option_ExposedHeaders(headers []string) Option {
+	return func(o *options) {
+		for i, h := range headers {
+			h = strings.TrimSpace(h)
+			moon.Assert(h != "", fmt.Sprintf("empty header value at index %d", i))
+			headers[i] = h
+		}
+		o.exposedHeaders = headers
+		o.exposedHeadersString = strings.Join(headers, ", ")
 	}
-	me.exposedHeaders = headers
-	me.exposedHeadersString = strings.Join(headers, ", ")
-	return me
 }
 
-// WithAllowCredentials switches Access-Control-Allow-Credentials on, letting
+// Option_AllowCredentials switches Access-Control-Allow-Credentials on, letting
 // the browser attach cookies and other credentials to cross-origin requests
-// and read credentialed responses. It returns the same options for
-// chaining.
+// and read credentialed responses. Pass it to [New].
 //
 // It cannot be combined with the wildcard origin "*", which [New] asserts:
 // a wildcard matches every origin, so it would let any site make
 // credentialed requests to the server. Credentials are only safe with
-// origins listed explicitly in [Options.WithAllowedOrigins].
+// origins listed explicitly in [Option_AllowedOrigins].
 //
 // Default: false
-func (me Options) WithAllowCredentials(b bool) Options {
-	me.allowCredentials = b
-	return me
+func Option_AllowCredentials(b bool) Option {
+	return func(o *options) {
+		o.allowCredentials = b
+	}
 }
 
-// WithAllowPrivateNetwork answers preflight requests that ask for private
-// network access with Access-Control-Allow-Private-Network: true. It returns
-// the same options for chaining.
+// Option_AllowPrivateNetwork answers preflight requests that ask for private
+// network access with Access-Control-Allow-Private-Network: true. Pass it to [New].
 //
 // Default: false
-func (me Options) WithAllowPrivateNetwork(b bool) Options {
-	me.allowPrivateNetwork = b
-	return me
+func Option_AllowPrivateNetwork(b bool) Option {
+	return func(o *options) {
+		o.allowPrivateNetwork = b
+	}
 }
 
-// WithMaxAge sets Access-Control-Max-Age on preflight responses, the number
+// Option_MaxAge sets Access-Control-Max-Age on preflight responses, the number
 // of seconds the browser may cache the preflight result. Zero and positive
-// values are written, a negative value omits the header. It returns the
-// same options for chaining.
+// values are written, a negative value omits the header. Pass it to [New].
 //
 // Default: -1 (the header is omitted)
-func (me Options) WithMaxAge(i int) Options {
-	me.maxAge = i
-	return me
+func Option_MaxAge(i int) Option {
+	return func(o *options) {
+		o.maxAge = i
+	}
 }
 
 // normalizeOrigin validates an origin and returns it in canonical form so
@@ -450,7 +444,7 @@ const (
 // Handle sets the CORS response headers, then runs the chain. A preflight
 // request is answered with 204 No Content and the chain is not run; any
 // other request is served by the chain after the headers are set. Requests
-// skipped by [Options.WithSkip] run the chain untouched.
+// skipped by [Option_Skip] run the chain untouched.
 func (me *Handler) Handle(ctx *moon.Context) error {
 	if me.options.skip != nil && me.options.skip(ctx) {
 		return ctx.Next()
@@ -526,7 +520,7 @@ func (me *Handler) setResponseHeadersForGeneralRequest(ctx *moon.Context) {
 		// and a disallowed origin gets no CORS headers at all. Caches must
 		// still key the response on the origin unless every origin is
 		// allowed: https://fetch.spec.whatwg.org/#cors-protocol-and-http-caches
-		if !slices.Contains(me.options.allowedOrogins, "*") {
+		if !slices.Contains(me.options.allowedOrigins, "*") {
 			ctx.SetHeader(headerVary, headerOrigin)
 		}
 		return
@@ -548,21 +542,21 @@ func (me *Handler) setResponseHeadersForGeneralRequest(ctx *moon.Context) {
 // allowed, and "" when the request is outside the scope of CORS or its
 // origin is not allowed, in which case no CORS headers are set.
 //
-// The static list at [Options.WithAllowedOrigins] is consulted first, and
-// [Options.WithAllowedOriginsFunc] only runs when the list does not match.
+// The static list at [Option_AllowedOrigins] is consulted first, and
+// [Option_AllowedOriginsFunc] only runs when the list does not match.
 func (me *Handler) getAllowedOrigin(ctx *moon.Context) string {
 	origin := ctx.GetHeader(headerOrigin)
 	if origin == "" {
 		return ""
 	}
-	if slices.Contains(me.options.allowedOrogins, "*") {
+	if slices.Contains(me.options.allowedOrigins, "*") {
 		return "*"
 	}
 	normalized, ok := normalizeOrigin(origin)
 	if !ok {
 		return ""
 	}
-	if originMatches(normalized, me.options.allowedOrogins) {
+	if originMatches(normalized, me.options.allowedOrigins) {
 		return normalized
 	}
 	if me.options.allowedOriginsFunc != nil && me.options.allowedOriginsFunc(origin) {

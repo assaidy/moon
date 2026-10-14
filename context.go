@@ -299,7 +299,7 @@ func (me *Context) AddHeader(key, value string) {
 // and a large upload spikes memory. Stream such bodies directly from the
 // raw request body instead (see [Context.GetHttpRequest]).
 //
-// Bodies larger than [App.WithReadLimit] fail with [ErrRequestEntityTooLarge].
+// Bodies larger than [AppOption_ReadLimit] fail with [ErrRequestEntityTooLarge].
 // Reads that time out fail with [ErrRequestTimeout].
 //
 // The returned slice aliases a pooled buffer that is recycled after the
@@ -314,7 +314,7 @@ func (me *Context) Read() ([]byte, error) {
 
 // ReadAs reads the body and decodes it into out. It returns the decode
 // error when the body does not match the codec, [ErrRequestEntityTooLarge]
-// when the body exceeds [App.WithReadLimit], or [ErrRequestTimeout] when
+// when the body exceeds [AppOption_ReadLimit], or [ErrRequestTimeout] when
 // the read times out.
 func (me *Context) ReadAs(codec Codec, out any) error {
 	raw, err := me.Read()
@@ -517,7 +517,7 @@ func (me *Context) Value(key any) any {
 }
 
 // SetLocal stores a per-request value. It panics on an empty key or a nil
-// value. When the [App.WithPassLocalsToContext] app option is enabled the value
+// value. When the [AppOption_PassLocalsToContext] app option is enabled the value
 // is also mirrored into the request context readable via [Context.Value].
 func (me *Context) SetLocal(key string, value any) {
 	Assert(key != "", "key cannot be empty")
@@ -542,7 +542,7 @@ func (me *Context) GetLocal[T any](key string) (T, bool) {
 }
 
 // DeleteLocal removes the per-request value for key. Deleting a missing key
-// is a no-op. When the [App.WithPassLocalsToContext] app option is enabled the
+// is a no-op. When the [AppOption_PassLocalsToContext] app option is enabled the
 // key is shadowed with nil in the request context.
 func (me *Context) DeleteLocal(key string) {
 	delete(me.locals, key)
