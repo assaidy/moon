@@ -61,25 +61,25 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name:         "trims generated value",
-			handler:      New(Option_Generator(func() string { return "  xyz  " })),
+			handler:      New(WithGenerator(func() string { return "  xyz  " })),
 			header:       "X-Request-ID",
 			wantResponse: "xyz",
 		},
 		{
 			name:         "custom generator",
-			handler:      New(Option_Generator(func() string { return "fixed-id" })),
+			handler:      New(WithGenerator(func() string { return "fixed-id" })),
 			header:       "X-Request-ID",
 			wantResponse: "fixed-id",
 		},
 		{
 			name:       "falls back after invalid generator",
-			handler:    New(Option_Generator(func() string { return "\x01" })),
+			handler:    New(WithGenerator(func() string { return "\x01" })),
 			header:     "X-Request-ID",
 			wantGenLen: 43,
 		},
 		{
 			name:         "custom header",
-			handler:      New(Option_Header("X-Correlation-ID")),
+			handler:      New(WithHeader("X-Correlation-ID")),
 			incoming:     "corr-1",
 			sendHeader:   true,
 			header:       "X-Correlation-ID",
@@ -87,7 +87,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "skipped request sets nothing",
-			handler: New(Option_Skip(func(ctx *moon.Context) bool {
+			handler: New(WithSkip(func(ctx *moon.Context) bool {
 				return true
 			})),
 			incoming:    "abc-123",
@@ -169,8 +169,8 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 	require.Equal(t, "request_id", entry.Key)
 	require.NotNil(t, entry.Value)
 
-	custom := New(Option_RequestLoggingEntryKey("correlation_id"),
-		Option_RequestLoggingEntryValue(func(ctx *moon.Context, err error) any { return "v" })).
+	custom := New(WithRequestLoggingEntryKey("correlation_id"),
+		WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any { return "v" })).
 		GetRequestLoggingEntry()
 	require.Equal(t, "correlation_id", custom.Key)
 	require.NotNil(t, custom.Value)
@@ -178,7 +178,7 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 
 func TestLogsRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
-	app := moon.New(moon.AppOption_Logger(slog.New(logs)), moon.AppOption_RequestLogging(true))
+	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
 	h := New()
 	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 	app.Use("/*", h.Handle)
@@ -208,10 +208,10 @@ func TestLogsRequestIdEntry(t *testing.T) {
 
 func TestLogsCustomRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
-	app := moon.New(moon.AppOption_Logger(slog.New(logs)), moon.AppOption_RequestLogging(true))
+	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
 	h := New(
-		Option_RequestLoggingEntryKey("correlation_id"),
-		Option_RequestLoggingEntryValue(func(ctx *moon.Context, err error) any {
+		WithRequestLoggingEntryKey("correlation_id"),
+		WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any {
 			return "custom-" + GetFromContext(ctx)
 		}))
 	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())

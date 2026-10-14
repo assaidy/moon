@@ -41,22 +41,22 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "custom values",
-			handler: New(Option_XssProtection("1; mode=block"),
-				Option_ContentTypeNoSniff("nosniff"),
-				Option_XFrameOptions("DENY"),
-				Option_HstsMaxAge(31536000),
-				Option_HstsIncludeSubdomains(true),
-				Option_HstsPreloadEnabled(true),
-				Option_ContentSecurityPolicy("default-src 'self'"),
-				Option_ReferrerPolicy("same-origin"),
-				Option_PermissionPolicy("camera=()"),
-				Option_CrossOriginEmbedderPolicy("credentialless"),
-				Option_CrossOriginOpenerPolicy("same-origin-allow-popups"),
-				Option_CrossOriginResourcePolicy("cross-origin"),
-				Option_OriginAgentCluster("?0"),
-				Option_XDnsPrefetchControl("on"),
-				Option_XDownloadOptions("noopen"),
-				Option_XPermittedCrossDomainPolicies("master-only")),
+			handler: New(WithXssProtection("1; mode=block"),
+				WithContentTypeNoSniff("nosniff"),
+				WithXFrameOptions("DENY"),
+				WithHstsMaxAge(31536000),
+				WithHstsIncludeSubdomains(true),
+				WithHstsPreloadEnabled(true),
+				WithContentSecurityPolicy("default-src 'self'"),
+				WithReferrerPolicy("same-origin"),
+				WithPermissionPolicy("camera=()"),
+				WithCrossOriginEmbedderPolicy("credentialless"),
+				WithCrossOriginOpenerPolicy("same-origin-allow-popups"),
+				WithCrossOriginResourcePolicy("cross-origin"),
+				WithOriginAgentCluster("?0"),
+				WithXDnsPrefetchControl("on"),
+				WithXDownloadOptions("noopen"),
+				WithXPermittedCrossDomainPolicies("master-only")),
 			wantHeader: map[string]string{
 				"X-XSS-Protection":                  "1; mode=block",
 				"X-Content-Type-Options":            "nosniff",
@@ -78,8 +78,8 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "csp report only",
-			handler: New(Option_ContentSecurityPolicy("default-src 'self'"),
-				Option_CspReportOnly(true)),
+			handler: New(WithContentSecurityPolicy("default-src 'self'"),
+				WithCspReportOnly(true)),
 			wantHeader: map[string]string{
 				"Content-Security-Policy-Report-Only": "default-src 'self'",
 			},
@@ -89,9 +89,9 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "disabled headers are omitted",
-			handler: New(Option_XssProtection(""),
-				Option_XFrameOptions(""),
-				Option_ReferrerPolicy("")),
+			handler: New(WithXssProtection(""),
+				WithXFrameOptions(""),
+				WithReferrerPolicy("")),
 			wantHeader: map[string]string{
 				"X-Content-Type-Options": "nosniff",
 			},
@@ -103,7 +103,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "skipped request omits headers",
-			handler: New(Option_Skip(func(ctx *moon.Context) bool {
+			handler: New(WithSkip(func(ctx *moon.Context) bool {
 				return true
 			})),
 			wantHeader: nil,
@@ -150,22 +150,22 @@ func TestHandleHsts(t *testing.T) {
 		},
 		{
 			name:    "max age only",
-			handler: New(Option_HstsMaxAge(31536000), Option_HstsIncludeSubdomains(false)),
+			handler: New(WithHstsMaxAge(31536000), WithHstsIncludeSubdomains(false)),
 			want:    []string{"max-age=31536000"},
 		},
 		{
 			name:    "include subdomains",
-			handler: New(Option_HstsMaxAge(31536000), Option_HstsIncludeSubdomains(true)),
+			handler: New(WithHstsMaxAge(31536000), WithHstsIncludeSubdomains(true)),
 			want:    []string{"max-age=31536000", "includeSubDomains"},
 		},
 		{
 			name:    "include subdomains and preload",
-			handler: New(Option_HstsMaxAge(31536000), Option_HstsIncludeSubdomains(true), Option_HstsPreloadEnabled(true)),
+			handler: New(WithHstsMaxAge(31536000), WithHstsIncludeSubdomains(true), WithHstsPreloadEnabled(true)),
 			want:    []string{"max-age=31536000", "includeSubDomains", "preload"},
 		},
 		{
 			name:    "zero max age omits directives",
-			handler: New(Option_HstsMaxAge(0), Option_HstsIncludeSubdomains(true), Option_HstsPreloadEnabled(true)),
+			handler: New(WithHstsMaxAge(0), WithHstsIncludeSubdomains(true), WithHstsPreloadEnabled(true)),
 			want:    nil,
 		},
 	}

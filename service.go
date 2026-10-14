@@ -80,7 +80,7 @@ func (me *Context) GetService[T Service]() T {
 }
 
 // StartServices starts all registered services according to the configured
-// start timeout ([AppOption_ServiceStartTimeout]) and mode ([AppOption_ParallelServiceStart]).
+// start timeout ([WithServiceStartTimeout]) and mode ([WithParallelServiceStart]).
 // If any service fails to start, already-started services are stopped and
 // discarded; the start error is returned.
 //
@@ -162,7 +162,7 @@ func (me *App) startOneService(service Service) error {
 }
 
 // StopServices stops all started services according to the configured
-// stop timeout ([AppOption_ServiceStopTimeout]) and mode ([AppOption_ParallelServiceStop]).
+// stop timeout ([WithServiceStopTimeout]) and mode ([WithParallelServiceStop]).
 //
 // It is called automatically by [App.Shutdown]. It is exported so tests that
 // started services via [App.StartServices] can stop them without ever

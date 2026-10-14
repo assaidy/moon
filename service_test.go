@@ -165,7 +165,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("parallel happy path", func(t *testing.T) {
-		app := New(AppOption_ParallelServiceStart(true), AppOption_ParallelServiceStop(true))
+		app := New(WithParallelServiceStart(true), WithParallelServiceStop(true))
 		a, b := newStubA(), newStubB()
 		app.AddService(a)
 		app.AddService(b)
@@ -208,7 +208,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("parallel start failure", func(t *testing.T) {
 		startBoom := errors.New("start boom")
-		app := New(AppOption_ParallelServiceStart(true))
+		app := New(WithParallelServiceStart(true))
 		a, b := newStubA(), newStubB()
 		b.startErr = startBoom
 		app.AddService(a)
@@ -220,7 +220,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("start timeout", func(t *testing.T) {
-		app := New(AppOption_ServiceStartTimeout(50 * time.Millisecond))
+		app := New(WithServiceStartTimeout(50 * time.Millisecond))
 		a := newStubA()
 		a.startBlock = time.Second
 		app.AddService(a)
@@ -247,7 +247,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("parallel stop failure swallowed", func(t *testing.T) {
-		app := New(AppOption_ParallelServiceStop(true))
+		app := New(WithParallelServiceStop(true))
 		a, b := newStubA(), newStubB()
 		a.stopErr = errors.New("stop a")
 		b.stopErr = errors.New("stop b")
@@ -261,7 +261,7 @@ func TestService_StartStop(t *testing.T) {
 	})
 
 	t.Run("stop timeout enforced", func(t *testing.T) {
-		app := New(AppOption_ServiceStopTimeout(50 * time.Millisecond))
+		app := New(WithServiceStopTimeout(50 * time.Millisecond))
 		a := newStubA()
 		a.stopBlock = time.Second
 		app.AddService(a)
@@ -285,7 +285,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("prefork parent starts nothing", func(t *testing.T) {
 		t.Setenv(preforkChildEnv, "")
-		app := New(AppOption_Prefork(true))
+		app := New(WithPrefork(true))
 		a := newStubA()
 		app.AddService(a)
 

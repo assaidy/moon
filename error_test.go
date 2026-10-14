@@ -56,7 +56,7 @@ func testErrorHandlerResponse(t *testing.T, handlerErr error) (int, map[string]a
 	t.Helper()
 
 	var logged error
-	app := New(AppOption_ErrorHandler(func(ctx *Context, err error) error {
+	app := New(WithErrorHandler(func(ctx *Context, err error) error {
 		logged = DefaultErrorHandler(ctx, err)
 		return logged
 	}))

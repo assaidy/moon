@@ -6,7 +6,7 @@
 //
 // Customize the header or skip timing for some requests:
 //
-//	app.UseAll(response_time.New(response_time.Option_Header("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")).Handle)
 //
 // As a middleware it runs before the route is resolved, so the timing
 // covers the full chain and the header is set even for unmatched requests
@@ -39,10 +39,10 @@ type options struct {
 // options, then register [Handler.Handle] in the chain:
 //
 //	app.UseAll(response_time.New().Handle)
-//	app.UseAll(response_time.New(response_time.Option_Header("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")).Handle)
 //
-// Default header: "X-Response-Time" (see [Option_Header]).
-// Requests for which the [Option_Skip] predicate returns true run the
+// Default header: "X-Response-Time" (see [WithHeader]).
+// Requests for which the [WithSkip] predicate returns true run the
 // chain without recording anything.
 func New(opts ...Option) *Handler {
 	options := options{header: "X-Response-Time"}
@@ -54,24 +54,24 @@ func New(opts ...Option) *Handler {
 
 // Option configures a [Handler]. Pass them to [New]:
 //
-//	app.UseAll(response_time.New(response_time.Option_Header("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")).Handle)
 type Option func(*options)
 
-// Option_Skip skips timing for requests where f returns true.
+// WithSkip skips timing for requests where f returns true.
 // The chain still runs; only the header is omitted. Pass it to [New].
 //
 // Default: nil (nothing is skipped)
-func Option_Skip(f func(ctx *moon.Context) bool) Option {
+func WithSkip(f func(ctx *moon.Context) bool) Option {
 	return func(o *options) {
 		o.skip = f
 	}
 }
 
-// Option_Header sets the response header carrying the duration.
+// WithHeader sets the response header carrying the duration.
 // Surrounding whitespace is trimmed. It panics on an empty name. Pass it to [New].
 //
 // Default: "X-Response-Time"
-func Option_Header(s string) Option {
+func WithHeader(s string) Option {
 	return func(o *options) {
 		s = strings.TrimSpace(s)
 		moon.Assert(s != "", "header cannot be empty or whitespace")

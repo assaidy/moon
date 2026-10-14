@@ -9,7 +9,7 @@ import (
 )
 
 // RequestLoggingEntry is one key/value pair logged for every handled request
-// when request logging is enabled with [AppOption_RequestLogging].
+// when request logging is enabled with [WithRequestLogging].
 //
 // Key is the attribute name Value is logged under. Value runs once per
 // request after the response was written; keep it cheap and non-blocking.
@@ -17,7 +17,7 @@ import (
 // capture request-scoped state (see [RleDuration]).
 //
 // Every app starts with the default list; replace it with
-// [AppOption_RequestLoggingEntries] and append to it with
+// [WithRequestLoggingEntries] and append to it with
 // [App.AddRequestLoggingEntry].
 type RequestLoggingEntry struct {
 	Before RequestLoggingEntryBefore
@@ -159,7 +159,7 @@ var (
 // this app only, so multiple apps can log differently. The app starts from
 // the defaults, [RleDuration], [RleRemote], [RleMethod], [RlePath],
 // [RleStatus] and [RleError] in that order, or from the list given to
-// [AppOption_RequestLoggingEntries], and logs the new entry after the
+// [WithRequestLoggingEntries], and logs the new entry after the
 // ones already in the list.
 //
 // The key is trimmed. It panics:
