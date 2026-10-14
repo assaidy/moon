@@ -80,39 +80,39 @@ func TestRouter_ParsePattern(t *testing.T) {
 		segs, names, err := ParsePattern(`/v1/some/resource/name\:customVerb`)
 		require.NoError(t, err)
 		require.Len(t, segs, 4)
-		require.Equal(t, segment{
-			{kind: partLiteral, text: "name"},
-			{kind: partLiteral, text: ":"},
-			{kind: partLiteral, text: "customVerb"},
+		require.Equal(t, Segment{
+			{Kind: PartLiteral, Text: "name"},
+			{Kind: PartLiteral, Text: ":"},
+			{Kind: PartLiteral, Text: "customVerb"},
 		}, segs[3])
 
 		segs, _, err = ParsePattern(`/\*`)
 		require.NoError(t, err)
 		require.Len(t, segs, 1)
-		require.Equal(t, segment{{kind: partLiteral, text: "*"}}, segs[0])
+		require.Equal(t, Segment{{Kind: PartLiteral, Text: "*"}}, segs[0])
 
 		segs, _, err = ParsePattern("/*v1*/proxy")
 		require.NoError(t, err)
 		require.Len(t, segs, 2)
-		require.Equal(t, segment{
-			{kind: partWildcard, text: "*"},
-			{kind: partLiteral, text: "v1"},
-			{kind: partWildcard, text: "*"},
+		require.Equal(t, Segment{
+			{Kind: PartWildcard, Text: "*"},
+			{Kind: PartLiteral, Text: "v1"},
+			{Kind: PartWildcard, Text: "*"},
 		}, segs[0])
 
 		segs, names, err = ParsePattern("/:version-id")
 		require.NoError(t, err)
 		require.Equal(t, []string{"version-id"}, names)
-		require.Equal(t, segment{
-			{kind: partParam, text: "version-id"},
+		require.Equal(t, Segment{
+			{Kind: PartParam, Text: "version-id"},
 		}, segs[0])
 
 		segs, _, err = ParsePattern("/files/*.json")
 		require.NoError(t, err)
 		require.Len(t, segs, 2)
-		require.Equal(t, segment{
-			{kind: partWildcard, text: "*"},
-			{kind: partLiteral, text: ".json"},
+		require.Equal(t, Segment{
+			{Kind: PartWildcard, Text: "*"},
+			{Kind: PartLiteral, Text: ".json"},
 		}, segs[1])
 	})
 
