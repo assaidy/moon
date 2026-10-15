@@ -8,7 +8,7 @@
 //	app.UseAll(helmet.New(helmet.WithXFrameOptions("DENY"), helmet.WithHstsMaxAge(31536000)).Handle)
 //
 // As a middleware it runs before the route is resolved, so the headers are
-// set even for unmatched requests ([moon.ErrInvalidEndpoint],
+// set even for unmatched requests ([moon.ErrNotFound],
 // [moon.ErrMethodNotAllowed]).
 package helmet
 

@@ -18,8 +18,8 @@ func TestError_Error(t *testing.T) {
 	})
 
 	t.Run("with details includes details", func(t *testing.T) {
-		err := ErrValidationFailed.WithDetails("field X")
-		require.Equal(t, "validation_failed(field X)", err.Error())
+		err := ErrUnprocessableEntity.WithDetails("field X")
+		require.Equal(t, "unprocessable_entity(field X)", err.Error())
 	})
 }
 

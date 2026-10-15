@@ -105,7 +105,7 @@ func (me *App) dispatch(ctx *Context) {
 		}
 	}
 
-	ctx.handlers = append(ctx.handlers, func(ctx *Context) error { return ErrInvalidEndpoint })
+	ctx.handlers = append(ctx.handlers, func(ctx *Context) error { return ErrNotFound })
 }
 
 // Common HTTP methods.
@@ -167,7 +167,7 @@ func IsValidHttpMethod(method string) bool {
 // then these handlers. When the path matches but the method is unregistered,
 // the app's [ErrorHandler] is invoked with [ErrMethodNotAllowed] after any
 // matching middlewares; when nothing matches it is invoked with
-// [ErrInvalidEndpoint] after any matching middlewares, so a custom handler
+// [ErrNotFound] after any matching middlewares, so a custom handler
 // can inspect or override them.
 func (me *App) Map(method string, pattern string, handlers ...Handler) {
 	method = strings.ToUpper(strings.TrimSpace(method))
@@ -289,7 +289,7 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 // Middlewares run first when their prefix matches the request path, even
 // when no route matches: the chain is middlewares, then the matched route
 // if any, otherwise [ErrMethodNotAllowed] when another method matches the
-// path, otherwise [ErrInvalidEndpoint].
+// path, otherwise [ErrNotFound].
 //
 // Each middleware must call [Context.Next] to continue the chain; a
 // returned error from the chain is passed to the app's [ErrorHandler].
@@ -322,7 +322,8 @@ func (me *App) UseAll(handlers ...Handler) {
 // Handler is a middleware or route handler.
 //
 // Call [Context.Next] to invoke the next handler in the chain and return
-// its error (typically `return ctx.Next()`). Return nil to end the chain
+// its error (typically `return ctx.Next()`). A call with no handlers left
+// returns [ErrNotFound]. Return nil to end the chain
 // successfully, or a non-nil error to abort and invoke the app
 // [ErrorHandler]. Use the [Context] Write methods to buffer a response.
 //

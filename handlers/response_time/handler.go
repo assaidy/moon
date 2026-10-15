@@ -10,7 +10,7 @@
 //
 // As a middleware it runs before the route is resolved, so the timing
 // covers the full chain and the header is set even for unmatched requests
-// ([moon.ErrInvalidEndpoint], [moon.ErrMethodNotAllowed]).
+// ([moon.ErrNotFound], [moon.ErrMethodNotAllowed]).
 package response_time
 
 import (

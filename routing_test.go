@@ -531,7 +531,10 @@ func TestRouter_Dispatch(t *testing.T) {
 	var newHandler = func(name string, called *[]string) Handler {
 		return func(ctx *Context) error {
 			*called = append(*called, name)
-			return ctx.Next()
+			if ctx.IsMiddleware() {
+				return ctx.Next()
+			}
+			return nil
 		}
 	}
 
@@ -773,13 +776,13 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, []string{"middleware", "handler"}, called)
 	})
 
-	t.Run("unknown path returns 404 invalid_endpoint", func(t *testing.T) {
+	t.Run("unknown path returns 404 not_found", func(t *testing.T) {
 		app := New()
 		var called []string
 		app.Map(http.MethodGet, "/users", newHandler("handler", &called))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
-		require.Equal(t, ErrInvalidEndpoint.StatusCode, resp.StatusCode)
+		require.Equal(t, ErrNotFound.StatusCode, resp.StatusCode)
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 
 		var body struct {
@@ -788,7 +791,7 @@ func TestRouter_Dispatch(t *testing.T) {
 		raw, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
 		require.NoError(t, json.Unmarshal(raw, &body))
-		require.Equal(t, ErrInvalidEndpoint.Kind, body.Kind)
+		require.Equal(t, ErrNotFound.Kind, body.Kind)
 	})
 
 	t.Run("wrong method returns 405 method_not_allowed", func(t *testing.T) {
@@ -809,19 +812,19 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, ErrMethodNotAllowed.Kind, body.Kind)
 	})
 
-	t.Run("unknown path reaches custom error handler as invalid_endpoint", func(t *testing.T) {
+	t.Run("unknown path reaches custom error handler as not_found", func(t *testing.T) {
 		var captured error
 
 		app := New(WithErrorHandler(func(ctx *Context, err error) error {
 			captured = err
-			ctx.WriteAs(http.StatusNotFound, CodecJson, ErrInvalidEndpoint)
+			ctx.WriteAs(http.StatusNotFound, CodecJson, ErrNotFound)
 			return err
 		}))
 		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/nope", nil))
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
-		require.ErrorIs(t, captured, ErrInvalidEndpoint)
+		require.ErrorIs(t, captured, ErrNotFound)
 	})
 
 	t.Run("wrong method reaches custom error handler as method_not_allowed", func(t *testing.T) {

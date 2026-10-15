@@ -1284,6 +1284,18 @@ func TestContext_IsMiddleware(t *testing.T) {
 	})
 }
 
+func TestContext_NextExhausted(t *testing.T) {
+	app := New()
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+		err := ctx.Next()
+		require.ErrorIs(t, err, ErrNotFound)
+		return err
+	})
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
 func TestContext_Redirect(t *testing.T) {
 	t.Run("absolute path", func(t *testing.T) {
 		app := New()

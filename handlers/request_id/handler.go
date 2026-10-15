@@ -11,7 +11,7 @@
 //
 // As a middleware it runs before the route is resolved, so every matching
 // request gets an ID — including requests with no route
-// ([moon.ErrInvalidEndpoint], [moon.ErrMethodNotAllowed]), which still
+// ([moon.ErrNotFound], [moon.ErrMethodNotAllowed]), which still
 // carry the echoed header.
 package request_id
 

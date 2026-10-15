@@ -157,7 +157,7 @@ func WithLogger(l *slog.Logger) AppOption {
 }
 
 // WithErrorHandler sets the handler used to handle errors returned by the
-// handler chain, including [ErrInvalidEndpoint] for unknown paths and
+// handler chain, including [ErrNotFound] for unknown paths and
 // [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
 // inspect or override them. It panics on a nil handler. Pass it to [New].
 //
@@ -173,7 +173,7 @@ func WithErrorHandler(eh ErrorHandler) AppOption {
 // app is logged as a "request handled" record on the logger, with one
 // attribute per entry of the request logging list (see
 // [WithRequestLoggingEntries] and [App.AddRequestLoggingEntry]).
-// Unmatched paths and methods handled as [ErrInvalidEndpoint] or
+// Unmatched paths and methods handled as [ErrNotFound] or
 // [ErrMethodNotAllowed] are logged too.
 // The logged status defaults to 200 when no response was written.
 // Pass it to [New].

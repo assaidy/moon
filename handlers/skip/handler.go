@@ -6,7 +6,7 @@
 //
 // As a middleware it runs before the route is resolved, so the predicate
 // runs even for requests with no route: a bypassed request simply continues
-// to the route, [moon.ErrMethodNotAllowed] or [moon.ErrInvalidEndpoint].
+// to the route, [moon.ErrMethodNotAllowed] or [moon.ErrNotFound].
 package skip
 
 import "github.com/assaidy/moon"

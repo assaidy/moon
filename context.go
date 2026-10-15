@@ -477,10 +477,10 @@ func (me *Context) WriteMessagePack(statusCode int, value any) error {
 }
 
 // Next invokes the next handler in the chain and returns its error.
-// It returns nil when the chain is exhausted.
+// It returns [ErrNotFound] when the chain is exhausted.
 func (me *Context) Next() error {
 	if me.nextHandlerIndex >= len(me.handlers) {
-		return nil
+		return ErrNotFound
 	}
 
 	index := me.nextHandlerIndex

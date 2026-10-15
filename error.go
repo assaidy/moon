@@ -49,9 +49,6 @@ func (me Error) WithDetails(d any) Error {
 }
 
 var (
-	ErrInvalidEndpoint  = NewError(http.StatusNotFound, "invalid_endpoint", "The requested resource or endpoint could not be found.")
-	ErrValidationFailed = NewError(http.StatusUnprocessableEntity, "validation_failed", "The provided data failed validation rules.")
-
 	ErrBadRequest                   = NewError(http.StatusBadRequest, "bad_request", "The server could not process the request due to a client error.")
 	ErrUnauthorized                 = NewError(http.StatusUnauthorized, "unauthorized", "The request lacks valid authentication credentials.")
 	ErrPaymentRequired              = NewError(http.StatusPaymentRequired, "payment_required", "Payment is required to access the requested resource.")
@@ -96,7 +93,7 @@ var (
 )
 
 // ErrorHandler handles an error returned by the handler chain.
-// This includes [ErrInvalidEndpoint] for unknown paths and
+// This includes [ErrNotFound] for unknown paths and
 // [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
 // inspect or override them.
 // Use the [Context] Write methods to send the response, then return the
