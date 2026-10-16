@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// TODO: add static files support (maybe as a middleware)
-
 func (me *App) registerRootHandler() {
 	mux := http.NewServeMux()
 
