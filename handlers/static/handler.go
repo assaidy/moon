@@ -102,6 +102,7 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 	if err != nil {
 		return ctx.Next()
 	}
+	defer file.Close()
 
 	// Check index files if a directory.
 	if stat, err := file.Stat(); err != nil {
@@ -113,6 +114,7 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 			if err != nil {
 				continue
 			}
+			defer indexFile.Close()
 			me.handleDownload(ctx, indexPath)
 			_, err = io.Copy(ctx.GetHttpResponseWriter(), indexFile)
 			return err
