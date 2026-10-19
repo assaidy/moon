@@ -118,8 +118,6 @@ type appOptions struct {
 	http2Config                 *http.HTTP2Config
 	protocols                   *http.Protocols
 	clientPriority              bool
-	serviceStartTimeout         time.Duration
-	serviceStopTimeout          time.Duration
 	serviceStartParallel        bool
 	serviceStopParallel         bool
 	shutdownTimeout             time.Duration
@@ -423,32 +421,6 @@ func WithProtocols(p *http.Protocols) AppOption {
 func WithClientPriority(b bool) AppOption {
 	return func(o *appOptions) {
 		o.clientPriority = b
-	}
-}
-
-// WithServiceStartTimeout sets the maximum duration for starting each service.
-// The timeout is enforced per service through the context passed to [Service.Start].
-// A service that does not finish in time fails with a context error and is skipped.
-// Pass it to [New].
-//
-// Default: no timeout
-func WithServiceStartTimeout(d time.Duration) AppOption {
-	return func(o *appOptions) {
-		Assert(d > 0)
-		o.serviceStartTimeout = d
-	}
-}
-
-// WithServiceStopTimeout sets the maximum duration for stopping each service.
-// The timeout is enforced per service through the context passed to [Service.Stop].
-// A service that does not finish in time fails with a context error, which is logged.
-// Pass it to [New].
-//
-// Default: no timeout
-func WithServiceStopTimeout(d time.Duration) AppOption {
-	return func(o *appOptions) {
-		Assert(d > 0)
-		o.serviceStopTimeout = d
 	}
 }
 

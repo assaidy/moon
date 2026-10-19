@@ -1,7 +1,6 @@
 package moon
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -15,16 +14,15 @@ import (
 // Service is a managed background resource owned by the [App].
 // Services are started automatically by [App.Start] (see [App.StartServices])
 // and stopped automatically by [App.Shutdown] (see [App.StopServices]).
-// Start and Stop must respect context cancellation and timeouts.
 type Service interface {
 	// Name returns a human-readable service name used in logs.
 	Name() string
 
 	// Start initializes the service.
-	Start(context.Context) error
+	Start() error
 
 	// Stop shuts the service down.
-	Stop(context.Context) error
+	Stop() error
 
 	// IsAvailable reports whether the service is currently available for use.
 	IsAvailable() bool
@@ -80,7 +78,7 @@ func (me *Context) GetService[T Service]() T {
 }
 
 // StartServices starts all registered services according to the configured
-// start timeout ([WithServiceStartTimeout]) and mode ([WithParallelServiceStart]).
+// mode ([WithParallelServiceStart]).
 // If any service fails to start, already-started services are stopped and
 // discarded; the start error is returned.
 //
@@ -145,14 +143,7 @@ func (me *App) startServicesParallel() error {
 }
 
 func (me *App) startOneService(service Service) error {
-	ctx := context.Background()
-	if me.options.serviceStartTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, me.options.serviceStartTimeout)
-		defer cancel()
-	}
-
-	if err := service.Start(ctx); err != nil {
+	if err := service.Start(); err != nil {
 		me.options.logger.Error("failed to start service", "name", service.Name(), "error", err, "pid", os.Getpid())
 		return err
 	}
@@ -162,7 +153,7 @@ func (me *App) startOneService(service Service) error {
 }
 
 // StopServices stops all started services according to the configured
-// stop timeout ([WithServiceStopTimeout]) and mode ([WithParallelServiceStop]).
+// mode ([WithParallelServiceStop]).
 //
 // It is called automatically by [App.Shutdown]. It is exported so tests that
 // started services via [App.StartServices] can stop them without ever
@@ -212,14 +203,7 @@ func (me *App) stopServicesParallel() {
 }
 
 func (me *App) stopOneService(service Service) {
-	ctx := context.Background()
-	if me.options.serviceStopTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, me.options.serviceStopTimeout)
-		defer cancel()
-	}
-
-	if err := service.Stop(ctx); err != nil {
+	if err := service.Stop(); err != nil {
 		me.options.logger.Error("failed to stop service", "name", service.Name(), "error", err, "pid", os.Getpid())
 		return
 	}

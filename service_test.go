@@ -1,13 +1,11 @@
 package moon
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -16,41 +14,21 @@ type stubBase struct {
 	name       string
 	startErr   error
 	stopErr    error
-	startBlock time.Duration
-	stopBlock  time.Duration
 	startCalls atomic.Int32
 	stopCalls  atomic.Int32
-	startCtx   context.Context
-	stopCtx    context.Context
 }
 
 func (s *stubBase) Name() string { return s.name }
 
 func (s *stubBase) IsAvailable() bool { return true }
 
-func (s *stubBase) Start(ctx context.Context) error {
+func (s *stubBase) Start() error {
 	s.startCalls.Add(1)
-	s.startCtx = ctx
-	if s.startBlock > 0 {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(s.startBlock):
-		}
-	}
 	return s.startErr
 }
 
-func (s *stubBase) Stop(ctx context.Context) error {
+func (s *stubBase) Stop() error {
 	s.stopCalls.Add(1)
-	s.stopCtx = ctx
-	if s.stopBlock > 0 {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(s.stopBlock):
-		}
-	}
 	return s.stopErr
 }
 
@@ -116,10 +94,12 @@ type stubAvailability struct {
 	available bool
 }
 
-func (s stubAvailability) Name() string                { return s.name }
-func (s stubAvailability) Start(context.Context) error { return nil }
-func (s stubAvailability) Stop(context.Context) error  { return nil }
-func (s stubAvailability) IsAvailable() bool           { return s.available }
+func (s stubAvailability) Name() string { return s.name }
+func (s stubAvailability) Start() error { return nil }
+func (s stubAvailability) Stop() error  { return nil }
+func (s stubAvailability) IsAvailable() bool {
+	return s.available
+}
 
 func TestAreAllServicesAvailable(t *testing.T) {
 	newAvail := func(available bool) stubAvailability {
@@ -219,22 +199,6 @@ func TestService_StartStop(t *testing.T) {
 		require.Equal(t, a.startCalls.Load(), a.stopCalls.Load())
 	})
 
-	t.Run("start timeout", func(t *testing.T) {
-		app := New(WithServiceStartTimeout(50 * time.Millisecond))
-		a := newStubA()
-		a.startBlock = time.Second
-		app.AddService(a)
-
-		err := app.StartServices()
-		require.ErrorIs(t, err, context.DeadlineExceeded)
-		require.NotNil(t, a.startCtx)
-		if deadline, ok := a.startCtx.Deadline(); ok {
-			require.WithinDuration(t, time.Now(), deadline, time.Second)
-		} else {
-			t.Fatal("expected start context with deadline")
-		}
-	})
-
 	t.Run("stop failure swallowed", func(t *testing.T) {
 		app := New()
 		a := newStubA()
@@ -258,20 +222,6 @@ func TestService_StartStop(t *testing.T) {
 		app.StopServices()
 		require.Equal(t, int32(1), a.stopCalls.Load())
 		require.Equal(t, int32(1), b.stopCalls.Load())
-	})
-
-	t.Run("stop timeout enforced", func(t *testing.T) {
-		app := New(WithServiceStopTimeout(50 * time.Millisecond))
-		a := newStubA()
-		a.stopBlock = time.Second
-		app.AddService(a)
-		require.NoError(t, app.StartServices())
-
-		app.StopServices()
-		require.Equal(t, int32(1), a.stopCalls.Load())
-		require.NotNil(t, a.stopCtx)
-		_, ok := a.stopCtx.Deadline()
-		require.True(t, ok, "expected stop context with deadline")
 	})
 
 	t.Run("stop without start is clean", func(t *testing.T) {
