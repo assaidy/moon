@@ -64,13 +64,14 @@ func (me *App) dispatch(ctx *Context) {
 		return ctx.Next()
 	}}
 
-	var targetRoute *RouteEntry
+	var targetRoute *routeEntry
 
 	routes := me.routesPerMethod[ctx.GetMethod()]
 	for i := range routes {
 		if params, ok := routes[i].matchPath(ctx.GetPath()); ok {
 			ctx.params = params
-			targetRoute = &routes[i]
+			ctx.routeId = routes[i].id
+			targetRoute = routes[i]
 			break
 		}
 	}
@@ -144,7 +145,7 @@ func IsValidHttpMethod(method string) bool {
 	return false
 }
 
-// Map registers one or more handlers for method + pattern.
+// Map registers a handler for method + pattern, configured by options.
 //
 // method is trimmed and uppercased before validation, so "get", "GET" and
 // " GET " are equivalent. Prefer the [MethodGet], [MethodPost], ...
@@ -155,90 +156,98 @@ func IsValidHttpMethod(method string) bool {
 //
 // See [ParsePattern] for the pattern grammar.
 //
-// Panics on invalid method/pattern or duplicate param names. Registering
-// the same method and pattern twice is allowed; the first registration
-// wins and later ones never match. Does nothing if no handlers are given.
-// Handlers passed in one call run in order via [Context.Next].
+// Panics on invalid method/pattern, duplicate param names or a nil handler.
+// Registering the same method and pattern twice is allowed; the first
+// registration wins and later ones never match.
+//
+// options configure the route:
+//
+//   - [WithMiddlewares] inserts middlewares that run before handler, after
+//     every matching middleware registered with [App.Use].
+//   - [WithId] sets the id returned by [Context.GetRouteId].
 //
 // Request flow: middlewares registered with [App.Use] before this call
 // whose prefix matches the request path run first, in registration order,
-// then these handlers. When the path matches but the method is unregistered,
-// the app's [ErrorHandler] is invoked with [ErrMethodNotAllowed] after any
-// matching middlewares; when nothing matches it is invoked with
-// [ErrNotFound] after any matching middlewares, so a custom handler
-// can inspect or override them.
-func (me *App) Map(method string, pattern string, handlers ...Handler) {
+// then the route middlewares from [WithMiddlewares], then handler. When the
+// path matches but the method is unregistered, the app's [ErrorHandler] is
+// invoked with [ErrMethodNotAllowed] after any matching middlewares; when
+// nothing matches it is invoked with [ErrNotFound] after any matching
+// middlewares, so a custom handler can inspect or override them.
+func (me *App) Map(method string, pattern string, handler Handler, options ...RouteOption) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
 	Assert(IsValidHttpMethod(method), "invalid http method")
 	segments, names, err := ParsePattern(pattern)
 	Assert(err == nil, fmt.Sprintf("invalid pattern: %s", err))
 	Assert(areNamesUnique(names), "duplicate param names are not allowed")
+	Assert(handler != nil, "handler cannot be nil")
 
-	if len(handlers) == 0 {
-		return
-	}
-
-	me.routesPerMethod[method] = append(me.routesPerMethod[method], RouteEntry{
+	entry := &routeEntry{
 		method:   method,
 		pattern:  pattern,
 		segments: segments,
 		names:    names,
-		handlers: handlers,
 		order:    int(me.nextRoutingOrder.Add(1)),
-	})
+	}
+	for _, opt := range options {
+		// apply options first to insert middlewares before handler.
+		opt(entry)
+	}
+	entry.handlers = append(entry.handlers, handler)
+
+	me.routesPerMethod[method] = append(me.routesPerMethod[method], entry)
 }
 
-// MapGet registers handlers for the GET method. See [App.Map].
-func (me *App) MapGet(pattern string, handlers ...Handler) {
-	me.Map(MethodGet, pattern, handlers...)
+// MapGet registers a handler for the GET method. See [App.Map].
+func (me *App) MapGet(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodGet, pattern, handler, options...)
 }
 
-// MapHead registers handlers for the HEAD method. See [App.Map].
+// MapHead registers a handler for the HEAD method. See [App.Map].
 //
 // Handlers must not write bytes to the body of a HEAD response.
-func (me *App) MapHead(pattern string, handlers ...Handler) {
-	me.Map(MethodHead, pattern, handlers...)
+func (me *App) MapHead(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodHead, pattern, handler, options...)
 }
 
-// MapPost registers handlers for the POST method. See [App.Map].
-func (me *App) MapPost(pattern string, handlers ...Handler) {
-	me.Map(MethodPost, pattern, handlers...)
+// MapPost registers a handler for the POST method. See [App.Map].
+func (me *App) MapPost(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodPost, pattern, handler, options...)
 }
 
-// MapPut registers handlers for the PUT method. See [App.Map].
-func (me *App) MapPut(pattern string, handlers ...Handler) {
-	me.Map(MethodPut, pattern, handlers...)
+// MapPut registers a handler for the PUT method. See [App.Map].
+func (me *App) MapPut(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodPut, pattern, handler, options...)
 }
 
-// MapPatch registers handlers for the PATCH method. See [App.Map].
-func (me *App) MapPatch(pattern string, handlers ...Handler) {
-	me.Map(MethodPatch, pattern, handlers...)
+// MapPatch registers a handler for the PATCH method. See [App.Map].
+func (me *App) MapPatch(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodPatch, pattern, handler, options...)
 }
 
-// MapDelete registers handlers for the DELETE method. See [App.Map].
-func (me *App) MapDelete(pattern string, handlers ...Handler) {
-	me.Map(MethodDelete, pattern, handlers...)
+// MapDelete registers a handler for the DELETE method. See [App.Map].
+func (me *App) MapDelete(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodDelete, pattern, handler, options...)
 }
 
-// MapConnect registers handlers for the CONNECT method. See [App.Map].
-func (me *App) MapConnect(pattern string, handlers ...Handler) {
-	me.Map(MethodConnect, pattern, handlers...)
+// MapConnect registers a handler for the CONNECT method. See [App.Map].
+func (me *App) MapConnect(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodConnect, pattern, handler, options...)
 }
 
-// MapOptions registers handlers for the OPTIONS method. See [App.Map].
-func (me *App) MapOptions(pattern string, handlers ...Handler) {
-	me.Map(MethodOptions, pattern, handlers...)
+// MapOptions registers a handler for the OPTIONS method. See [App.Map].
+func (me *App) MapOptions(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodOptions, pattern, handler, options...)
 }
 
-// MapTrace registers handlers for the TRACE method. See [App.Map].
-func (me *App) MapTrace(pattern string, handlers ...Handler) {
-	me.Map(MethodTrace, pattern, handlers...)
+// MapTrace registers a handler for the TRACE method. See [App.Map].
+func (me *App) MapTrace(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodTrace, pattern, handler, options...)
 }
 
-// MapQuery registers handlers for the QUERY method. See [App.Map].
-func (me *App) MapQuery(pattern string, handlers ...Handler) {
-	me.Map(MethodQuery, pattern, handlers...)
+// MapQuery registers a handler for the QUERY method. See [App.Map].
+func (me *App) MapQuery(pattern string, handler Handler, options ...RouteOption) {
+	me.Map(MethodQuery, pattern, handler, options...)
 }
 
 // allMethods is every HTTP method registered by [App.MapAll].
@@ -255,17 +264,14 @@ var allMethods = []string{
 	MethodQuery,
 }
 
-// MapAll registers handlers for every HTTP method on pattern, calling
-// [App.Map] once per method. A request whose method has no dedicated
-// registration still reaches these handlers.
+// MapAll registers a handler for every HTTP method on pattern, calling
+// [App.Map] once per method with the same options. A request whose method
+// has no dedicated registration still reaches this handler.
 //
-// Does nothing if no handlers are given. See [App.Map] for the pattern grammar.
-func (me *App) MapAll(pattern string, handlers ...Handler) {
-	if len(handlers) == 0 {
-		return
-	}
+// See [App.Map] for the pattern grammar and the available options.
+func (me *App) MapAll(pattern string, handler Handler, options ...RouteOption) {
 	for _, method := range allMethods {
-		me.Map(method, pattern, handlers...)
+		me.Map(method, pattern, handler, options...)
 	}
 }
 
@@ -285,9 +291,10 @@ func (me *App) MapAll(pattern string, handlers ...Handler) {
 // this call observe it, in registration order.
 //
 // Middlewares run first when their prefix matches the request path, even
-// when no route matches: the chain is middlewares, then the matched route
-// if any, otherwise [ErrMethodNotAllowed] when another method matches the
-// path, otherwise [ErrNotFound].
+// when no route matches: the chain is middlewares, then any route
+// middlewares from [WithMiddlewares], then the matched route handler if any,
+// otherwise [ErrMethodNotAllowed] when another method matches the path,
+// otherwise [ErrNotFound].
 //
 // Each middleware must call [Context.Next] to continue the chain; a
 // returned error from the chain is passed to the app's [ErrorHandler].
@@ -302,7 +309,7 @@ func (me *App) Use(prefix string, handlers ...Handler) {
 		return
 	}
 
-	me.middlewares = append(me.middlewares, MiddlewareEntry{
+	me.middlewares = append(me.middlewares, &middlewareEntry{
 		prefix:   prefix,
 		segments: segments,
 		handlers: handlers,
@@ -513,23 +520,49 @@ func areNamesUnique(names []string) bool {
 	return true
 }
 
-// RouteEntry is a handler route (pattern + per-method handlers). See
-// [App.Map]. Middleware patterns live in [MiddlewareEntry]; see [App.Use].
-type RouteEntry struct {
-	// TODO: add route metadata to generate an OpenAPI spec from the
-	// registered routes: an id plus documentation fields (summary, tags, ...).
-	// The id defaults to empty and identifies the matched route.
+// routeEntry is a handler route (pattern + per-method handlers). See
+// [App.Map]. Middleware patterns live in [middlewareEntry]; see [App.Use].
+type routeEntry struct {
+	// TODO: add route metadata to generate an OpenAPI spec.
 	method   string
 	pattern  string
 	segments []Segment
 	names    []string
 	handlers []Handler
 	order    int
+	id       string // multiple routes can have the same id.
+}
+
+// RouteOption configures a route at registration time. Pass options to
+// [App.Map], [App.MapAll] or any of the [App.MapGet], [App.MapPost], ...
+// shortcuts.
+type RouteOption func(*routeEntry)
+
+// WithMiddlewares adds middlewares that run for this route only. They run
+// in the given order, after the middlewares registered with [App.Use] and
+// before the route handler.
+//
+// Each middleware must call [Context.Next] to reach the handler.
+func WithMiddlewares(handlers ...Handler) RouteOption {
+	return func(re *routeEntry) {
+		re.handlers = append(re.handlers, handlers...)
+	}
+}
+
+// WithId sets the route id returned by [Context.GetRouteId]. The id is
+// stored exactly as given: it may be empty, hold surrounding white space, or
+// repeat across routes, including the routes registered by [App.MapAll] for
+// each method. Callers that need a unique key combine it with
+// [Context.GetMethod].
+func WithId(id string) RouteOption {
+	return func(re *routeEntry) {
+		re.id = id
+	}
 }
 
 // matchPath returns the captured parameters and true on an exact match,
 // nil and false otherwise. The params map is built only on success.
-func (me RouteEntry) matchPath(path string) (map[string]string, bool) {
+func (me routeEntry) matchPath(path string) (map[string]string, bool) {
 	// The path must already be normalized (lowercase, no trailing
 	// slash, leading '/'); see [App.registerRootHandler].
 	if len(path) == 0 || path[0] != '/' {
@@ -685,7 +718,7 @@ func (me RouteEntry) matchPath(path string) (map[string]string, bool) {
 	return params, true
 }
 
-type MiddlewareEntry struct {
+type middlewareEntry struct {
 	prefix   string
 	segments []Segment
 	handlers []Handler
@@ -695,7 +728,7 @@ type MiddlewareEntry struct {
 // matchPath reports whether the entry's prefix covers path: every prefix
 // part must match, leftover path is ignored, so "/api"
 // covers "/api/users" but not "/apiv2". Values are not captured.
-func (me MiddlewareEntry) matchPath(path string) bool {
+func (me middlewareEntry) matchPath(path string) bool {
 	// The path must already be normalized (lowercase, no trailing
 	// slash, leading '/'); see [App.registerRootHandler].
 	if len(path) == 0 || path[0] != '/' {

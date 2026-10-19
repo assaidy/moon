@@ -601,14 +601,14 @@ func TestContext_StatusCode(t *testing.T) {
 		app := New()
 		app.Map(http.MethodGet, "/code",
 			func(ctx *Context) error {
+				return ctx.Write(http.StatusCreated, "hello")
+			},
+			WithMiddlewares(func(ctx *Context) error {
 				require.Equal(t, 0, ctx.GetStatusCode())
 				require.NoError(t, ctx.Next())
 				require.Equal(t, http.StatusCreated, ctx.GetStatusCode())
 				return nil
-			},
-			func(ctx *Context) error {
-				return ctx.Write(http.StatusCreated, "hello")
-			},
+			}),
 		)
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/code", nil))
@@ -619,13 +619,13 @@ func TestContext_StatusCode(t *testing.T) {
 		app := New()
 		var before, after int
 		app.Map(http.MethodGet, "/writable",
-			func(ctx *Context) error {
+			func(ctx *Context) error { return nil },
+			WithMiddlewares(func(ctx *Context) error {
 				before = ctx.GetStatusCode()
 				require.NoError(t, ctx.Next())
 				after = ctx.GetStatusCode()
 				return nil
-			},
-			func(ctx *Context) error { return nil },
+			}),
 		)
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/writable", nil))
@@ -668,13 +668,13 @@ func TestContext_StatusCode(t *testing.T) {
 		app := New()
 		app.Map(http.MethodGet, "/timed",
 			func(ctx *Context) error {
+				return ctx.Write(http.StatusOK, "hello")
+			},
+			WithMiddlewares(func(ctx *Context) error {
 				require.NoError(t, ctx.Next())
 				ctx.SetHeader("X-Response-Time", "1ms")
 				return nil
-			},
-			func(ctx *Context) error {
-				return ctx.Write(http.StatusOK, "hello")
-			},
+			}),
 		)
 
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/timed", nil))
@@ -1240,7 +1240,7 @@ func TestContext_State(t *testing.T) {
 }
 
 func TestContext_IsMiddleware(t *testing.T) {
-	t.Run("middleware true route false", func(t *testing.T) {
+	t.Run("app middleware true, route middleware and handler false", func(t *testing.T) {
 		var mids []bool
 
 		app := New()
@@ -1253,12 +1253,12 @@ func TestContext_IsMiddleware(t *testing.T) {
 		app.Map(http.MethodGet, "/x",
 			func(ctx *Context) error {
 				mids = append(mids, ctx.IsMiddleware())
-				return ctx.Next()
-			},
-			func(ctx *Context) error {
-				mids = append(mids, ctx.IsMiddleware())
 				return nil
 			},
+			WithMiddlewares(func(ctx *Context) error {
+				mids = append(mids, ctx.IsMiddleware())
+				return ctx.Next()
+			}),
 		)
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))

@@ -23,8 +23,8 @@ import (
 // listening.
 type App struct {
 	httpServer       *http.Server
-	routesPerMethod  map[string][]RouteEntry // method -> routes
-	middlewares      []MiddlewareEntry
+	routesPerMethod  map[string][]*routeEntry // method -> routes
+	middlewares      []*middlewareEntry
 	nextRoutingOrder atomic.Int64
 
 	state        sync.Map
@@ -69,7 +69,7 @@ func New(opts ...AppOption) *App {
 	options.rle = slices.Clone(options.rle)
 
 	app := &App{
-		routesPerMethod: make(map[string][]RouteEntry),
+		routesPerMethod: make(map[string][]*routeEntry),
 		httpServer: &http.Server{
 			DisableGeneralOptionsHandler: !options.enableGeneralOptionsHandler,
 			ReadTimeout:                  options.readTimeout,

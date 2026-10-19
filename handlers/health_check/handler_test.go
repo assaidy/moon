@@ -107,17 +107,17 @@ func TestHandle_ResponseReceivesProbeResult(t *testing.T) {
 	}
 }
 
-// Terminal: the handler never calls Next, so a following handler in the
+// Terminal: the handler never calls Next, so a handler after it in the
 // chain must not run.
 func TestHandle_DoesNotContinueChain(t *testing.T) {
 	app := moon.New()
 	downstreamRan := false
 	app.Map(http.MethodGet, "/healthz",
-		New().Handle,
 		func(ctx *moon.Context) error {
 			downstreamRan = true
 			return ctx.Write(http.StatusOK, "downstream")
 		},
+		moon.WithMiddlewares(New().Handle),
 	)
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))

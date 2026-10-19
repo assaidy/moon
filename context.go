@@ -19,7 +19,7 @@ import (
 )
 
 // Context is the per-request handle passed to every [Handler].
-// It carries the request and response, the matched route parameters,
+// It carries the request and response, the matched route parameters and id,
 // per-request locals, app-shared state, and the typed
 // dependencies registered on the app and services started on the app
 // (see [Context.GetDependency] and [Context.GetService]). A new Context is created for each request, so
@@ -41,6 +41,7 @@ type Context struct {
 	requestBodyReadError error
 	requestBodyBuffer    *bytes.Buffer
 	params               map[string]string
+	routeId              string // id of the matched route; see GetRouteId.
 	handlers             []Handler
 	nextHandlerIndex     int
 	middlewareCount      int
@@ -226,6 +227,13 @@ func (me *Context) GetMethod() string {
 // GetPath returns the request URL path without the query string.
 func (me *Context) GetPath() string {
 	return me.request.URL.Path
+}
+
+// GetRouteId returns the id of the matched route, as set by [WithId], or
+// "" when the route has no id. Requests that matched no route, including
+// ones answered with [ErrMethodNotAllowed] or [ErrNotFound], also return "".
+func (me *Context) GetRouteId() string {
+	return me.routeId
 }
 
 // GetUrl returns the full request URL, including path and query.

@@ -140,25 +140,32 @@ func TestRouter_MapPanics(t *testing.T) {
 		app := New()
 		require.Panics(t, func() { app.Map(http.MethodGet, "/api/:id/api/:id", dummy) })
 	})
+
+	t.Run("nil handler", func(t *testing.T) {
+		app := New()
+		require.Panics(t, func() { app.Map(http.MethodGet, "/api", nil) })
+		require.Panics(t, func() { app.MapAll("/api", nil) })
+		require.Panics(t, func() { app.MapGet("/api", nil) })
+	})
 }
 
 // Each method shortcut must register exactly its own method via Map.
 func TestRouter_MethodShortcuts(t *testing.T) {
 	testCases := []struct {
 		name     string
-		register func(app *App, pattern string, handlers ...Handler)
+		register func(app *App, pattern string, handler Handler)
 		method   string
 	}{
-		{"MapGet", func(app *App, p string, h ...Handler) { app.MapGet(p, h...) }, http.MethodGet},
-		{"MapHead", func(app *App, p string, h ...Handler) { app.MapHead(p, h...) }, http.MethodHead},
-		{"MapPost", func(app *App, p string, h ...Handler) { app.MapPost(p, h...) }, http.MethodPost},
-		{"MapPut", func(app *App, p string, h ...Handler) { app.MapPut(p, h...) }, http.MethodPut},
-		{"MapPatch", func(app *App, p string, h ...Handler) { app.MapPatch(p, h...) }, http.MethodPatch},
-		{"MapDelete", func(app *App, p string, h ...Handler) { app.MapDelete(p, h...) }, http.MethodDelete},
-		{"MapConnect", func(app *App, p string, h ...Handler) { app.MapConnect(p, h...) }, http.MethodConnect},
-		{"MapOptions", func(app *App, p string, h ...Handler) { app.MapOptions(p, h...) }, http.MethodOptions},
-		{"MapTrace", func(app *App, p string, h ...Handler) { app.MapTrace(p, h...) }, http.MethodTrace},
-		{"MapQuery", func(app *App, p string, h ...Handler) { app.MapQuery(p, h...) }, MethodQuery},
+		{"MapGet", func(app *App, p string, h Handler) { app.MapGet(p, h) }, http.MethodGet},
+		{"MapHead", func(app *App, p string, h Handler) { app.MapHead(p, h) }, http.MethodHead},
+		{"MapPost", func(app *App, p string, h Handler) { app.MapPost(p, h) }, http.MethodPost},
+		{"MapPut", func(app *App, p string, h Handler) { app.MapPut(p, h) }, http.MethodPut},
+		{"MapPatch", func(app *App, p string, h Handler) { app.MapPatch(p, h) }, http.MethodPatch},
+		{"MapDelete", func(app *App, p string, h Handler) { app.MapDelete(p, h) }, http.MethodDelete},
+		{"MapConnect", func(app *App, p string, h Handler) { app.MapConnect(p, h) }, http.MethodConnect},
+		{"MapOptions", func(app *App, p string, h Handler) { app.MapOptions(p, h) }, http.MethodOptions},
+		{"MapTrace", func(app *App, p string, h Handler) { app.MapTrace(p, h) }, http.MethodTrace},
+		{"MapQuery", func(app *App, p string, h Handler) { app.MapQuery(p, h) }, MethodQuery},
 	}
 
 	for _, tc := range testCases {
@@ -198,13 +205,6 @@ func TestRouter_MapAll(t *testing.T) {
 		resp := app.Test(httptest.NewRequest(method, "/api/users", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode, method)
 	}
-}
-
-// MapAll with no handlers does nothing, like Map.
-func TestRouter_MapAll_NoHandlers(t *testing.T) {
-	app := New()
-	require.NotPanics(t, func() { app.MapAll("/api/users") })
-	require.NotPanics(t, func() { app.MapGet("/api/users") })
 }
 
 // UseAll registers the middleware for every path, like Use("/").
@@ -347,7 +347,7 @@ func TestRouter_MatchPath(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			segs, names, err := ParsePattern(tc.pattern)
 			require.NoError(t, err)
-			route := RouteEntry{pattern: tc.pattern, segments: segs, names: names}
+			route := routeEntry{pattern: tc.pattern, segments: segs, names: names}
 			gotParams, gotMatch := route.matchPath(tc.path)
 			require.Equal(t, tc.wantMatch, gotMatch)
 			require.Equal(t, tc.wantParams, gotParams)
@@ -388,7 +388,7 @@ func TestRouter_MiddlewareMatchPath(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			segs, _, err := ParsePattern(tc.prefix)
 			require.NoError(t, err)
-			mw := MiddlewareEntry{prefix: tc.prefix, segments: segs}
+			mw := middlewareEntry{prefix: tc.prefix, segments: segs}
 			require.Equal(t, tc.want, mw.matchPath(tc.path))
 		})
 	}
@@ -872,6 +872,146 @@ func TestRouter_Dispatch(t *testing.T) {
 		require.Equal(t, http.StatusTeapot, resp.StatusCode)
 		require.Equal(t, sentinel, captured)
 		require.Equal(t, []string{"mw1-before", "mw2", "handler", "mw1-after"}, order)
+	})
+}
+
+func TestRouter_RouteOptions(t *testing.T) {
+	t.Run("route middlewares run after app middlewares and before handler", func(t *testing.T) {
+		var order []string
+
+		app := New()
+		app.Use("/*", func(ctx *Context) error {
+			order = append(order, "app")
+			return ctx.Next()
+		})
+		app.Map(http.MethodGet, "/x",
+			func(ctx *Context) error {
+				order = append(order, "handler")
+				return nil
+			},
+			WithMiddlewares(
+				func(ctx *Context) error {
+					order = append(order, "route-1")
+					return ctx.Next()
+				},
+				func(ctx *Context) error {
+					order = append(order, "route-2")
+					return ctx.Next()
+				},
+			),
+		)
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, []string{"app", "route-1", "route-2", "handler"}, order)
+	})
+
+	t.Run("route middlewares only run for their route", func(t *testing.T) {
+		var called []string
+
+		app := New()
+		routeMw := func(ctx *Context) error {
+			called = append(called, "route")
+			return ctx.Next()
+		}
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+			called = append(called, "x")
+			return nil
+		}, WithMiddlewares(routeMw))
+		app.Map(http.MethodGet, "/y", func(ctx *Context) error {
+			called = append(called, "y")
+			return nil
+		})
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/y", nil))
+		require.Equal(t, []string{"y"}, called)
+	})
+
+	t.Run("route id is visible in handler and middlewares", func(t *testing.T) {
+		var inMw, inHandler string
+
+		app := New()
+		app.Map(http.MethodGet, "/x",
+			func(ctx *Context) error {
+				inHandler = ctx.GetRouteId()
+				return nil
+			},
+			WithMiddlewares(func(ctx *Context) error {
+				inMw = ctx.GetRouteId()
+				return ctx.Next()
+			}),
+			WithId("get_x"),
+		)
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, "get_x", inMw)
+		require.Equal(t, "get_x", inHandler)
+	})
+
+	t.Run("route id is stored as given", func(t *testing.T) {
+		for _, id := range []string{"", "  get_x  ", " "} {
+			var got string
+
+			app := New()
+			app.MapGet("/x", func(ctx *Context) error {
+				got = ctx.GetRouteId()
+				return nil
+			}, WithId(id))
+
+			app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+			require.Equal(t, id, got)
+		}
+	})
+
+	t.Run("route id is empty when unmatched or method not allowed", func(t *testing.T) {
+		var ids []string
+
+		app := New()
+		app.Use("/*", func(ctx *Context) error {
+			ids = append(ids, ctx.GetRouteId())
+			return ctx.Next()
+		})
+		app.MapGet("/x", func(ctx *Context) error { return nil }, WithId("get_x"))
+
+		for _, tc := range []struct {
+			method string
+			path   string
+		}{
+			{http.MethodGet, "/missing"},
+			{http.MethodPost, "/x"},
+		} {
+			app.Test(httptest.NewRequest(tc.method, tc.path, nil))
+		}
+
+		require.Equal(t, []string{"", ""}, ids)
+	})
+
+	t.Run("route id is empty by default", func(t *testing.T) {
+		var got = "unset"
+
+		app := New()
+		app.MapGet("/x", func(ctx *Context) error {
+			got = ctx.GetRouteId()
+			return nil
+		})
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, "", got)
+	})
+
+	t.Run("MapAll applies the same options to every method", func(t *testing.T) {
+		var ids []string
+
+		app := New()
+		app.MapAll("/x", func(ctx *Context) error {
+			ids = append(ids, ctx.GetRouteId())
+			return nil
+		}, WithId("all_x"))
+
+		for _, method := range []string{http.MethodGet, http.MethodPost, MethodQuery} {
+			app.Test(httptest.NewRequest(method, "/x", nil))
+		}
+		require.Equal(t, []string{"all_x", "all_x", "all_x"}, ids)
 	})
 }
 
