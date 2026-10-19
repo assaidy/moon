@@ -8,7 +8,8 @@
 //	).Handle)
 //
 // The request path is joined with the configured root and opened, and a
-// directory is replaced by the first of [WithIndexNames] that exists in it.
+// directory is replaced by the first of [WithIndexNames] that exists in it,
+// or, when [WithDirectoryBrowsing] is enabled, by a listing of its entries.
 // When nothing matches, the request is answered by [WithNotFoundHandler]
 // or, by default, [moon.ErrNotFound]. Files are served with their content
 // type, content length and, when known, their modification time; GET
@@ -19,12 +20,14 @@ package static
 
 import (
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"path"
 	"slices"
@@ -119,8 +122,9 @@ func WithRoot(s string) Option {
 }
 
 // WithIndexNames sets the file names served for directory requests, tried
-// in order. The first one that exists in the directory is served. Pass it
-// to [New].
+// in order. The first one that exists in the directory is served; when none
+// does, the directory is listed if [WithDirectoryBrowsing] is enabled and
+// treated as not found otherwise. Pass it to [New].
 //
 // Default: []string{"index.html"}
 func WithIndexNames(names []string) Option {
@@ -222,15 +226,30 @@ func WithCoalesceOverlappingRanges(b bool) Option {
 	}
 }
 
-// TODO: WithDirectoryBrowsing
+// WithDirectoryBrowsing sets whether a directory without a servable index
+// file is answered with an HTML listing of its entries instead of being
+// treated as not found. The listing links to each entry, directories first
+// and names compared case-insensitively, with a link to the parent
+// directory unless the directory is the root of the served area. The links
+// are absolute, so no redirect is needed for a directory path.
+//
+// The listing is always rendered inline: [WithDownload] does not apply to
+// it and Range headers are ignored. [WithMaxAge] applies as it does to
+// files, and HEAD requests receive the same headers with no body. A
+// directory that cannot be listed is treated as not found. Pass it to
+// [New].
+//
+// Default: false
 func WithDirectoryBrowsing(b bool) Option {
-	panic("unimplemented")
+	return func(o *options) {
+		o.directoryBrowsing = b
+	}
 }
 
 // WithMaxAge sets the max-age directive of the Cache-Control response
-// header, the number of seconds a client may cache the served file. Zero
-// and positive values are written, a negative value omits the header. Pass
-// it to [New].
+// header, the number of seconds a client may cache the response, whether it
+// is a file or a directory listing. Zero and positive values are written, a
+// negative value omits the header. Pass it to [New].
 //
 // Default: -1 (the header is omitted)
 func WithMaxAge(i int) Option {
@@ -240,8 +259,8 @@ func WithMaxAge(i int) Option {
 }
 
 // WithNotFoundHandler sets the handler answering requests that resolve to
-// no file, instead of [moon.ErrNotFound]. It is not consulted for failures
-// while writing the body. Pass it to [New].
+// nothing to serve, instead of [moon.ErrNotFound]. It is not consulted for
+// failures while writing the body. Pass it to [New].
 //
 // Default: nil ([moon.ErrNotFound])
 func WithNotFoundHandler(h moon.Handler) Option {
@@ -252,9 +271,9 @@ func WithNotFoundHandler(h moon.Handler) Option {
 
 // Handle serves the request. Requests skipped by [WithSkip] and requests
 // with a method other than GET and HEAD continue the chain via
-// [moon.Context.Next]. A request that resolves to no file is answered by
-// [WithNotFoundHandler] or [moon.ErrNotFound]. Errors are returned to the
-// caller: the error of writing the body, or
+// [moon.Context.Next]. A request that resolves to nothing to serve is
+// answered by [WithNotFoundHandler] or [moon.ErrNotFound]. Errors are
+// returned to the caller: the error of writing the body, or
 // [moon.ErrRequestedRangeNotSatisfiable] when a Range request asks for
 // ranges that cannot be satisfied.
 func (me *Handler) Handle(ctx *moon.Context) error {
@@ -275,23 +294,27 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 	return me.serve(ctx, r)
 }
 
-// resolved is the file a request is served from, along with the metadata
-// needed to describe it in the response headers.
+// resolved is the file a request is served from, or the directory it lists
+// when directory browsing is enabled, along with the metadata needed to
+// describe it in the response headers.
 type resolved struct {
-	// file is the opened file, closed by the caller.
+	// file is the opened file, or the opened directory when info reports
+	// it as a directory, closed by the caller.
 	file fs.File
 	// info describes the opened file; its size and modification time fill
 	// the Content-Length and Last-Modified headers.
 	info fs.FileInfo
 	// name is the resolved path used to build header values, such as the
-	// content type and the download filename.
+	// content type and the download filename, and to tell the root of the
+	// served area apart from the directories below it.
 	name string
 }
 
 // resolve maps the request path to a file: any configured prefix is
 // stripped, the path is joined with the root and opened, and a directory is
-// replaced by its first existing index file. The returned error is never
-// exposed to the client, only used to fall back to the not-found path.
+// replaced by its first existing index file, or kept open to be listed when
+// directory browsing is enabled and no index exists. The returned error is
+// never exposed to the client, only used to fall back to the not-found path.
 func (me *Handler) resolve(ctx *moon.Context) (resolved, error) {
 	p := ctx.GetPath()
 	if me.options.stripPathPrefix != "" {
@@ -312,8 +335,17 @@ func (me *Handler) resolve(ctx *moon.Context) (resolved, error) {
 
 	if info.IsDir() {
 		r, err := me.resolveIndex(name)
-		file.Close()
-		return r, err
+		if err == nil {
+			file.Close()
+			return r, nil
+		}
+		if !me.options.directoryBrowsing {
+			file.Close()
+			return resolved{}, err
+		}
+		// The directory is served as a listing; keep it open so that
+		// serveDirectory can read its entries.
+		return resolved{file: file, info: info, name: name}, nil
 	}
 
 	return resolved{file: file, info: info, name: name}, nil
@@ -340,10 +372,15 @@ func (me *Handler) resolveIndex(dir string) (resolved, error) {
 
 // serve writes r as the response: the headers describing it and, for
 // methods other than HEAD, its body, either whole or the ranges asked for
-// by a Range header. It returns the error of writing the body, or
+// by a Range header. A directory is served as an HTML listing instead. It
+// returns the error of writing the body, or
 // [moon.ErrRequestedRangeNotSatisfiable] when the requested ranges cannot
 // be satisfied.
 func (me *Handler) serve(ctx *moon.Context, r resolved) error {
+	if r.info.IsDir() {
+		return me.serveDirectory(ctx, r)
+	}
+
 	me.setResponseHeaders(ctx, r)
 
 	if ctx.GetMethod() == moon.MethodHead {
@@ -372,6 +409,102 @@ func (me *Handler) serve(ctx *moon.Context, r resolved) error {
 
 	_, err := io.Copy(ctx.GetHttpResponseWriter(), r.file)
 	return err
+}
+
+// serveDirectory writes the HTML listing of the directory r. The body is
+// built in full before anything is written, so its Content-Length is exact
+// and a failure to read the entries leaves the response untouched. The
+// listing always renders inline: Range headers are ignored and the download
+// disposition does not apply.
+func (me *Handler) serveDirectory(ctx *moon.Context, r resolved) error {
+	dir, ok := r.file.(fs.ReadDirFile)
+	if !ok {
+		// Nothing can be listed from here, so the request is answered as
+		// though browsing were disabled.
+		return me.notFound(ctx)
+	}
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+
+	requestPath := ctx.GetPath()
+	parent := ""
+	if r.name != me.options.root {
+		parent = path.Dir(requestPath)
+	}
+	body := directoryListing(requestPath, parent, entries)
+
+	me.setCacheControlHeader(ctx)
+	ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
+	ctx.SetHeader("Content-Length", strconv.Itoa(len(body)))
+
+	if ctx.GetMethod() == moon.MethodHead {
+		return nil
+	}
+	_, err = ctx.GetHttpResponseWriter().Write(body)
+	return err
+}
+
+// directoryListing renders the HTML listing of a directory: a link to each
+// entry, directories first and names compared case-insensitively, with an
+// optional link to the parent directory. requestPath is the path the
+// listing answers, used for the title and to build the entry links.
+func directoryListing(requestPath, parent string, entries []fs.DirEntry) []byte {
+	slices.SortFunc(entries, compareDirectoryEntries)
+
+	var b strings.Builder
+	b.WriteString("<!doctype html>\n<html>\n<head><meta charset=\"utf-8\"><title>Index of ")
+	b.WriteString(html.EscapeString(requestPath))
+	b.WriteString("</title></head>\n<body>\n<h1>Index of ")
+	b.WriteString(html.EscapeString(requestPath))
+	b.WriteString("</h1>\n<ul>\n")
+	if parent != "" {
+		writeDirectoryEntry(&b, parent, "../")
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			name += "/"
+		}
+		writeDirectoryEntry(&b, path.Join(requestPath, entry.Name()), name)
+	}
+	b.WriteString("</ul>\n</body>\n</html>\n")
+	return []byte(b.String())
+}
+
+// writeDirectoryEntry writes one listing entry: href as the link target and
+// text as the visible name, both escaped so that a name cannot inject markup
+// or change the target.
+func writeDirectoryEntry(b *strings.Builder, href, text string) {
+	b.WriteString("<li><a href=\"")
+	b.WriteString(html.EscapeString(directoryHref(href)))
+	b.WriteString("\">")
+	b.WriteString(html.EscapeString(text))
+	b.WriteString("</a></li>\n")
+}
+
+// directoryHref percent-encodes p for use as a link target, leaving the "/"
+// separators alone, so a name holding spaces, "#" or other reserved bytes
+// still points at the entry being listed.
+func directoryHref(p string) string {
+	return (&url.URL{Path: p}).EscapedPath()
+}
+
+// compareDirectoryEntries orders listing entries: directories first, then by
+// name, comparing names case-insensitively and falling back to their exact
+// bytes so the order is total.
+func compareDirectoryEntries(a, b fs.DirEntry) int {
+	if a.IsDir() != b.IsDir() {
+		if a.IsDir() {
+			return -1
+		}
+		return 1
+	}
+	if c := strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name())); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Name(), b.Name())
 }
 
 // serveSingleRange writes one range as a 206 response carrying a
@@ -451,6 +584,14 @@ func (me *countWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// setCacheControlHeader sets the cache lifetime of the response when one is
+// configured, shared by file responses and directory listings.
+func (me *Handler) setCacheControlHeader(ctx *moon.Context) {
+	if me.options.maxAge >= 0 {
+		ctx.SetHeader("Cache-Control", "max-age="+strconv.Itoa(me.options.maxAge))
+	}
+}
+
 // setResponseHeaders sets the headers describing r: the cache lifetime, the
 // content type, the content length and, when known, the modification time,
 // plus the download disposition when enabled and Accept-Ranges when byte
@@ -458,9 +599,7 @@ func (me *countWriter) Write(p []byte) (int, error) {
 // is always set, so it is correct for HEAD responses too, which carry no
 // body.
 func (me *Handler) setResponseHeaders(ctx *moon.Context, r resolved) {
-	if me.options.maxAge >= 0 {
-		ctx.SetHeader("Cache-Control", "max-age="+strconv.Itoa(me.options.maxAge))
-	}
+	me.setCacheControlHeader(ctx)
 	ctx.SetHeader("Content-Type", contentType(r.name, r.file))
 	ctx.SetHeader("Content-Length", strconv.FormatInt(r.info.Size(), 10))
 	if modTime := r.info.ModTime(); !isZeroTime(modTime) {

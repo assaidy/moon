@@ -25,19 +25,24 @@ var testModTime = time.Date(2026, time.October, 16, 8, 30, 0, 0, time.UTC)
 // handler tests register it under the "/files" path prefix.
 func newTestFileSystem() fstest.MapFS {
 	return fstest.MapFS{
-		"index.html":         &fstest.MapFile{Data: []byte("<h1>home</h1>")},
-		"hello.txt":          &fstest.MapFile{Data: []byte("hello world")},
-		"range.txt":          &fstest.MapFile{Data: []byte("0123456789")},
-		"empty.txt":          &fstest.MapFile{},
-		"dated.txt":          &fstest.MapFile{Data: []byte("dated"), ModTime: testModTime},
-		"epoch.txt":          &fstest.MapFile{Data: []byte("epoch"), ModTime: time.Unix(0, 0)},
-		"noext":              &fstest.MapFile{Data: []byte("plain text without extension")},
-		"blob":               &fstest.MapFile{Data: []byte{0x00, 0x01, 0x02, 0x03}},
-		"dir/index.html":     &fstest.MapFile{Data: []byte("<h1>dir</h1>")},
-		"dir/notes.txt":      &fstest.MapFile{Data: []byte("notes")},
-		"custom/default.htm": &fstest.MapFile{Data: []byte("<h1>custom</h1>")},
-		"assets/logo.svg":    &fstest.MapFile{Data: []byte("<svg/>")},
-		"résumé.txt":         &fstest.MapFile{Data: []byte("cv")},
+		"index.html":            &fstest.MapFile{Data: []byte("<h1>home</h1>")},
+		"hello.txt":             &fstest.MapFile{Data: []byte("hello world")},
+		"range.txt":             &fstest.MapFile{Data: []byte("0123456789")},
+		"empty.txt":             &fstest.MapFile{},
+		"dated.txt":             &fstest.MapFile{Data: []byte("dated"), ModTime: testModTime},
+		"epoch.txt":             &fstest.MapFile{Data: []byte("epoch"), ModTime: time.Unix(0, 0)},
+		"noext":                 &fstest.MapFile{Data: []byte("plain text without extension")},
+		"blob":                  &fstest.MapFile{Data: []byte{0x00, 0x01, 0x02, 0x03}},
+		"dir/index.html":        &fstest.MapFile{Data: []byte("<h1>dir</h1>")},
+		"dir/notes.txt":         &fstest.MapFile{Data: []byte("notes")},
+		"custom/default.htm":    &fstest.MapFile{Data: []byte("<h1>custom</h1>")},
+		"assets/logo.svg":       &fstest.MapFile{Data: []byte("<svg/>")},
+		"browse/plain.txt":      &fstest.MapFile{Data: []byte("plain")},
+		"browse/with space.txt": &fstest.MapFile{Data: []byte("spaced")},
+		"browse/hash#tag.txt":   &fstest.MapFile{Data: []byte("hashed")},
+		"browse/a&b.txt":        &fstest.MapFile{Data: []byte("amped")},
+		"browse/sub/child.txt":  &fstest.MapFile{Data: []byte("child")},
+		"résumé.txt":            &fstest.MapFile{Data: []byte("cv")},
 	}
 }
 
@@ -567,4 +572,139 @@ func TestHandle_LimitsDistinctByteRanges(t *testing.T) {
 
 func TestWithMaxDistinctRanges_PanicsOnZero(t *testing.T) {
 	require.Panics(t, func() { WithMaxDistinctRanges(0) })
+}
+
+// unlistableFS hides the [fs.ReadDirFile] implementation of the directories
+// it opens, as a filesystem that cannot browse directories would.
+type unlistableFS struct{ fs.FS }
+
+// Open implements [fs.FS].
+func (me unlistableFS) Open(name string) (fs.File, error) {
+	file, err := me.FS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return unlistableFile{File: file}, nil
+}
+
+// unlistableFile is an [fs.File] that does not implement [fs.ReadDirFile].
+type unlistableFile struct{ fs.File }
+
+func TestHandle_BrowsesDirectory(t *testing.T) {
+	app := newTestApp(t, WithDirectoryBrowsing(true), WithMaxAge(60))
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/browse", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
+	require.Equal(t, "max-age=60", resp.Header.Get("Cache-Control"))
+	require.Empty(t, resp.Header.Get("Content-Disposition"))
+	require.Empty(t, resp.Header.Get("Content-Range"))
+	require.Empty(t, resp.Header.Get("Accept-Ranges"))
+	require.Empty(t, resp.Header.Get("Last-Modified"))
+
+	body := readBody(t, resp)
+	require.Equal(t, strconv.Itoa(len(body)), resp.Header.Get("Content-Length"))
+	require.Equal(t, `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Index of /files/browse</title></head>
+<body>
+<h1>Index of /files/browse</h1>
+<ul>
+<li><a href="/files">../</a></li>
+<li><a href="/files/browse/sub">sub/</a></li>
+<li><a href="/files/browse/a&amp;b.txt">a&amp;b.txt</a></li>
+<li><a href="/files/browse/hash%23tag.txt">hash#tag.txt</a></li>
+<li><a href="/files/browse/plain.txt">plain.txt</a></li>
+<li><a href="/files/browse/with%20space.txt">with space.txt</a></li>
+</ul>
+</body>
+</html>
+`, body)
+}
+
+func TestHandle_BrowsesCustomFileSystem(t *testing.T) {
+	filesystem := fstest.MapFS{"docs/readme.txt": &fstest.MapFile{Data: []byte("readme")}}
+
+	t.Run("root has no parent link", func(t *testing.T) {
+		app := newTestApp(t, WithDirectoryBrowsing(true), WithFileSystem(filesystem))
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/files", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Index of /files</title></head>
+<body>
+<h1>Index of /files</h1>
+<ul>
+<li><a href="/files/docs">docs/</a></li>
+</ul>
+</body>
+</html>
+`, readBody(t, resp))
+	})
+
+	t.Run("nested links to the parent", func(t *testing.T) {
+		app := newTestApp(t, WithDirectoryBrowsing(true), WithFileSystem(filesystem))
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/docs", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Index of /files/docs</title></head>
+<body>
+<h1>Index of /files/docs</h1>
+<ul>
+<li><a href="/files">../</a></li>
+<li><a href="/files/docs/readme.txt">readme.txt</a></li>
+</ul>
+</body>
+</html>
+`, readBody(t, resp))
+	})
+}
+
+func TestHandle_BrowsePrefersIndexFile(t *testing.T) {
+	app := newTestApp(t, WithDirectoryBrowsing(true))
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/dir", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
+	require.Equal(t, "<h1>dir</h1>", readBody(t, resp))
+}
+
+func TestHandle_HeadBrowsesDirectory(t *testing.T) {
+	app := newTestApp(t, WithDirectoryBrowsing(true))
+
+	get := app.Test(httptest.NewRequest(http.MethodGet, "/files/browse", nil))
+	wantLength := get.Header.Get("Content-Length")
+	require.NotEmpty(t, wantLength)
+
+	resp := app.Test(httptest.NewRequest(http.MethodHead, "/files/browse", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "text/html; charset=utf-8", resp.Header.Get("Content-Type"))
+	require.Equal(t, wantLength, resp.Header.Get("Content-Length"))
+	require.Empty(t, readBody(t, resp))
+}
+
+func TestHandle_BrowseIgnoresRangeAndDownload(t *testing.T) {
+	app := newTestApp(t, WithDirectoryBrowsing(true), WithDownload(true))
+
+	req := httptest.NewRequest(http.MethodGet, "/files/browse", nil)
+	req.Header.Set("Range", "bytes=0-3")
+	resp := app.Test(req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, resp.Header.Get("Content-Range"))
+	require.Empty(t, resp.Header.Get("Accept-Ranges"))
+	require.Empty(t, resp.Header.Get("Content-Disposition"))
+	require.Contains(t, readBody(t, resp), "Index of /files/browse")
+}
+
+func TestHandle_BrowseWithoutReadDirFile(t *testing.T) {
+	app := newTestApp(t,
+		WithDirectoryBrowsing(true),
+		WithFileSystem(unlistableFS{FS: newTestFileSystem()}),
+	)
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/browse", nil))
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
