@@ -11,17 +11,23 @@
 // directory is replaced by the first of [WithIndexNames] that exists in it.
 // When nothing matches, the request is answered by [WithNotFoundHandler]
 // or, by default, [moon.ErrNotFound]. Files are served with their content
-// type, content length and, when known, their modification time. Requests
-// with a method other than GET and HEAD continue the chain.
+// type, content length and, when known, their modification time; GET
+// requests carrying a Range header are answered with the requested bytes
+// when the file can be seeked, following the rules of [WithByteRanges].
+// Requests with a method other than GET and HEAD continue the chain.
 package static
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,9 +54,12 @@ type Handler struct {
 // root is not a valid [fs.ValidPath] path.
 func New(opts ...Option) *Handler {
 	options := options{
-		root:       ".",
-		indexNames: []string{"index.html"},
-		maxAge:     -1,
+		root:                      ".",
+		indexNames:                []string{"index.html"},
+		byteRanges:                true,
+		coalesceOverlappingRanges: true,
+		maxDistinctRanges:         100,
+		maxAge:                    -1,
 	}
 	for _, opt := range opts {
 		opt(&options)
@@ -66,16 +75,18 @@ func New(opts ...Option) *Handler {
 // options holds the configuration of a [Handler]. All fields are private;
 // pass [Option]s to [New] to configure it.
 type options struct {
-	skip              func(*moon.Context) bool
-	root              string
-	indexNames        []string
-	stripPathPrefix   string
-	fs                fs.FS
-	download          bool
-	byteRange         bool
-	directoryBrowsing bool
-	maxAge            int
-	notFoundHandler   moon.Handler
+	skip                      func(*moon.Context) bool
+	root                      string
+	indexNames                []string
+	stripPathPrefix           string
+	fs                        fs.FS
+	download                  bool
+	byteRanges                bool
+	maxDistinctRanges         int
+	coalesceOverlappingRanges bool
+	directoryBrowsing         bool
+	maxAge                    int
+	notFoundHandler           moon.Handler
 }
 
 // Option configures a [Handler]. Pass them to [New].
@@ -151,9 +162,64 @@ func WithDownload(b bool) Option {
 	}
 }
 
-// TODO: WithByteRange
-func WithByteRange(b bool) Option {
-	panic("unimplemented")
+// WithByteRanges sets whether GET requests carrying a Range header are
+// answered with the requested bytes of the file. Ranges are sorted by
+// offset and, unless disabled by [WithCoalesceOverlappingRanges], merged
+// when they overlap or touch. What remains is served as:
+//
+//   - one 206 Partial Content response with a Content-Range header and a
+//     Content-Length matching the range, when only one range remains;
+//   - a 206 Partial Content response with a multipart/byteranges body
+//     holding one part per range otherwise: parts carry their own
+//     Content-Range and the file's content type, and no top-level
+//     Content-Range is set;
+//   - a 416 Requested Range Not Satisfiable response when nothing is left
+//     to serve (every range is zero-length or lies outside the file, as
+//     for any range asked of an empty file) or when more ranges remain
+//     than [WithMaxDistinctRanges] allows. The response carries a
+//     Content-Range header reporting the file size, e.g. "bytes */100".
+//
+// A Range header that cannot be parsed, or that uses a unit other than
+// bytes, is ignored and the whole file is served. HEAD requests ignore
+// Range and never receive partial content. When enabled, seekable files
+// announce Accept-Ranges: bytes on their responses, while files that
+// cannot seek are always served whole and never announce it. Pass it to
+// [New].
+//
+// Default: true
+func WithByteRanges(b bool) Option {
+	return func(o *options) {
+		o.byteRanges = b
+	}
+}
+
+// WithMaxDistinctRanges sets the maximum number of distinct ranges a request
+// may ask for. A request for more, after merging, is refused with 416
+// Requested Range Not Satisfiable instead of being served, which bounds the
+// number of parts in a multipart response. A negative value removes the
+// limit; zero panics. Pass it to [New].
+//
+// Default: 100
+func WithMaxDistinctRanges(i int) Option {
+	// Negatives mean no limit.
+	// Zero is not allowed as it's misleading.
+	moon.Assert(i != 0, "max distinct ranges cannot be zero; use a negative value for no limit")
+
+	return func(o *options) {
+		o.maxDistinctRanges = i
+	}
+}
+
+// WithCoalesceOverlappingRanges sets whether ranges that overlap or touch
+// are merged before they are served, so a request is served in as few parts
+// as possible; when disabled, every range is served as its own part. Pass
+// it to [New].
+//
+// Default: true
+func WithCoalesceOverlappingRanges(b bool) Option {
+	return func(o *options) {
+		o.coalesceOverlappingRanges = b
+	}
 }
 
 // TODO: WithDirectoryBrowsing
@@ -187,8 +253,10 @@ func WithNotFoundHandler(h moon.Handler) Option {
 // Handle serves the request. Requests skipped by [WithSkip] and requests
 // with a method other than GET and HEAD continue the chain via
 // [moon.Context.Next]. A request that resolves to no file is answered by
-// [WithNotFoundHandler] or [moon.ErrNotFound]; the error of writing the
-// body is returned to the caller.
+// [WithNotFoundHandler] or [moon.ErrNotFound]. Errors are returned to the
+// caller: the error of writing the body, or
+// [moon.ErrRequestedRangeNotSatisfiable] when a Range request asks for
+// ranges that cannot be satisfied.
 func (me *Handler) Handle(ctx *moon.Context) error {
 	if me.options.skip != nil && me.options.skip(ctx) {
 		return ctx.Next()
@@ -271,8 +339,10 @@ func (me *Handler) resolveIndex(dir string) (resolved, error) {
 }
 
 // serve writes r as the response: the headers describing it and, for
-// methods other than HEAD, its body. It returns only the error of writing
-// the body.
+// methods other than HEAD, its body, either whole or the ranges asked for
+// by a Range header. It returns the error of writing the body, or
+// [moon.ErrRequestedRangeNotSatisfiable] when the requested ranges cannot
+// be satisfied.
 func (me *Handler) serve(ctx *moon.Context, r resolved) error {
 	me.setResponseHeaders(ctx, r)
 
@@ -280,14 +350,113 @@ func (me *Handler) serve(ctx *moon.Context, r resolved) error {
 		return nil
 	}
 
+	if me.options.byteRanges {
+		if seeker, ok := r.file.(io.Seeker); ok {
+			result := me.parseRanges(ctx, r)
+			if result.isValid {
+				if !result.isSatisfiable {
+					// A 416 response describes the representation length, and
+					// the error handler writes its own body, so the file length
+					// set in setResponseHeaders no longer applies.
+					ctx.SetHeader("Content-Range", fmt.Sprintf("bytes */%d", r.info.Size()))
+					ctx.GetHttpResponseWriter().Header().Del("Content-Length")
+					return moon.ErrRequestedRangeNotSatisfiable
+				}
+				if len(result.ranges) == 1 {
+					return me.serveSingleRange(ctx, r, seeker, result.ranges[0])
+				}
+				return me.serveMultipartRanges(ctx, r, seeker, result.ranges)
+			}
+		}
+	}
+
 	_, err := io.Copy(ctx.GetHttpResponseWriter(), r.file)
 	return err
 }
 
+// serveSingleRange writes one range as a 206 response carrying a
+// Content-Range header.
+func (me *Handler) serveSingleRange(ctx *moon.Context, r resolved, seeker io.Seeker, rng fileRange) error {
+	ctx.SetStatusCode(http.StatusPartialContent)
+	ctx.SetHeader("Content-Range", rng.contentRange(r.info.Size()))
+	ctx.SetHeader("Content-Length", strconv.Itoa(rng.length))
+
+	if _, err := seeker.Seek(int64(rng.offset), io.SeekStart); err != nil {
+		return err
+	}
+	_, err := io.CopyN(ctx.GetHttpResponseWriter(), r.file, int64(rng.length))
+	return err
+}
+
+// serveMultipartRanges writes several ranges as a 206 multipart/byteranges
+// response, one body part per range.
+func (me *Handler) serveMultipartRanges(ctx *moon.Context, r resolved, seeker io.Seeker, ranges []fileRange) error {
+	size := r.info.Size()
+	ctype := contentType(r.name, r.file)
+	boundary := multipart.NewWriter(io.Discard).Boundary()
+	length, err := multipartRangesLength(boundary, ranges, ctype, size)
+	if err != nil {
+		return err
+	}
+
+	ctx.SetStatusCode(http.StatusPartialContent)
+	ctx.SetHeader("Content-Type", "multipart/byteranges; boundary="+boundary)
+	ctx.SetHeader("Content-Length", strconv.Itoa(length))
+
+	mw := multipart.NewWriter(ctx.GetHttpResponseWriter())
+	if err := mw.SetBoundary(boundary); err != nil {
+		return err
+	}
+	for _, rng := range ranges {
+		part, err := mw.CreatePart(rng.mimeHeader(ctype, size))
+		if err != nil {
+			return err
+		}
+		if _, err := seeker.Seek(int64(rng.offset), io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := io.CopyN(part, r.file, int64(rng.length)); err != nil {
+			return err
+		}
+	}
+	return mw.Close()
+}
+
+// multipartRangesLength returns the encoded size of the multipart body
+// holding ranges, measuring the part headers and boundaries with a counting
+// writer instead of buffering any range content.
+func multipartRangesLength(boundary string, ranges []fileRange, ctype string, size int64) (int, error) {
+	var count countWriter
+	mw := multipart.NewWriter(&count)
+	if err := mw.SetBoundary(boundary); err != nil {
+		return 0, err
+	}
+	for _, rng := range ranges {
+		if _, err := mw.CreatePart(rng.mimeHeader(ctype, size)); err != nil {
+			return 0, err
+		}
+		count += countWriter(rng.length)
+	}
+	if err := mw.Close(); err != nil {
+		return 0, err
+	}
+	return int(count), nil
+}
+
+// countWriter accumulates the number of bytes written to it.
+type countWriter int
+
+func (me *countWriter) Write(p []byte) (int, error) {
+	*me += countWriter(len(p))
+	return len(p), nil
+}
+
 // setResponseHeaders sets the headers describing r: the cache lifetime, the
 // content type, the content length and, when known, the modification time,
-// plus the download disposition when enabled. Content-Length is always set,
-// so it is correct for HEAD responses too, which carry no body.
+// plus the download disposition when enabled and Accept-Ranges when byte
+// ranges are enabled and the file can be served partially. Content-Length
+// is always set, so it is correct for HEAD responses too, which carry no
+// body.
 func (me *Handler) setResponseHeaders(ctx *moon.Context, r resolved) {
 	if me.options.maxAge >= 0 {
 		ctx.SetHeader("Cache-Control", "max-age="+strconv.Itoa(me.options.maxAge))
@@ -299,6 +468,11 @@ func (me *Handler) setResponseHeaders(ctx *moon.Context, r resolved) {
 	}
 	if me.options.download {
 		setDownloadHeader(ctx, r.name)
+	}
+	if me.options.byteRanges {
+		if _, ok := r.file.(io.Seeker); ok {
+			ctx.SetHeader("Accept-Ranges", "bytes")
+		}
 	}
 }
 
@@ -395,4 +569,159 @@ func stripPathPrefix(name, prefix string) string {
 		return "/" + after
 	}
 	return name
+}
+
+// parseRangesResult describes the outcome of parsing the request's Range
+// header. The ranges hold the satisfiable ranges in ascending order, and are
+// set only when the header is both valid and satisfiable.
+type parseRangesResult struct {
+	ranges        []fileRange
+	isValid       bool
+	isSatisfiable bool
+}
+
+// fileRange is a run of length bytes starting at offset, both relative to
+// the beginning of the representation.
+type fileRange struct {
+	offset int
+	length int
+}
+
+// contentRange describes me as a Content-Range value within a representation
+// of size bytes, e.g. "bytes 0-99/100".
+func (me fileRange) contentRange(size int64) string {
+	return fmt.Sprintf("bytes %d-%d/%d", me.offset, me.offset+me.length-1, size)
+}
+
+// mimeHeader returns the headers describing me as one part of a
+// multipart/byteranges body.
+func (me fileRange) mimeHeader(ctype string, size int64) textproto.MIMEHeader {
+	return textproto.MIMEHeader{
+		"Content-Range": {me.contentRange(size)},
+		"Content-Type":  {ctype},
+	}
+}
+
+// parseRanges parses the request's Range header against r. The result is
+// invalid, leaving the whole file to be served, for a missing header, a
+// malformed one and a unit other than bytes. Otherwise the result is valid;
+// it is satisfiable when there is something to serve, and not satisfiable
+// when nothing can be, either because every range lies outside the file (an
+// empty file has nothing to serve) or because the count stays over
+// [WithMaxDistinctRanges] after coalescing.
+func (me *Handler) parseRanges(ctx *moon.Context, r resolved) parseRangesResult {
+	header := ctx.GetHeader("Range")
+	if header == "" {
+		return parseRangesResult{}
+	}
+
+	unit, set, found := strings.Cut(header, "=")
+	if !found || !strings.EqualFold(strings.TrimSpace(unit), "bytes") {
+		return parseRangesResult{}
+	}
+	size := int(r.info.Size())
+
+	var ranges []fileRange
+	specs := 0
+	for spec := range strings.SplitSeq(set, ",") {
+		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			// HTTP list syntax tolerates empty elements.
+			continue
+		}
+		specs++
+
+		start, end, ok := strings.Cut(spec, "-")
+		if !ok {
+			return parseRangesResult{}
+		}
+		start, end = strings.TrimSpace(start), strings.TrimSpace(end)
+
+		if start == "" {
+			// Suffix-range: the last suffix bytes of the file. Clamping first
+			// leaves nothing to serve for -0 and for an empty file.
+			suffix, ok := parseByteCount(end)
+			if !ok {
+				return parseRangesResult{}
+			}
+			if suffix > size {
+				suffix = size
+			}
+			if suffix == 0 {
+				continue
+			}
+			ranges = append(ranges, fileRange{offset: size - suffix, length: suffix})
+			continue
+		}
+
+		first, ok := parseByteCount(start)
+		if !ok {
+			return parseRangesResult{}
+		}
+		if first >= size {
+			// The range starts past the end: valid but unsatisfiable.
+			continue
+		}
+		length := size - first
+		if end != "" {
+			last, ok := parseByteCount(end)
+			if !ok || last < first {
+				return parseRangesResult{}
+			}
+			if last >= size {
+				last = size - 1
+			}
+			length = last - first + 1
+		}
+		ranges = append(ranges, fileRange{offset: first, length: length})
+	}
+
+	if specs == 0 {
+		return parseRangesResult{}
+	}
+	if len(ranges) == 0 {
+		return parseRangesResult{isValid: true}
+	}
+
+	slices.SortFunc(ranges, func(a, b fileRange) int { return a.offset - b.offset })
+	if me.options.coalesceOverlappingRanges {
+		ranges = coalesceRanges(ranges)
+	}
+	if limit := me.options.maxDistinctRanges; limit > 0 && len(ranges) > limit {
+		return parseRangesResult{isValid: true}
+	}
+	return parseRangesResult{ranges: ranges, isValid: true, isSatisfiable: true}
+}
+
+// parseByteCount parses a range position or suffix length: a non-empty run
+// of decimal digits that fits an int. Values that overflow the parsing are
+// rejected.
+func parseByteCount(s string) (int, bool) {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// coalesceRanges merges ranges that overlap or touch, expecting them sorted
+// by offset, turning a request into the fewest possible parts.
+func coalesceRanges(ranges []fileRange) []fileRange {
+	merged := make([]fileRange, 0, len(ranges))
+	for _, rng := range ranges {
+		if n := len(merged); n > 0 && rng.offset <= merged[n-1].offset+merged[n-1].length {
+			last := &merged[n-1]
+			if end := rng.offset + rng.length; end > last.offset+last.length {
+				last.length = end - last.offset
+			}
+			continue
+		}
+		merged = append(merged, rng)
+	}
+	return merged
 }
