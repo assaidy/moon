@@ -165,6 +165,8 @@ func IsValidHttpMethod(method string) bool {
 //   - [WithMiddlewares] inserts middlewares that run before handler, after
 //     every matching middleware registered with [App.Use].
 //   - [WithId] sets the id returned by [Context.GetRouteId].
+//   - [WithApiSpec] attaches documentation metadata created by [NewApiSpec].
+//     Invalid metadata panics at registration.
 //
 // Request flow: middlewares registered with [App.Use] before this call
 // whose prefix matches the request path run first, in registration order,
@@ -193,6 +195,8 @@ func (me *App) Map(method string, pattern string, handler Handler, options ...Ro
 		// apply options first to insert middlewares before handler.
 		opt(entry)
 	}
+	validateApiSpec(&entry.spec)
+	validateApiSpecPathParams(&entry.spec, entry.segments)
 	entry.handlers = append(entry.handlers, handler)
 
 	me.routesPerMethod[method] = append(me.routesPerMethod[method], entry)
@@ -523,14 +527,14 @@ func areNamesUnique(names []string) bool {
 // routeEntry is a handler route (pattern + per-method handlers). See
 // [App.Map]. Middleware patterns live in [middlewareEntry]; see [App.Use].
 type routeEntry struct {
-	// TODO: add route metadata to generate an OpenAPI spec.
 	method   string
 	pattern  string
 	segments []Segment
 	names    []string
 	handlers []Handler
 	order    int
-	id       string // multiple routes can have the same id.
+	id       string  // multiple routes can have the same id.
+	spec     apiSpec // documentation metadata; see WithApiSpec.
 }
 
 // RouteOption configures a route at registration time. Pass options to
