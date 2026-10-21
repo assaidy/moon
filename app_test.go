@@ -28,9 +28,13 @@ func TestWithDefaults(t *testing.T) {
 	require.Equal(t, "", app.options.keyFile)
 	require.False(t, app.options.serviceStartParallel)
 	require.False(t, app.options.serviceStopParallel)
-	require.Equal(t, time.Duration(0), app.options.shutdownTimeout)
+	require.Equal(t, time.Duration(-1), app.options.readTimeout)
+	require.Equal(t, time.Duration(0), app.options.readHeaderTimeout)
+	require.Equal(t, time.Duration(-1), app.options.writeTimeout)
+	require.Equal(t, time.Duration(-1), app.options.idleTimeout)
+	require.Equal(t, time.Duration(-1), app.options.shutdownTimeout)
 	require.False(t, app.options.passLocalsToContext)
-	require.Equal(t, 4*1024*1024, app.options.readLimit)
+	require.Equal(t, 4*1024*1024, app.options.maxBodyBytes)
 	require.NotNil(t, app.httpServer)
 	require.NotNil(t, app.dependencies)
 	require.Empty(t, app.services)
@@ -270,11 +274,11 @@ func TestWithShutdownTimeout(t *testing.T) {
 	require.NotPanics(t, func() { New(WithShutdownTimeout(-time.Second)) })
 }
 
-func TestWithReadLimit(t *testing.T) {
-	app := New(WithReadLimit(1024))
-	require.Equal(t, 1024, app.options.readLimit)
-	require.Panics(t, func() { New(WithReadLimit(0)) })
-	require.Panics(t, func() { New(WithReadLimit(-1)) })
+func TestWithMaxBodyBytes(t *testing.T) {
+	app := New(WithMaxBodyBytes(1024))
+	require.Equal(t, 1024, app.options.maxBodyBytes)
+	require.Equal(t, 0, New(WithMaxBodyBytes(0)).options.maxBodyBytes)
+	require.Equal(t, -1, New(WithMaxBodyBytes(-1)).options.maxBodyBytes)
 }
 
 func TestWithPassLocalsToContext(t *testing.T) {

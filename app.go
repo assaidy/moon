@@ -55,10 +55,14 @@ func New(opts ...AppOption) *App {
 	options := appOptions{
 		logger:               slog.Default(),
 		errorHandler:         DefaultErrorHandler,
-		clientPriority:       true,
 		preforkChildrenCount: runtime.NumCPU(),
 		preforkRetriesCount:  -1,
-		readLimit:            4 << 20, // 4MB
+		clientPriority:       true,
+		readTimeout:          -1,
+		writeTimeout:         -1,
+		idleTimeout:          -1,
+		shutdownTimeout:      -1,
+		maxBodyBytes:         4 << 20, // 4MB
 		rle:                  defaultRequestLoggingEntries,
 	}
 	for _, opt := range opts {
@@ -123,7 +127,7 @@ type appOptions struct {
 	serviceStopParallel         bool
 	shutdownTimeout             time.Duration
 	passLocalsToContext         bool
-	readLimit                   int
+	maxBodyBytes                int
 	rle                         []RequestLoggingEntry
 }
 
@@ -255,7 +259,7 @@ func WithReadTimeout(d time.Duration) AppOption {
 // A negative value disables the timeout. It panics on a zero duration.
 // Pass it to [New].
 //
-// Default: no timeout
+// Default: the value of [WithReadTimeout]
 func WithReadHeaderTimeout(d time.Duration) AppOption {
 	Assert(d != 0)
 	return func(o *appOptions) {
@@ -294,7 +298,7 @@ func WithIdleTimeout(d time.Duration) AppOption {
 // It does not limit the size of the request body.
 // Pass it to [New].
 //
-// Default: [http.DefaultMaxHeaderBytes] (1MB)
+// Default: [http.DefaultMaxHeaderBytes] (1 MiB)
 func WithMaxHeaderBytes(i int) AppOption {
 	Assert(i > 0)
 	return func(o *appOptions) {
@@ -316,17 +320,17 @@ func WithMaxHeaderValueCount(i int) AppOption {
 	}
 }
 
-// WithReadLimit sets the maximum number of bytes accepted for a request
+// WithMaxBodyBytes sets the maximum number of bytes accepted for a request
 // body. Reads past the limit fail, both via [Context.Read] and raw reads of
 // the request body. Bodies declaring more than the limit are rejected without
 // reading them. Over-limit failures are reported as [ErrRequestEntityTooLarge] (413).
-// Pass it to [New].
+// A negative value disables the limit, zero rejects every request body, and a
+// positive value sets the limit. Pass it to [New].
 //
-// Default: 4MB
-func WithReadLimit(n int) AppOption {
-	Assert(n > 0)
+// Default: 4 MiB
+func WithMaxBodyBytes(n int) AppOption {
 	return func(o *appOptions) {
-		o.readLimit = n
+		o.maxBodyBytes = n
 	}
 }
 

@@ -58,7 +58,11 @@ func (me *App) newContext(
 	ctx.response = &httpResponseWriterWrapper{bodyBuffer: bodyBufferPool.Get().(*bytes.Buffer)}
 	ctx.response.tracker = &httpResponseWriterTracker{writer: w, statusCode: &ctx.response.statusCode}
 	ctx.request = r
-	ctx.request.Body = httpRequestBodyReaderWrapper{body: http.MaxBytesReader(w, r.Body, int64(me.options.readLimit))}
+	body := r.Body
+	if me.options.maxBodyBytes >= 0 {
+		body = http.MaxBytesReader(w, r.Body, int64(me.options.maxBodyBytes))
+	}
+	ctx.request.Body = httpRequestBodyReaderWrapper{body: body}
 	ctx.requestBodyBuffer = bodyBufferPool.Get().(*bytes.Buffer)
 	ctx.locals = make(map[string]any)
 	return ctx
@@ -206,8 +210,8 @@ func (me *Context) GetHttpRequest() *http.Request {
 // GetHttpResponseWriter returns the response writer. Status and body are
 // buffered until flush, while headers go directly to the underlying writer:
 // they can be set before or after the status code, and after [Context.Next]
-// returns. Use Unwrap on the returned writer for the raw path; any raw use
-// discards the buffer at flush.
+// returns. Call Unwrap to get the raw writer without buffering; the returned
+// wrapper is buffered. Any raw use discards the buffer at flush.
 func (me *Context) GetHttpResponseWriter() *httpResponseWriterWrapper {
 	return me.response
 }
@@ -307,7 +311,7 @@ func (me *Context) AddHeader(key, value string) {
 // and a large upload spikes memory. Stream such bodies directly from the
 // raw request body instead (see [Context.GetHttpRequest]).
 //
-// Bodies larger than [WithReadLimit] fail with [ErrRequestEntityTooLarge].
+// Bodies larger than [WithMaxBodyBytes] fail with [ErrRequestEntityTooLarge].
 // Reads that time out fail with [ErrRequestTimeout].
 //
 // The returned slice aliases a pooled buffer that is recycled after the
@@ -322,7 +326,7 @@ func (me *Context) Read() ([]byte, error) {
 
 // ReadAs reads the body and decodes it into out. It returns the decode
 // error when the body does not match the codec, [ErrRequestEntityTooLarge]
-// when the body exceeds [WithReadLimit], or [ErrRequestTimeout] when
+// when the body exceeds [WithMaxBodyBytes], or [ErrRequestTimeout] when
 // the read times out.
 func (me *Context) ReadAs(codec Codec, out any) error {
 	raw, err := me.Read()

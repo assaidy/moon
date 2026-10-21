@@ -1,6 +1,7 @@
 package moon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -381,7 +382,7 @@ func TestContext_Body(t *testing.T) {
 	})
 
 	t.Run("Read over limit errors", func(t *testing.T) {
-		app := New(WithReadLimit(5))
+		app := New(WithMaxBodyBytes(5))
 		app.MapAll("/", func(ctx *Context) error {
 			_, err := ctx.Read()
 			require.Error(t, err)
@@ -392,7 +393,7 @@ func TestContext_Body(t *testing.T) {
 	})
 
 	t.Run("Declared over limit rejected without running handlers", func(t *testing.T) {
-		app := New(WithReadLimit(5))
+		app := New(WithMaxBodyBytes(5))
 		ran := false
 		app.MapAll("/", func(ctx *Context) error {
 			ran = true
@@ -407,7 +408,7 @@ func TestContext_Body(t *testing.T) {
 	})
 
 	t.Run("Declared at limit passes to handlers", func(t *testing.T) {
-		app := New(WithReadLimit(5))
+		app := New(WithMaxBodyBytes(5))
 		app.MapAll("/", func(ctx *Context) error {
 			raw, err := ctx.Read()
 			require.NoError(t, err)
@@ -416,6 +417,43 @@ func TestContext_Body(t *testing.T) {
 		})
 
 		resp := app.Test(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("hello")))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("zero rejects any body", func(t *testing.T) {
+		app := New(WithMaxBodyBytes(0))
+		app.MapAll("/", func(ctx *Context) error {
+			_, err := ctx.Read()
+			return err
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("x"))
+		req.ContentLength = -1
+		resp := app.Test(req)
+		require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	})
+
+	t.Run("zero allows empty body", func(t *testing.T) {
+		app := New(WithMaxBodyBytes(0))
+		app.MapAll("/", func(ctx *Context) error {
+			return nil
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("negative disables limit", func(t *testing.T) {
+		app := New(WithMaxBodyBytes(-1))
+		app.MapAll("/", func(ctx *Context) error {
+			raw, err := ctx.Read()
+			require.NoError(t, err)
+			require.Len(t, raw, 4<<20+1)
+			return nil
+		})
+
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, 4<<20+1)))
+		resp := app.Test(req)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 

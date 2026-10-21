@@ -56,9 +56,9 @@ func (me *App) registerRootHandler() {
 
 func (me *App) dispatch(ctx *Context) {
 	ctx.handlers = []Handler{func(ctx *Context) error {
-		// Bodies declaring more than the read limit are rejected without reading
-		// them. Unknown sizes are enforced while reading instead.
-		if ctx.request.ContentLength > int64(me.options.readLimit) {
+		// Bodies declaring more than the body limit are rejected without
+		// reading them. Unknown sizes are enforced while reading instead.
+		if me.options.maxBodyBytes >= 0 && ctx.request.ContentLength > int64(me.options.maxBodyBytes) {
 			return ErrRequestEntityTooLarge
 		}
 		return ctx.Next()
