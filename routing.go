@@ -369,7 +369,7 @@ const (
 // Part is one unit inside a [Segment], as returned by [ParsePattern].
 //
 // A [Segment] holding only [PartParam] or [PartOptional] is a parameter
-// segment. Otherwise non-literal parts are separated by [PartLiteral]s.
+// segment. Otherwise it may hold literals and adjacent wildcard parts.
 type Part struct {
 	Kind PartKind
 	// Text is the literal for [PartLiteral], the name for [PartParam] and
@@ -389,12 +389,13 @@ type Segment []Part
 //	pattern = "/" [ segment { "/" segment } ]
 //	segment = ":" name [ "?" ] | { literal | "*" | "+" }
 //	name    = literal { literal }
+//	literal = letter | digit | "_" | "-" | "." | "\:" | "\*" | "\+" | "\\"
 //
 // A ":name" segment takes the whole segment: it matches any single
 // non-empty piece and captures it under name. ":name?" may be omitted,
-// capturing "". A name holds the same chars as a literal (letters,
-// digits, "_", "-" and "."). A ":" always starts a parameter, so a
-// literal colon must be escaped ("\:").
+// capturing "". A name is one or more literals and is unescaped, so
+// ":w_x.y-z\:xsdf" captures under "w_x.y-z:xsdf". A ":" always starts a
+// parameter, so a literal colon must be escaped ("\:").
 // A literal holds letters, digits, "_", "-" and ".". A trailing "*"
 // captures the rest of the path, slashes included, and may be empty;
 // a trailing "+" does the same but requires at least one character.
@@ -426,15 +427,9 @@ func ParsePattern(pattern string) ([]Segment, []string, error) {
 		for idx < len(piece) {
 			switch piece[idx] {
 			case '*':
-				if len(seg) != 0 && seg[len(seg)-1].Kind != PartLiteral {
-					return nil, nil, fmt.Errorf("non-literal parts must be separated by a literal in segment %q", piece)
-				}
 				seg = append(seg, Part{PartWildcard, "*"})
 				idx++
 			case '+':
-				if len(seg) != 0 && seg[len(seg)-1].Kind != PartLiteral {
-					return nil, nil, fmt.Errorf("non-literal parts must be separated by a literal in segment %q", piece)
-				}
 				seg = append(seg, Part{PartPlus, "+"})
 				idx++
 			case '\\':
@@ -460,23 +455,42 @@ func ParsePattern(pattern string) ([]Segment, []string, error) {
 					return nil, nil, fmt.Errorf("parameter in segment %q must take the whole segment", piece)
 				}
 				idx++ // consume the ':'
-				nameStart := idx
-				for idx < len(piece) && isLiteralChar(piece[idx]) {
-					idx++
+				var name strings.Builder
+				for idx < len(piece) {
+					c := piece[idx]
+					if isLiteralChar(c) {
+						name.WriteByte(c)
+						idx++
+						continue
+					}
+					if c != '\\' {
+						break
+					}
+					idx++ // consume the '\'
+					if idx == len(piece) {
+						return nil, nil, fmt.Errorf("dangling escape '\\' at end of segment %q", piece)
+					}
+					switch piece[idx] {
+					case '*', '+', ':', '\\':
+						name.WriteByte(piece[idx])
+					default:
+						return nil, nil, fmt.Errorf("invalid escape '\\%c' in segment %q; only '\\\\', '\\:', '\\*' and '\\+' can be escaped", piece[idx], piece)
+					}
+					idx++ // consume the escaped char
 				}
-				if nameStart == idx { // must have a name
+				if name.Len() == 0 { // must have a name
 					if idx < len(piece) && piece[idx] == '?' {
 						return nil, nil, fmt.Errorf("missing parameter name before '?' in segment %q", piece)
 					}
 					return nil, nil, fmt.Errorf("missing parameter name after ':' in segment %q", piece)
 				}
-				name := piece[nameStart:idx]
-				names = append(names, name)
+				nameText := name.String()
+				names = append(names, nameText)
 				if idx < len(piece) && piece[idx] == '?' {
-					seg = append(seg, Part{PartOptional, name})
+					seg = append(seg, Part{PartOptional, nameText})
 					idx++
 				} else {
-					seg = append(seg, Part{PartParam, name})
+					seg = append(seg, Part{PartParam, nameText})
 				}
 				if idx != len(piece) {
 					return nil, nil, fmt.Errorf("parameter in segment %q must take the whole segment", piece)

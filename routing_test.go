@@ -24,11 +24,15 @@ func TestRouter_ParsePattern(t *testing.T) {
 			"/:name.json",
 			"/users/:id",
 			"/user/:name?",
+			`/users/:w_x.y-z\:xsdf`,
 			"/a/:x?/b",
 			"/*",
 			"/api/*",
 			"/+",
 			"/user/+",
+			"/*+",
+			"/**",
+			"/+*",
 			"/v1/*/shop/*",
 			"/files/*.json",
 			"/a\\\\b",
@@ -57,11 +61,10 @@ func TestRouter_ParsePattern(t *testing.T) {
 			"/:from-:to",
 			"/:genus.:species",
 			"/api-:name",
+			"/xyz:param",
 			"/shop/product/color::color",
 			"/*:id",
 			"/:id*",
-			"/*+",
-			"/**",
 			"/user/*?",
 			"/user/+?",
 			"/trailing\\",
@@ -100,11 +103,39 @@ func TestRouter_ParsePattern(t *testing.T) {
 			{Kind: PartWildcard, Text: "*"},
 		}, segs[0])
 
+		segs, _, err = ParsePattern("/*+")
+		require.NoError(t, err)
+		require.Equal(t, Segment{
+			{Kind: PartWildcard, Text: "*"},
+			{Kind: PartPlus, Text: "+"},
+		}, segs[0])
+
+		segs, _, err = ParsePattern("/**")
+		require.NoError(t, err)
+		require.Equal(t, Segment{
+			{Kind: PartWildcard, Text: "*"},
+			{Kind: PartWildcard, Text: "*"},
+		}, segs[0])
+
 		segs, names, err = ParsePattern("/:version-id")
 		require.NoError(t, err)
 		require.Equal(t, []string{"version-id"}, names)
 		require.Equal(t, Segment{
 			{Kind: PartParam, Text: "version-id"},
+		}, segs[0])
+
+		segs, names, err = ParsePattern(`/:w_x.y-z\:xsdf`)
+		require.NoError(t, err)
+		require.Equal(t, []string{"w_x.y-z:xsdf"}, names)
+		require.Equal(t, Segment{
+			{Kind: PartParam, Text: "w_x.y-z:xsdf"},
+		}, segs[0])
+
+		segs, names, err = ParsePattern("/:name.json")
+		require.NoError(t, err)
+		require.Equal(t, []string{"name.json"}, names)
+		require.Equal(t, Segment{
+			{Kind: PartParam, Text: "name.json"},
 		}, segs[0])
 
 		segs, _, err = ParsePattern("/files/*.json")
@@ -347,11 +378,15 @@ func TestRouter_MatchPath(t *testing.T) {
 		{name: "multiple wildcards", pattern: "/v1/*/shop/*", path: "/v1/a/b/shop/c/d", wantParams: map[string]string{"*1": "a/b", "*2": "c/d"}, wantMatch: true},
 		{name: "plus needs content", pattern: "/user/+", path: "/user/a/b", wantParams: map[string]string{"+": "a/b"}, wantMatch: true},
 		{name: "plus rejects empty", pattern: "/user/+", path: "/user", wantParams: nil, wantMatch: false},
+		{name: "wildcard then plus", pattern: "/*+", path: "/abc", wantParams: map[string]string{"*": "ab", "+": "c"}, wantMatch: true},
+		{name: "adjacent wildcards", pattern: "/**", path: "/abc", wantParams: map[string]string{"*1": "abc", "*2": ""}, wantMatch: true},
+		{name: "plus then wildcard", pattern: "/+*", path: "/abc", wantParams: map[string]string{"+": "abc", "*": ""}, wantMatch: true},
 		{name: "wildcard with literal suffix", pattern: "/files/*.json", path: "/files/a/b.json", wantParams: map[string]string{"*": "a/b"}, wantMatch: true},
 		{name: "wildcard with literal suffix mismatch", pattern: "/files/*.json", path: "/files/a.txt", wantParams: nil, wantMatch: false},
 		{name: "wildcard after literal", pattern: "/x*", path: "/xabc", wantParams: map[string]string{"*": "abc"}, wantMatch: true},
 		{name: "escaped star is literal", pattern: `/\*`, path: "/*", wantParams: map[string]string{}, wantMatch: true},
 		{name: "escaped colon is literal", pattern: `/v1/some/resource/name\:customVerb`, path: "/v1/some/resource/name:customVerb", wantParams: map[string]string{}, wantMatch: true},
+		{name: "escaped colon in parameter name", pattern: `/:w_x.y-z\:xsdf`, path: "/value", wantParams: map[string]string{"w_x.y-z:xsdf": "value"}, wantMatch: true},
 		{name: "root match", pattern: "/", path: "/", wantParams: map[string]string{}, wantMatch: true},
 		{name: "root does not match extra path", pattern: "/", path: "/users", wantParams: nil, wantMatch: false},
 	}
