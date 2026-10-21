@@ -148,8 +148,8 @@ func WithListenAddress(address string) AppOption {
 //
 // Default: [slog.Default]
 func WithLogger(l *slog.Logger) AppOption {
+	Assert(l != nil)
 	return func(o *appOptions) {
-		Assert(l != nil)
 		o.logger = l
 	}
 }
@@ -161,8 +161,8 @@ func WithLogger(l *slog.Logger) AppOption {
 //
 // Default: [DefaultErrorHandler]
 func WithErrorHandler(eh ErrorHandler) AppOption {
+	Assert(eh != nil)
 	return func(o *appOptions) {
-		Assert(eh != nil)
 		o.errorHandler = eh
 	}
 }
@@ -201,24 +201,25 @@ func WithRequestLogging(b bool) AppOption {
 // Default: [RleDuration], [RleRemote], [RleMethod], [RlePath], [RleStatus]
 // and [RleError]
 func WithRequestLoggingEntries(entries []RequestLoggingEntry) AppOption {
+	validated := make([]RequestLoggingEntry, len(entries))
+	for i, e := range entries {
+		e.Key = strings.TrimSpace(e.Key)
+		Assert(e.Key != "", "key cannot be empty or whitespace")
+		Assert(e.Value != nil, "value func cannot be nil")
+
+		duplicateIndex := slices.IndexFunc(
+			validated[:i],
+			func(v RequestLoggingEntry) bool { return v.Key == e.Key },
+		)
+		Assert(
+			duplicateIndex == -1,
+			fmt.Sprintf("request logging entry key %q is already registered at index %d", e.Key, duplicateIndex),
+		)
+
+		validated[i] = e
+	}
+
 	return func(o *appOptions) {
-		validated := make([]RequestLoggingEntry, len(entries))
-		for i, e := range entries {
-			e.Key = strings.TrimSpace(e.Key)
-			Assert(e.Key != "", "key cannot be empty or whitespace")
-			Assert(e.Value != nil, "value func cannot be nil")
-
-			duplicateIndex := slices.IndexFunc(
-				validated[:i],
-				func(v RequestLoggingEntry) bool { return v.Key == e.Key },
-			)
-			Assert(
-				duplicateIndex == -1,
-				fmt.Sprintf("request logging entry key %q is already registered at index %d", e.Key, duplicateIndex),
-			)
-
-			validated[i] = e
-		}
 		o.rle = validated
 	}
 }
@@ -236,12 +237,13 @@ func WithGeneralOptionsHandler(b bool) AppOption {
 }
 
 // WithReadTimeout sets the maximum duration for reading the entire request,
-// including the body. Pass it to [New].
+// including the body. A negative value disables the timeout. It panics on a
+// zero duration. Pass it to [New].
 //
 // Default: no timeout
 func WithReadTimeout(d time.Duration) AppOption {
+	Assert(d != 0)
 	return func(o *appOptions) {
-		Assert(d > 0)
 		o.readTimeout = d
 	}
 }
@@ -249,36 +251,39 @@ func WithReadTimeout(d time.Duration) AppOption {
 // WithReadHeaderTimeout sets the maximum duration for reading request headers.
 // The connection's read deadline is reset after the headers are read,
 // allowing the Handler to decide what is considered too slow for the body.
+// A negative value disables the timeout. It panics on a zero duration.
 // Pass it to [New].
 //
-// Default: read timout
+// Default: no timeout
 func WithReadHeaderTimeout(d time.Duration) AppOption {
+	Assert(d != 0)
 	return func(o *appOptions) {
-		Assert(d > 0)
 		o.readHeaderTimeout = d
 	}
 }
 
 // WithWriteTimeout sets the maximum duration for writing the response. It is
 // reset whenever a new request's header is read. Like ReadTimeout, it
-// does not allow Handlers to make per-request decisions.
+// does not allow Handlers to make per-request decisions. A negative value
+// disables the timeout. It panics on a zero duration.
 // Pass it to [New].
 //
 // Default: no timeout
 func WithWriteTimeout(d time.Duration) AppOption {
+	Assert(d != 0)
 	return func(o *appOptions) {
-		Assert(d > 0)
 		o.writeTimeout = d
 	}
 }
 
 // WithIdleTimeout sets the maximum amount of time to wait for the next request
-// when keep-alives are enabled. Pass it to [New].
+// when keep-alives are enabled. A negative value disables the timeout. It
+// panics on a zero duration. Pass it to [New].
 //
-// Default: read timout
+// Default: no timeout
 func WithIdleTimeout(d time.Duration) AppOption {
+	Assert(d != 0)
 	return func(o *appOptions) {
-		Assert(d > 0)
 		o.idleTimeout = d
 	}
 }
@@ -290,8 +295,8 @@ func WithIdleTimeout(d time.Duration) AppOption {
 //
 // Default: [http.DefaultMaxHeaderBytes] (1MB)
 func WithMaxHeaderBytes(i int) AppOption {
+	Assert(i > 0)
 	return func(o *appOptions) {
-		Assert(i > 0)
 		o.maxHeaderBytes = i
 	}
 }
@@ -304,8 +309,8 @@ func WithMaxHeaderBytes(i int) AppOption {
 //
 // Default: [http.DefaultMaxHeaderValueCount] (500)
 func WithMaxHeaderValueCount(i int) AppOption {
+	Assert(i > 0)
 	return func(o *appOptions) {
-		Assert(i > 0)
 		o.maxHeaderValueCount = i
 	}
 }
@@ -318,8 +323,8 @@ func WithMaxHeaderValueCount(i int) AppOption {
 //
 // Default: 4MB
 func WithReadLimit(n int) AppOption {
+	Assert(n > 0)
 	return func(o *appOptions) {
-		Assert(n > 0)
 		o.readLimit = n
 	}
 }
@@ -341,8 +346,8 @@ func WithPrefork(b bool) AppOption {
 //
 // Default: number of logical CPUs from [runtime.NumCPU]
 func WithPreforkChildrenCount(i int) AppOption {
+	Assert(i > 0)
 	return func(o *appOptions) {
-		Assert(i > 0)
 		o.preforkChildrenCount = i
 	}
 }
@@ -354,8 +359,8 @@ func WithPreforkChildrenCount(i int) AppOption {
 //
 // Default: infinite retries
 func WithPreforkRetriesCount(i int) AppOption {
+	Assert(i >= 0)
 	return func(o *appOptions) {
-		Assert(i >= 0)
 		o.preforkRetriesCount = i
 	}
 }
@@ -367,8 +372,8 @@ func WithPreforkRetriesCount(i int) AppOption {
 //
 // Default: no TLS
 func WithTls(certFile, keyFile string) AppOption {
+	Assert(certFile != "" && keyFile != "")
 	return func(o *appOptions) {
-		Assert(certFile != "" && keyFile != "")
 		o.useTls = true
 		o.certFile = certFile
 		o.keyFile = keyFile
@@ -376,20 +381,18 @@ func WithTls(certFile, keyFile string) AppOption {
 }
 
 // WithTlsConfig provides a TLS configuration for the server.
-// The configuration is cloned before use by the server.
-// Pass it to [New].
+// The configuration is cloned before use by the server. A nil config
+// leaves the server's default TLS configuration. Pass it to [New].
 func WithTlsConfig(c *tls.Config) AppOption {
 	return func(o *appOptions) {
-		Assert(c != nil)
 		o.tlsConfig = c
 	}
 }
 
-// WithHttp2Config configures HTTP/2 connections.
-// Pass it to [New].
+// WithHttp2Config configures HTTP/2 connections. A nil config leaves the
+// default HTTP/2 configuration. Pass it to [New].
 func WithHttp2Config(c *http.HTTP2Config) AppOption {
 	return func(o *appOptions) {
-		Assert(c != nil)
 		o.http2Config = c
 	}
 }
@@ -399,12 +402,11 @@ func WithHttp2Config(c *http.HTTP2Config) AppOption {
 // If Protocols includes unencrypted HTTP/2, the server accepts
 // unencrypted HTTP/2 connections. The server can serve both HTTP/1
 // and unencrypted HTTP/2 on the same address and port.
-// Pass it to [New].
+// A nil value leaves the default protocol set. Pass it to [New].
 //
 // Default: HTTP/1 and HTTP/2
 func WithProtocols(p *http.Protocols) AppOption {
 	return func(o *appOptions) {
-		Assert(p != nil)
 		o.protocols = p
 	}
 }
@@ -445,12 +447,13 @@ func WithParallelServiceStop(b bool) AppOption {
 }
 
 // WithShutdownTimeout sets the maximum duration for http server shutdown.
+// A negative value disables the timeout. It panics on a zero duration.
 // Pass it to [New].
 //
 // Default: no timeout
 func WithShutdownTimeout(d time.Duration) AppOption {
+	Assert(d != 0)
 	return func(o *appOptions) {
-		Assert(d > 0)
 		o.shutdownTimeout = d
 	}
 }

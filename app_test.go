@@ -163,28 +163,28 @@ func TestWithReadTimeout(t *testing.T) {
 	app := New(WithReadTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.ReadTimeout)
 	require.Panics(t, func() { New(WithReadTimeout(0)) })
-	require.Panics(t, func() { New(WithReadTimeout(-time.Second)) })
+	require.NotPanics(t, func() { New(WithReadTimeout(-time.Second)) })
 }
 
 func TestWithReadHeaderTimeout(t *testing.T) {
 	app := New(WithReadHeaderTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.ReadHeaderTimeout)
 	require.Panics(t, func() { New(WithReadHeaderTimeout(0)) })
-	require.Panics(t, func() { New(WithReadHeaderTimeout(-time.Second)) })
+	require.NotPanics(t, func() { New(WithReadHeaderTimeout(-time.Second)) })
 }
 
 func TestWithWriteTimeout(t *testing.T) {
 	app := New(WithWriteTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.WriteTimeout)
 	require.Panics(t, func() { New(WithWriteTimeout(0)) })
-	require.Panics(t, func() { New(WithWriteTimeout(-time.Second)) })
+	require.NotPanics(t, func() { New(WithWriteTimeout(-time.Second)) })
 }
 
 func TestWithIdleTimeout(t *testing.T) {
 	app := New(WithIdleTimeout(time.Second))
 	require.Equal(t, time.Second, app.httpServer.IdleTimeout)
 	require.Panics(t, func() { New(WithIdleTimeout(0)) })
-	require.Panics(t, func() { New(WithIdleTimeout(-time.Second)) })
+	require.NotPanics(t, func() { New(WithIdleTimeout(-time.Second)) })
 }
 
 func TestWithMaxHeaderBytes(t *testing.T) {
@@ -233,21 +233,21 @@ func TestWithTlsConfig(t *testing.T) {
 	cfg := &tls.Config{}
 	app := New(WithTlsConfig(cfg))
 	require.Same(t, cfg, app.httpServer.TLSConfig)
-	require.Panics(t, func() { New(WithTlsConfig(nil)) })
+	require.NotPanics(t, func() { New(WithTlsConfig(nil)) })
 }
 
 func TestWithHttp2Config(t *testing.T) {
 	cfg := &http.HTTP2Config{}
 	app := New(WithHttp2Config(cfg))
 	require.Same(t, cfg, app.httpServer.HTTP2)
-	require.Panics(t, func() { New(WithHttp2Config(nil)) })
+	require.NotPanics(t, func() { New(WithHttp2Config(nil)) })
 }
 
 func TestWithProtocols(t *testing.T) {
 	p := &http.Protocols{}
 	app := New(WithProtocols(p))
 	require.Same(t, p, app.httpServer.Protocols)
-	require.Panics(t, func() { New(WithProtocols(nil)) })
+	require.NotPanics(t, func() { New(WithProtocols(nil)) })
 }
 
 func TestWithClientPriority(t *testing.T) {
@@ -267,7 +267,7 @@ func TestWithShutdownTimeout(t *testing.T) {
 	app := New(WithShutdownTimeout(time.Second))
 	require.Equal(t, time.Second, app.options.shutdownTimeout)
 	require.Panics(t, func() { New(WithShutdownTimeout(0)) })
-	require.Panics(t, func() { New(WithShutdownTimeout(-time.Second)) })
+	require.NotPanics(t, func() { New(WithShutdownTimeout(-time.Second)) })
 }
 
 func TestWithReadLimit(t *testing.T) {
