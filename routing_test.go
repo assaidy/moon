@@ -147,6 +147,13 @@ func TestRouter_MapPanics(t *testing.T) {
 		require.Panics(t, func() { app.MapAll("/api", nil) })
 		require.Panics(t, func() { app.MapGet("/api", nil) })
 	})
+
+	t.Run("nil route middleware", func(t *testing.T) {
+		app := New()
+		require.Panics(t, func() {
+			app.Map(http.MethodGet, "/api", dummy, WithMiddlewares(nil))
+		})
+	})
 }
 
 // Each method shortcut must register exactly its own method via Map.
@@ -261,6 +268,12 @@ func TestRouter_UsePanics(t *testing.T) {
 			require.Panics(t, func() { app.Use(prefix, dummy) })
 		})
 	}
+
+	t.Run("nil middleware", func(t *testing.T) {
+		app := New()
+		require.Panics(t, func() { app.Use("/", nil) })
+		require.Panics(t, func() { app.UseAll(nil) })
+	})
 }
 
 func TestRouter_IsValidHttpMethod(t *testing.T) {

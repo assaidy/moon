@@ -290,8 +290,9 @@ func (me *App) MapAll(pattern string, handler Handler, options ...RouteOption) {
 //
 // See [ParsePattern] for the pattern grammar.
 //
-// Panics on invalid prefix. Does nothing if no middlewares are given.
-// Registration order matters: only [App.Map] routes registered after
+// Panics on an invalid prefix or a nil middleware. Does nothing if no
+// middlewares are given. Registration order matters: only [App.Map] routes
+// registered after
 // this call observe it, in registration order.
 //
 // Middlewares run first when their prefix matches the request path, even
@@ -311,6 +312,9 @@ func (me *App) Use(prefix string, handlers ...Handler) {
 
 	if len(handlers) == 0 {
 		return
+	}
+	for _, handler := range handlers {
+		Assert(handler != nil, "middleware cannot be nil")
 	}
 
 	me.middlewares = append(me.middlewares, &middlewareEntry{
@@ -547,7 +551,12 @@ type RouteOption func(*routeEntry)
 // before the route handler.
 //
 // Each middleware must call [Context.Next] to reach the handler.
+//
+// Panics on a nil middleware.
 func WithMiddlewares(handlers ...Handler) RouteOption {
+	for _, handler := range handlers {
+		Assert(handler != nil, "middleware cannot be nil")
+	}
 	return func(re *routeEntry) {
 		re.handlers = append(re.handlers, handlers...)
 	}
