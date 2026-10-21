@@ -84,9 +84,7 @@ func TestRouter_ParsePattern(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, segs, 4)
 		require.Equal(t, Segment{
-			{Kind: PartLiteral, Text: "name"},
-			{Kind: PartLiteral, Text: ":"},
-			{Kind: PartLiteral, Text: "customVerb"},
+			{Kind: PartLiteral, Text: "name:customVerb"},
 		}, segs[3])
 
 		segs, _, err = ParsePattern(`/\*`)

@@ -432,80 +432,44 @@ func ParsePattern(pattern string) ([]Segment, []string, error) {
 			case '+':
 				seg = append(seg, Part{PartPlus, "+"})
 				idx++
-			case '\\':
-				idx++ // consume the '\'
-				if idx == len(piece) {
-					return nil, nil, fmt.Errorf("dangling escape '\\' at end of segment %q", piece)
-				}
-				switch piece[idx] {
-				case '*':
-					seg = append(seg, Part{PartLiteral, "*"})
-				case '+':
-					seg = append(seg, Part{PartLiteral, "+"})
-				case ':':
-					seg = append(seg, Part{PartLiteral, ":"})
-				case '\\':
-					seg = append(seg, Part{PartLiteral, "\\"})
-				default:
-					return nil, nil, fmt.Errorf("invalid escape '\\%c' in segment %q; only '\\\\', '\\:', '\\*' and '\\+' can be escaped", piece[idx], piece)
-				}
-				idx++ // consume the escaped char
 			case ':':
 				if len(seg) != 0 {
 					return nil, nil, fmt.Errorf("parameter in segment %q must take the whole segment", piece)
 				}
 				idx++ // consume the ':'
-				var name strings.Builder
-				for idx < len(piece) {
-					c := piece[idx]
-					if isLiteralChar(c) {
-						name.WriteByte(c)
-						idx++
-						continue
-					}
-					if c != '\\' {
-						break
-					}
-					idx++ // consume the '\'
-					if idx == len(piece) {
-						return nil, nil, fmt.Errorf("dangling escape '\\' at end of segment %q", piece)
-					}
-					switch piece[idx] {
-					case '*', '+', ':', '\\':
-						name.WriteByte(piece[idx])
-					default:
-						return nil, nil, fmt.Errorf("invalid escape '\\%c' in segment %q; only '\\\\', '\\:', '\\*' and '\\+' can be escaped", piece[idx], piece)
-					}
-					idx++ // consume the escaped char
+				name, next, err := parseLiteral(piece, idx)
+				if err != nil {
+					return nil, nil, err
 				}
-				if name.Len() == 0 { // must have a name
+				idx = next
+				if name == "" { // must have a name
 					if idx < len(piece) && piece[idx] == '?' {
 						return nil, nil, fmt.Errorf("missing parameter name before '?' in segment %q", piece)
 					}
 					return nil, nil, fmt.Errorf("missing parameter name after ':' in segment %q", piece)
 				}
-				nameText := name.String()
-				names = append(names, nameText)
+				names = append(names, name)
 				if idx < len(piece) && piece[idx] == '?' {
-					seg = append(seg, Part{PartOptional, nameText})
+					seg = append(seg, Part{PartOptional, name})
 					idx++
 				} else {
-					seg = append(seg, Part{PartParam, nameText})
+					seg = append(seg, Part{PartParam, name})
 				}
 				if idx != len(piece) {
 					return nil, nil, fmt.Errorf("parameter in segment %q must take the whole segment", piece)
 				}
 			default:
-				literalStart := idx
-				for idx < len(piece) && isLiteralChar(piece[idx]) {
-					idx++
+				literal, next, err := parseLiteral(piece, idx)
+				if err != nil {
+					return nil, nil, err
 				}
-				if literalStart == idx {
-					// there must be a char here. if not, it means we encountered a non-literal char,
-					// and it's not a special char as we already check them above.
+				if literal == "" {
+					// there must be a literal here; the non-literal char is
+					// not one of the parts handled above.
 					return nil, nil, fmt.Errorf("invalid character %q in segment %q", piece[idx], piece)
 				}
-				seg = append(seg, Part{PartLiteral, piece[literalStart:idx]})
+				seg = append(seg, Part{PartLiteral, literal})
+				idx = next
 			}
 		}
 
@@ -520,6 +484,38 @@ func isLiteralChar(c byte) bool {
 		c >= 'A' && c <= 'Z' ||
 		c >= '0' && c <= '9' ||
 		c == '_' || c == '-' || c == '.'
+}
+
+// parseLiteral parses a sequence of literal characters and escapes starting at
+// idx. It stops at the first byte that is not part of a literal and returns the
+// unescaped text plus the position after it. Invalid or dangling escapes are
+// reported as errors.
+func parseLiteral(piece string, idx int) (string, int, error) {
+	var literal strings.Builder
+	for idx < len(piece) {
+		c := piece[idx]
+		if isLiteralChar(c) {
+			literal.WriteByte(c)
+			idx++
+			continue
+		}
+		if c != '\\' {
+			break
+		}
+
+		idx++ // consume the '\'
+		if idx == len(piece) {
+			return "", idx, fmt.Errorf("dangling escape '\\' at end of segment %q", piece)
+		}
+		switch piece[idx] {
+		case '*', '+', ':', '\\':
+			literal.WriteByte(piece[idx])
+		default:
+			return "", idx, fmt.Errorf("invalid escape '\\%c' in segment %q; only '\\\\', '\\:', '\\*' and '\\+' can be escaped", piece[idx], piece)
+		}
+		idx++ // consume the escaped char
+	}
+	return literal.String(), idx, nil
 }
 
 // pieceEnd returns the end of the path piece starting at pos:
