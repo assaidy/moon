@@ -216,8 +216,8 @@ func TestWithPreforkChildrenCount(t *testing.T) {
 func TestWithPreforkRetriesCount(t *testing.T) {
 	require.Equal(t, 0, New(WithPreforkRetriesCount(0)).options.preforkRetriesCount)
 	require.Equal(t, 7, New(WithPreforkRetriesCount(7)).options.preforkRetriesCount)
-	require.Panics(t, func() { New(WithPreforkRetriesCount(-1)) })
-	require.Panics(t, func() { New(WithPreforkRetriesCount(-2)) })
+	require.Equal(t, -1, New(WithPreforkRetriesCount(-1)).options.preforkRetriesCount)
+	require.Equal(t, -2, New(WithPreforkRetriesCount(-2)).options.preforkRetriesCount)
 }
 
 func TestWithTls(t *testing.T) {

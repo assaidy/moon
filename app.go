@@ -356,11 +356,11 @@ func WithPreforkChildrenCount(i int) AppOption {
 // WithPreforkRetriesCount sets the number of times the prefork parent will
 // respawn a worker child process after it stops or crashes before giving up.
 // Once this limit is reached, [ErrPreforkRetriesExceeded] is returned from
-// [App.Start]. Pass it to [New].
+// [App.Start]. A negative value disables the retry limit, while zero allows no
+// retries. Pass it to [New].
 //
-// Default: infinite retries
+// Default: unlimited retries
 func WithPreforkRetriesCount(i int) AppOption {
-	Assert(i >= 0)
 	return func(o *appOptions) {
 		o.preforkRetriesCount = i
 	}

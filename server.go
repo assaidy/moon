@@ -149,7 +149,7 @@ func (me *App) forkChildren() error {
 				continue
 			}
 			me.options.logger.Error("a child process stopped abnormally", "pid", result.pid, "error", result.err)
-			if me.options.preforkRetriesCount != -1 && retries == me.options.preforkRetriesCount {
+			if me.options.preforkRetriesCount >= 0 && retries == me.options.preforkRetriesCount {
 				return ErrPreforkRetriesExceeded
 			}
 			if err := me.spawnChild(); err != nil {
