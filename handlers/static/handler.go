@@ -11,11 +11,12 @@
 // directory is replaced by the first of [WithIndexNames] that exists in it,
 // or, when [WithDirectoryBrowsing] is enabled, by a listing of its entries.
 // When nothing matches, the request is answered by [WithNotFoundHandler]
-// or, by default, [moon.ErrNotFound]. Files are served with their content
-// type, content length and, when known, their modification time; GET
-// requests carrying a Range header are answered with the requested bytes
-// when the file can be seeked, following the rules of [WithByteRanges].
-// Requests with a method other than GET and HEAD continue the chain.
+// or, by default, continue the chain via [moon.Context.Next]. Files are
+// served with their content type, content length and, when known, their
+// modification time; GET requests carrying a Range header are answered with
+// the requested bytes when the file can be seeked, following the rules of
+// [WithByteRanges]. Requests with a method other than GET and HEAD continue
+// the chain.
 package static
 
 import (
@@ -259,10 +260,12 @@ func WithMaxAge(i int) Option {
 }
 
 // WithNotFoundHandler sets the handler answering requests that resolve to
-// nothing to serve, instead of [moon.ErrNotFound]. It is not consulted for
-// failures while writing the body. Pass it to [New].
+// nothing to serve, instead of continuing the chain via
+// [moon.Context.Next]. It is not consulted for failures while writing the
+// body. Pass it to [New].
 //
-// Default: nil ([moon.ErrNotFound])
+// Default: nil ([moon.Context.Next], which resolves to the route handler,
+// [moon.ErrMethodNotAllowed] or [moon.ErrNotFound] as appropriate)
 func WithNotFoundHandler(h moon.Handler) Option {
 	return func(o *options) {
 		o.notFoundHandler = h
@@ -271,9 +274,9 @@ func WithNotFoundHandler(h moon.Handler) Option {
 
 // Handle serves the request. Requests skipped by [WithSkip] and requests
 // with a method other than GET and HEAD continue the chain via
-// [moon.Context.Next]. A request that resolves to nothing to serve is
-// answered by [WithNotFoundHandler] or [moon.ErrNotFound]. Errors are
-// returned to the caller: the error of writing the body, or
+// [moon.Context.Next]. A request that resolves to nothing to serve is handed
+// to [WithNotFoundHandler] or continues the chain via [moon.Context.Next].
+// Errors are returned to the caller: the error of writing the body, or
 // [moon.ErrRequestedRangeNotSatisfiable] when a Range request asks for
 // ranges that cannot be satisfied.
 func (me *Handler) Handle(ctx *moon.Context) error {
@@ -676,13 +679,17 @@ func setDownloadHeader(ctx *moon.Context, name string) {
 	ctx.SetHeader("Content-Disposition", disposition)
 }
 
-// notFound answers a request that resolved to no file, through
-// [WithNotFoundHandler] when configured and [moon.ErrNotFound] otherwise.
+// notFound answers a request that resolved to no file: through
+// [WithNotFoundHandler] when configured, and by continuing the chain via
+// [moon.Context.Next] otherwise. Continuing lets a later handler serve the
+// request when this handler runs as middleware, and resolves to
+// [moon.ErrNotFound] when it is the last handler, so a custom
+// [moon.ErrorHandler] still sees it.
 func (me *Handler) notFound(ctx *moon.Context) error {
 	if me.options.notFoundHandler != nil {
 		return me.options.notFoundHandler(ctx)
 	}
-	return moon.ErrNotFound
+	return ctx.Next()
 }
 
 // open opens name from the configured filesystem, or from the operating
