@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"syscall"
 	"testing"
 	"time"
 
@@ -76,6 +77,51 @@ func TestServer_StartShutdownLifecycle(t *testing.T) {
 
 	require.Equal(t, int32(1), svc.startCalls.Load())
 	require.Equal(t, int32(1), svc.stopCalls.Load())
+}
+
+func TestServer_RunUntilSignal(t *testing.T) {
+	t.Run("explicit signal", func(t *testing.T) {
+		addr := freePort(t)
+		app := New(WithListenAddress(addr))
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- app.RunUntilSignal(syscall.SIGUSR1) }()
+		waitServing(t, addr)
+
+		require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGUSR1))
+		select {
+		case err := <-errCh:
+			require.NoError(t, err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("RunUntilSignal did not return after signal")
+		}
+	})
+
+	t.Run("default signal", func(t *testing.T) {
+		addr := freePort(t)
+		app := New(WithListenAddress(addr))
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- app.RunUntilSignal() }()
+		waitServing(t, addr)
+
+		require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGINT))
+		select {
+		case err := <-errCh:
+			require.NoError(t, err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("RunUntilSignal did not return after signal")
+		}
+	})
+
+	t.Run("start error", func(t *testing.T) {
+		app := New(WithListenAddress("127.0.0.1:0"))
+		svc := newStubA()
+		svc.startErr = errors.New("start boom")
+		app.AddService(svc)
+
+		require.ErrorIs(t, app.RunUntilSignal(), ErrFailedToStartServices)
+	})
 }
 
 func TestServer_GetListener(t *testing.T) {

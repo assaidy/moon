@@ -19,8 +19,9 @@ import (
 // App is the HTTP server, router and owner of shared state, typed
 // dependencies and managed services. Build it with [New] plus [AppOption]s,
 // register routes with [App.Map] and [App.Use], then serve with [App.Start]
-// and stop with [App.Shutdown]. Use [App.Test] to exercise handlers without
-// listening.
+// and stop with [App.Shutdown]. Use [App.RunUntilSignal] to start, wait for a
+// signal, and shut down in one call. Use [App.Test] to exercise handlers
+// without listening.
 type App struct {
 	httpServer       *http.Server
 	routesPerMethod  map[string][]*routeEntry // method -> routes

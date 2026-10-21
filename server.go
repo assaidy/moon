@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -53,6 +54,37 @@ func (me *App) Start() error {
 		return ignoreErrServerClosed(me.httpServer.ServeTLS(listener, me.options.certFile, me.options.keyFile))
 	} else {
 		return ignoreErrServerClosed(me.httpServer.Serve(listener))
+	}
+}
+
+// RunUntilSignal starts the app, waits for one of the given signals, then
+// shuts it down gracefully. When no signals are given, it waits for
+// [syscall.SIGINT] and [syscall.SIGTERM]. It returns the error from
+// [App.Start], or the errors from [App.Shutdown] and [App.Start] joined with
+// [errors.Join] after a signal.
+func (me *App) RunUntilSignal(signals ...os.Signal) error {
+	if len(signals) == 0 {
+		signals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+	} else {
+		for _, sig := range signals {
+			Assert(sig != nil, "signal cannot be nil")
+		}
+	}
+
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, signals...)
+	defer signal.Stop(signalChan)
+
+	startErrChan := make(chan error, 1)
+	go func() {
+		startErrChan <- me.Start()
+	}()
+
+	select {
+	case err := <-startErrChan:
+		return err
+	case <-signalChan:
+		return errors.Join(me.Shutdown(), <-startErrChan)
 	}
 }
 
