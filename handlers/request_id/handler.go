@@ -1,11 +1,12 @@
 // Package request_id provides a handler that assigns every request a
-// request ID, echoes it in a response header, and makes it available to
-// handlers via [GetFromContext]. Register [Handler.Handle] as a middleware
-// or a route handler:
+// request ID, echoes it in a response header, and stores it in a context local.
+// Read it with [moon.Context.GetLocal] using [DefaultLocalKey] or the key
+// passed to [WithLocalKey]. Register [Handler.Handle] as a middleware or a
+// route handler:
 //
 //	app.UseAll(request_id.New().Handle)
 //
-// Customize the header or generator:
+// Customize the header, generator, or local key:
 //
 //	app.UseAll(request_id.New(request_id.WithHeader("X-Correlation-ID")).Handle)
 //
@@ -21,7 +22,9 @@ import (
 	"github.com/assaidy/moon"
 )
 
-const localKey = "moon.handlers.request_id.local_key"
+// DefaultLocalKey is the context local key used when [WithLocalKey] is not
+// given. Read the ID with [moon.Context.GetLocal] using this key.
+const DefaultLocalKey = "moon.handlers.request_id.local_key"
 
 // Handler ensures every request has a request ID. Use [New] to construct
 // it, passing [Option]s to configure it,
@@ -36,6 +39,7 @@ type options struct {
 	skip      func(*moon.Context) bool
 	header    string
 	generator func() string
+	localKey  string
 	rleKey    string
 	rleValue  moon.RequestLoggingEntryValue
 }
@@ -50,7 +54,7 @@ type options struct {
 // printable ASCII (0x20-0x7E, inside spaces allowed). It arrives pre-trimmed
 // because the HTTP server strips edge whitespace while parsing; otherwise
 // an ID is generated (see [WithGenerator]). The ID is echoed in
-// the response header and stored for [GetFromContext], then the chain runs.
+// the response header and stored in a context local, then the chain runs.
 //
 // To include the ID in request logs, add
 // [Handler.GetRequestLoggingEntry] to the app:
@@ -60,19 +64,28 @@ type options struct {
 //	app.UseAll(h.Handle)
 //
 // Default header: "X-Request-ID" (see [WithHeader]).
+// Default local key: [DefaultLocalKey] (see [WithLocalKey]).
 // Requests for which the [WithSkip] predicate returns true run the
-// chain untouched: no header is set and [GetFromContext] returns "".
+// chain untouched: no header is set and nothing is stored.
 func New(opts ...Option) *Handler {
 	options := options{
 		header:    "X-Request-ID",
 		generator: func() string { return moon.GenerateSecureToken() },
+		localKey:  DefaultLocalKey,
 		rleKey:    "request_id",
-		rleValue:  func(ctx *moon.Context, err error) any { return GetFromContext(ctx) },
 	}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return &Handler{options: options}
+
+	h := &Handler{options: options}
+	if h.options.rleValue == nil {
+		h.options.rleValue = func(ctx *moon.Context, err error) any {
+			v, _ := ctx.GetLocal[string](h.options.localKey)
+			return v
+		}
+	}
+	return h
 }
 
 // Option configures a [Handler]. Pass them to [New]:
@@ -81,7 +94,7 @@ func New(opts ...Option) *Handler {
 type Option func(*options)
 
 // WithSkip skips ID assignment for requests where f returns true.
-// The chain still runs; no header is set and [GetFromContext] returns "".
+// The chain still runs; no header is set and nothing is stored in the context.
 // Pass it to [New].
 //
 // Default: nil (nothing is skipped)
@@ -96,9 +109,9 @@ func WithSkip(f func(ctx *moon.Context) bool) Option {
 //
 // Default: "X-Request-ID"
 func WithHeader(s string) Option {
+	s = strings.TrimSpace(s)
+	moon.Assert(s != "", "header cannot be empty or whitespace")
 	return func(o *options) {
-		s = strings.TrimSpace(s)
-		moon.Assert(s != "", "header cannot be empty or whitespace")
 		o.header = s
 	}
 }
@@ -109,9 +122,22 @@ func WithHeader(s string) Option {
 //
 // Default: [moon.GenerateSecureToken].
 func WithGenerator(f func() string) Option {
+	moon.Assert(f != nil, "generator func cannot be nil")
 	return func(o *options) {
-		moon.Assert(f != nil, "generator func cannot be nil")
 		o.generator = f
+	}
+}
+
+// WithLocalKey sets the context local key under which the request ID is
+// stored. The key is used as-is, including surrounding whitespace. It panics
+// on an empty key. Read the ID with [moon.Context.GetLocal] using the same key.
+// Pass it to [New].
+//
+// Default: [DefaultLocalKey].
+func WithLocalKey(s string) Option {
+	moon.Assert(s != "", "local key cannot be empty")
+	return func(o *options) {
+		o.localKey = s
 	}
 }
 
@@ -124,9 +150,9 @@ func WithGenerator(f func() string) Option {
 //
 // Default: "request_id".
 func WithRequestLoggingEntryKey(s string) Option {
+	s = strings.TrimSpace(s)
+	moon.Assert(s != "", "key cannot be empty or whitespace")
 	return func(o *options) {
-		s = strings.TrimSpace(s)
-		moon.Assert(s != "", "key cannot be empty or whitespace")
 		o.rleKey = s
 	}
 }
@@ -137,10 +163,10 @@ func WithRequestLoggingEntryKey(s string) Option {
 // nil when the chain succeeded.
 // It panics on a nil func. Pass it to [New].
 //
-// Default: the request ID from [GetFromContext].
+// Default: the request ID stored under the handler's local key.
 func WithRequestLoggingEntryValue(f moon.RequestLoggingEntryValue) Option {
+	moon.Assert(f != nil, "value func cannot be nil")
 	return func(o *options) {
-		moon.Assert(f != nil, "value func cannot be nil")
 		o.rleValue = f
 	}
 }
@@ -164,7 +190,7 @@ func (me *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry {
 // Handle ensures every request has a request ID. The incoming request header
 // is reused when valid, otherwise an ID is generated (see
 // [WithGenerator]). The ID is echoed in the response header and
-// stored for [GetFromContext], then the chain runs.
+// stored in a context local, then the chain runs.
 func (me *Handler) Handle(ctx *moon.Context) error {
 	if me.options.skip != nil && me.options.skip(ctx) {
 		return ctx.Next()
@@ -172,16 +198,9 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 
 	requestId := sanitizeRequestId(ctx.GetHeader(me.options.header), me.options.generator)
 	ctx.SetHeader(me.options.header, requestId)
-	ctx.SetLocal(localKey, requestId)
+	ctx.SetLocal(me.options.localKey, requestId)
 
 	return ctx.Next()
-}
-
-// GetFromContext returns the request ID assigned by the handler,
-// or "" when the handler was skipped or never ran.
-func GetFromContext(ctx *moon.Context) string {
-	v, _ := ctx.GetLocal[string](localKey)
-	return v
 }
 
 // sanitizeRequestId returns requestId when valid; otherwise it trims and

@@ -109,7 +109,7 @@ func TestHandle(t *testing.T) {
 			app := moon.New()
 			app.Use("/*", h.Handle)
 			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
-				fromCtx = GetFromContext(ctx)
+				fromCtx, _ = ctx.GetLocal[string](DefaultLocalKey)
 				return ctx.Write(http.StatusOK, "hello")
 			})
 
@@ -138,6 +138,35 @@ func TestHandle(t *testing.T) {
 			require.Equal(t, got, fromCtx)
 		})
 	}
+}
+
+func TestOptionValidation(t *testing.T) {
+	require.Panics(t, func() { WithHeader(" ") })
+	require.Panics(t, func() { WithGenerator(nil) })
+	require.Panics(t, func() { WithLocalKey("") })
+	require.Panics(t, func() { WithRequestLoggingEntryKey(" ") })
+	require.Panics(t, func() { WithRequestLoggingEntryValue(nil) })
+}
+
+func TestWithLocalKey(t *testing.T) {
+	var customId string
+
+	app := moon.New()
+	h := New(WithLocalKey("  custom.request_id  "))
+	app.Use("/*", h.Handle)
+	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+		id, ok := ctx.GetLocal[string]("  custom.request_id  ")
+		require.True(t, ok)
+		require.NotEmpty(t, id)
+		customId = id
+		return ctx.Write(http.StatusOK, "hello")
+	})
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/resource", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, customId)
+	require.Equal(t, customId, resp.Header.Get("X-Request-ID"))
+	require.Panics(t, func() { WithLocalKey("") })
 }
 
 // The handler does not trim the incoming header itself: the HTTP server
@@ -176,6 +205,22 @@ func TestGetRequestLoggingEntry(t *testing.T) {
 	require.NotNil(t, custom.Value)
 }
 
+func TestGetRequestLoggingEntryUsesLocalKey(t *testing.T) {
+	app := moon.New()
+	h := New(WithLocalKey("custom.request_id"))
+	app.Use("/*", h.Handle)
+	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+		entry := h.GetRequestLoggingEntry()
+		require.Equal(t, "client-id", entry.Value(ctx, nil))
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req.Header.Set("X-Request-ID", "client-id")
+	resp := app.Test(req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func TestLogsRequestIdEntry(t *testing.T) {
 	logs := &captureLogHandler{}
 	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
@@ -212,7 +257,8 @@ func TestLogsCustomRequestIdEntry(t *testing.T) {
 	h := New(
 		WithRequestLoggingEntryKey("correlation_id"),
 		WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any {
-			return "custom-" + GetFromContext(ctx)
+			id, _ := ctx.GetLocal[string](DefaultLocalKey)
+			return "custom-" + id
 		}))
 	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
 	app.Use("/*", h.Handle)
