@@ -17,6 +17,7 @@
 package request_id
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/assaidy/moon"
@@ -105,12 +106,15 @@ func WithSkip(f func(ctx *moon.Context) bool) Option {
 }
 
 // WithHeader sets the request/response header carrying the ID.
-// Surrounding whitespace is trimmed. It panics on an empty name. Pass it to [New].
+// Surrounding whitespace is trimmed and the name is canonicalized
+// ("x-correlation-id" becomes "X-Correlation-Id"). It panics on an empty name.
+// Pass it to [New].
 //
 // Default: "X-Request-ID"
 func WithHeader(s string) Option {
 	s = strings.TrimSpace(s)
 	moon.Assert(s != "", "header cannot be empty or whitespace")
+	s = http.CanonicalHeaderKey(s)
 	return func(o *options) {
 		o.header = s
 	}
@@ -159,8 +163,8 @@ func WithRequestLoggingEntryKey(s string) Option {
 
 // WithRequestLoggingEntryValue sets the func rendering the request
 // logging entry value returned by [Handler.GetRequestLoggingEntry]. It runs
-// after the handler chain with the app's [moon.ErrorHandler] result as err,
-// nil when the chain succeeded.
+// after the handler chain with the chain's error as err, nil when the chain
+// succeeded.
 // It panics on a nil func. Pass it to [New].
 //
 // Default: the request ID stored under the handler's local key.

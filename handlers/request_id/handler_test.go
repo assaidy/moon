@@ -148,6 +148,10 @@ func TestOptionValidation(t *testing.T) {
 	require.Panics(t, func() { WithRequestLoggingEntryValue(nil) })
 }
 
+func TestWithHeaderCanonicalizes(t *testing.T) {
+	require.Equal(t, "X-Correlation-Id", New(WithHeader(" x-correlation-id ")).options.header)
+}
+
 func TestWithLocalKey(t *testing.T) {
 	var customId string
 
