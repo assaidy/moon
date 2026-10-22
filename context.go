@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -219,6 +220,12 @@ func (me *Context) GetHttpResponseWriter() *httpResponseWriterWrapper {
 // GetRemoteAddress returns the client address (host:port) the request came from.
 func (me *Context) GetRemoteAddress() string {
 	return me.request.RemoteAddr
+}
+
+// GetAppLogger returns the logger configured with [WithLogger], shared by the
+// whole app.
+func (me *Context) GetAppLogger() *slog.Logger {
+	return me.app.options.logger
 }
 
 // TODO: add ctx.RealIp() with trusted proxies and IP validations

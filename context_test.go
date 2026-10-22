@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -224,6 +225,20 @@ func TestContext_GetRemoteAddress(t *testing.T) {
 	}
 
 	require.Equal(t, expected, actual)
+}
+
+func TestContext_GetAppLogger(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+
+	app := New(WithLogger(logger))
+	var got *slog.Logger
+	app.Map(http.MethodGet, "/", func(ctx *Context) error {
+		got = ctx.GetAppLogger()
+		return nil
+	})
+
+	app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Same(t, logger, got)
 }
 
 func TestContext_Headers(t *testing.T) {

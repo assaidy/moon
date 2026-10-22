@@ -467,6 +467,7 @@ ctx.GetAllParams()       // map[string]string
 ctx.GetHeader("Accept")  // request header value
 ctx.GetAllHeaders()      // map[string][]string
 ctx.GetRemoteAddress()   // "127.0.0.1:54321"
+ctx.GetAppLogger()       // *slog.Logger from WithLogger
 ctx.GetRouteId()         // route id from WithId, or ""
 ctx.GetHttpRequest()     // underlying *http.Request
 ```
