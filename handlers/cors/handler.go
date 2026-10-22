@@ -265,7 +265,7 @@ func WithAllowedOrigins(origins []string) Option {
 // origin is allowed, based on application logic. It receives the raw value
 // of the Origin request header and returns true to allow it, and it is only
 // consulted when the origin does not match the list given to
-// [WithAllowedOrigins]; when it allows the origin, that origin is
+// [WithAllowedOrigins]; when it allows the origin, that raw origin is
 // echoed back in Access-Control-Allow-Origin. Pass it to [New].
 //
 // Warning: never let the function return true for every origin. This is
