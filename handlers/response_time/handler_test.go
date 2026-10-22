@@ -12,6 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWithHeader(t *testing.T) {
+	require.Equal(t, "X-Took", New(WithHeader(" x-took ")).options.header)
+	require.Panics(t, func() { New(WithHeader("  ")) })
+}
+
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name        string
@@ -30,8 +35,8 @@ func TestHandle(t *testing.T) {
 			wantPresent: true,
 		},
 		{
-			name:        "custom header",
-			handler:     New(WithHeader("X-Took")),
+			name:        "custom header is canonicalized",
+			handler:     New(WithHeader(" x-took ")),
 			route:       nil,
 			header:      "X-Took",
 			wantStatus:  http.StatusOK,

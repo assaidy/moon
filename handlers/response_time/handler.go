@@ -14,6 +14,7 @@
 package response_time
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -68,14 +69,15 @@ func WithSkip(f func(ctx *moon.Context) bool) Option {
 }
 
 // WithHeader sets the response header carrying the duration.
-// Surrounding whitespace is trimmed. It panics on an empty name. Pass it to [New].
+// Surrounding whitespace is trimmed and the name is canonicalized
+// ("x-took" becomes "X-Took"). It panics on an empty name. Pass it to [New].
 //
 // Default: "X-Response-Time"
 func WithHeader(s string) Option {
 	return func(o *options) {
 		s = strings.TrimSpace(s)
 		moon.Assert(s != "", "header cannot be empty or whitespace")
-		o.header = s
+		o.header = http.CanonicalHeaderKey(s)
 	}
 }
 
