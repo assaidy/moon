@@ -56,10 +56,10 @@ func TestWithLogger(t *testing.T) {
 
 func TestWithErrorHandler(t *testing.T) {
 	var captured error
-	app := New(WithErrorHandler(func(ctx *Context, err error) error {
-		captured = err
+	app := New(WithErrorHandler(func(ctx *Context) error {
+		captured = ctx.Next()
 		ctx.SetStatusCode(http.StatusTeapot)
-		return err
+		return captured
 	}))
 	sentinel := errors.New("boom")
 	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
@@ -69,7 +69,53 @@ func TestWithErrorHandler(t *testing.T) {
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 	require.Equal(t, http.StatusTeapot, resp.StatusCode)
 	require.Equal(t, sentinel, captured)
-	require.Panics(t, func() { New(WithErrorHandler(nil)) })
+	require.Nil(t, New(WithErrorHandler(nil)).options.errorHandler)
+}
+
+func TestWithErrorHandlerNil(t *testing.T) {
+	t.Run("disables error rendering", func(t *testing.T) {
+		app := New(WithErrorHandler(nil))
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+			return ErrNotFound
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("lets the default handler run later in the chain", func(t *testing.T) {
+		app := New(WithErrorHandler(nil))
+		app.UseAll(DefaultErrorHandler)
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+			return ErrNotFound
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+}
+
+func TestErrorHandlerRunsFirst(t *testing.T) {
+	var order []string
+
+	app := New(WithErrorHandler(func(ctx *Context) error {
+		order = append(order, "error-before")
+		err := ctx.Next()
+		order = append(order, "error-after")
+		return err
+	}))
+	app.UseAll(func(ctx *Context) error {
+		order = append(order, "middleware")
+		return ctx.Next()
+	})
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+		order = append(order, "route")
+		return nil
+	})
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, []string{"error-before", "middleware", "route", "error-after"}, order)
 }
 
 func TestWithRequestLogging(t *testing.T) {

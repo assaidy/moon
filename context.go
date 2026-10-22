@@ -500,8 +500,10 @@ func (me *Context) Next() error {
 	return me.handlers[index](me)
 }
 
-// IsMiddleware reports whether the current handler runs as a middleware.
-// It is true inside handlers registered via [App.Use].
+// IsMiddleware reports whether the current handler runs before the route
+// handler. It is true inside handlers registered via [App.Use], the configured
+// error handler (see [WithErrorHandler]) and the app's internal pre-route
+// handlers; it is false inside route middlewares and route handlers.
 func (me *Context) IsMiddleware() bool {
 	return me.nextHandlerIndex > 0 && me.nextHandlerIndex <= me.middlewareCount
 }

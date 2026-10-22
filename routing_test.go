@@ -755,8 +755,9 @@ func TestRouter_Dispatch(t *testing.T) {
 
 	t.Run("unmatched with no middleware", func(t *testing.T) {
 		var ran bool
-		app := New(WithErrorHandler(func(ctx *Context, err error) error {
+		app := New(WithErrorHandler(func(ctx *Context) error {
 			ran = true
+			err := ctx.Next()
 			ctx.WriteStatus(http.StatusNotFound)
 			return err
 		}))
@@ -861,10 +862,10 @@ func TestRouter_Dispatch(t *testing.T) {
 	t.Run("unknown path reaches custom error handler as not_found", func(t *testing.T) {
 		var captured error
 
-		app := New(WithErrorHandler(func(ctx *Context, err error) error {
-			captured = err
+		app := New(WithErrorHandler(func(ctx *Context) error {
+			captured = ctx.Next()
 			ctx.WriteAs(http.StatusNotFound, CodecJson, ErrNotFound)
-			return err
+			return captured
 		}))
 		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
@@ -876,10 +877,10 @@ func TestRouter_Dispatch(t *testing.T) {
 	t.Run("wrong method reaches custom error handler as method_not_allowed", func(t *testing.T) {
 		var captured error
 
-		app := New(WithErrorHandler(func(ctx *Context, err error) error {
-			captured = err
+		app := New(WithErrorHandler(func(ctx *Context) error {
+			captured = ctx.Next()
 			ctx.WriteAs(http.StatusMethodNotAllowed, CodecJson, ErrMethodNotAllowed)
-			return err
+			return captured
 		}))
 		app.Map(http.MethodGet, "/users", newHandler("handler", &[]string{}))
 
@@ -893,10 +894,10 @@ func TestRouter_Dispatch(t *testing.T) {
 		var order []string
 		var captured error
 
-		app := New(WithErrorHandler(func(ctx *Context, err error) error {
-			captured = err
+		app := New(WithErrorHandler(func(ctx *Context) error {
+			captured = ctx.Next()
 			ctx.WriteStatus(http.StatusTeapot)
-			return err
+			return captured
 		}))
 
 		app.Use("/*", func(ctx *Context) error {

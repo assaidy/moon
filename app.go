@@ -104,7 +104,7 @@ func New(opts ...AppOption) *App {
 type appOptions struct {
 	listenAddress               string
 	logger                      *slog.Logger
-	errorHandler                ErrorHandler
+	errorHandler                Handler
 	enableRequestLogging        bool
 	enableGeneralOptionsHandler bool
 	readTimeout                 time.Duration
@@ -162,11 +162,17 @@ func WithLogger(l *slog.Logger) AppOption {
 // WithErrorHandler sets the handler used to handle errors returned by the
 // handler chain, including [ErrNotFound] for unknown paths and
 // [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
-// inspect or override them. It panics on a nil handler. Pass it to [New].
+// inspect or override them. It is registered as the first handler in the
+// chain, so it wraps every middleware and route handler: it must call
+// [Context.Next] and handle the error that comes back.
+//
+// A nil handler disables the built-in one. The chain still runs, but no
+// handler renders errors unless you register one yourself, which lets a
+// measuring middleware such as the response_time handler count error
+// rendering time by registering [DefaultErrorHandler] after itself.
 //
 // Default: [DefaultErrorHandler]
-func WithErrorHandler(eh ErrorHandler) AppOption {
-	Assert(eh != nil)
+func WithErrorHandler(eh Handler) AppOption {
 	return func(o *appOptions) {
 		o.errorHandler = eh
 	}

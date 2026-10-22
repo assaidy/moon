@@ -264,13 +264,15 @@ func logging(ctx *moon.Context) error {
 Chain rules:
 
 - A handler that returns without calling `Next` ends the chain.
-- Returning a non-nil error ends the chain and hands the error to the app's
-  `ErrorHandler`.
+- Returning a non-nil error ends the chain; the error handler registered first
+  in the chain (see `WithErrorHandler`) receives it.
 - `Next` when no handlers remain returns `moon.ErrNotFound`.
 - Because responses are buffered, a middleware can set headers or a status after
   `Next` returns and still affect the response.
-- `Context.IsMiddleware` reports whether the currently executing handler is a
-  middleware registered by `Use`.
+- `Context.IsMiddleware` reports whether the currently executing handler runs
+  before the route handler: handlers registered by `Use`, the error handler and
+  the app's internal pre-route handlers. It is false for route middlewares and
+  route handlers.
 
 Route handlers and middleware use the same type. The distinction is where they
 are registered, not what they can do.
@@ -436,7 +438,7 @@ handler. Each middleware must call `Next` to reach the handler.
 
 #### Not found and method not allowed
 
-When no route matches, moon invokes the configured `ErrorHandler` with:
+When no route matches, the chain returns:
 
 - `moon.ErrMethodNotAllowed` when the path matches a route registered for a
   different method;
@@ -577,8 +579,8 @@ func timing(ctx *moon.Context) error {
 }
 ```
 
-The buffer is flushed after the error handler runs. If the handler chain writes
-nothing, the status defaults to `200`.
+The buffer is flushed after the chain, including the error handler, runs. If the
+handler chain writes nothing, the status defaults to `200`.
 
 Some responses cannot be buffered: server-sent events, WebSockets, large
 streaming downloads and anything that needs `http.Flusher` or `http.Hijacker`.
@@ -782,7 +784,8 @@ another `Error` by `Kind`, so `errors.Is` works across details and wrapping.
 
 #### Default error handler
 
-`DefaultErrorHandler` writes errors as JSON:
+`DefaultErrorHandler` is registered as the first handler in the chain. It calls
+`Next` and writes errors as JSON:
 
 - An `Error` other than `ErrInternalServerError` is written with its status code,
   kind, description and details.
@@ -792,29 +795,54 @@ another `Error` by `Kind`, so `errors.Is` works across details and wrapping.
   as details in the log.
 - Details for internal errors remain in the logs, not in the response.
 
-The value returned by the error handler is what request logging records as the
-request error. Returning `nil` keeps the failure out of the request record.
+The error the chain returns is what request logging records as the request
+error. Because the error handler is part of the chain, one that returns `nil`
+keeps the failure out of the request record.
 
 #### Custom error handler
 
+An error handler is a normal `moon.Handler`. It is registered as the first
+handler in the chain, so it must call `Next` and handle the error that comes
+back:
+
 ```go
-app := moon.New(moon.WithErrorHandler(func(ctx *moon.Context, err error) error {
+app := moon.New(moon.WithErrorHandler(func(ctx *moon.Context) error {
+    err := ctx.Next()
+    if err == nil {
+        return nil
+    }
+
     var e moon.Error
     if errors.As(err, &e) {
         ctx.SetHeader("X-Error-Kind", e.Kind)
-        return ctx.WriteJson(e.StatusCode, e)
+        ctx.WriteJson(e.StatusCode, e)
+        return err
     }
 
     ctx.SetHeader("X-Error-Kind", "internal")
-    return ctx.WriteJson(
+    ctx.WriteJson(
         http.StatusInternalServerError,
         moon.NewError(http.StatusInternalServerError, "internal", "Something went wrong."),
     )
+    return err
 }))
 ```
 
 Because 404 and 405 are passed through the same handler, a custom error handler
 can inspect or override them too.
+
+Passing `nil` disables the built-in handler. Errors are then rendered only by a
+handler you register yourself, which lets a timing middleware include error
+rendering in its measurement:
+
+```go
+app := moon.New(moon.WithErrorHandler(nil))
+app.UseAll(response_time.New().Handle)
+app.UseAll(moon.DefaultErrorHandler)
+```
+
+`DefaultErrorHandler` runs after the timing handler returns, so the reported
+duration includes rendering the error response.
 
 #### Built-in errors
 
@@ -921,7 +949,7 @@ An app starts with these entries, in order:
 | `method` | Request method |
 | `path` | Request path |
 | `status` | Response status code (defaults to 200) |
-| `error` | Error returned by the app's error handler |
+| `error` | Error returned by the chain |
 
 Additional built-in entries are opt-in:
 
@@ -1181,7 +1209,7 @@ request logging paths as live requests.
 | --- | --- | --- |
 | `WithListenAddress(address)` | `:http`, or `:https` with TLS | TCP address to listen on. |
 | `WithLogger(logger)` | `slog.Default()` | Logger for framework, service and request logs. Panics on nil. |
-| `WithErrorHandler(handler)` | `DefaultErrorHandler` | Handles errors from the chain, including 404 and 405. Panics on nil. |
+| `WithErrorHandler(handler)` | `DefaultErrorHandler` | Handles errors from the chain, including 404 and 405. Registered first in the chain; `nil` disables it. |
 | `WithRequestLogging(bool)` | `false` | Logs every handled request. |
 | `WithRequestLoggingEntries(entries)` | `RleDuration`, `RleRemote`, `RleMethod`, `RlePath`, `RleStatus`, `RleError` | Replaces the request logging list. |
 | `WithGeneralOptionsHandler(bool)` | `false` | Lets the server answer general `OPTIONS` requests. |
@@ -1222,7 +1250,7 @@ request logging paths as live requests.
 | `RleMethod` | `method` | Default entry. |
 | `RlePath` | `path` | Default entry. |
 | `RleStatus` | `status` | Default entry; 200 when nothing was written. |
-| `RleError` | `error` | Default entry; error returned by the error handler. |
+| `RleError` | `error` | Default entry; error returned by the chain. |
 | `RleTime` | `time` | Opt-in; requires its `Before` hook. |
 | `RleUrl` | `url` | Opt-in; path plus query. |
 | `RlePid` | `pid` | Opt-in. |

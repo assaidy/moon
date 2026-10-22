@@ -330,7 +330,7 @@ func TestLogRequest_Entries(t *testing.T) {
 }
 
 func TestLogRequest_Error(t *testing.T) {
-	t.Run("logs the error the error handler returned", func(t *testing.T) {
+	t.Run("logs the error the chain returned", func(t *testing.T) {
 		logs := &captureLogHandler{}
 		app := testLoggedApp(logs)
 		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
@@ -370,7 +370,8 @@ func TestLogRequest_Error(t *testing.T) {
 		app := New(
 			WithLogger(slog.New(logs)),
 			WithRequestLogging(true),
-			WithErrorHandler(func(ctx *Context, err error) error {
+			WithErrorHandler(func(ctx *Context) error {
+				_ = ctx.Next()
 				ctx.WriteStatus(http.StatusTeapot)
 				return nil
 			}))
@@ -526,7 +527,7 @@ func TestRle_BuiltinEntries(t *testing.T) {
 			require.Nil(t, loggedAttrs(t, logs)["error"])
 		})
 
-		t.Run("logs the error the error handler returned", func(t *testing.T) {
+		t.Run("logs the error the chain returned", func(t *testing.T) {
 			app, logs := testEntryApp(t, RleError, func(ctx *Context) error { return ErrNotFound })
 
 			app.Test(httptest.NewRequest(http.MethodGet, "/users/42", nil))

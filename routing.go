@@ -36,9 +36,6 @@ func (me *App) registerRootHandler() {
 		}
 
 		err := ctx.Next()
-		if err != nil {
-			err = me.options.errorHandler(ctx, err)
-		}
 		ctx.response.flush()
 
 		if me.options.enableRequestLogging {
@@ -55,14 +52,22 @@ func (me *App) registerRootHandler() {
 }
 
 func (me *App) dispatch(ctx *Context) {
-	ctx.handlers = []Handler{func(ctx *Context) error {
+	ctx.handlers = make([]Handler, 0, len(me.middlewares)+2)
+
+	// The error handler is the first handler so it wraps every middleware and
+	// route handler, and therefore sees the error the chain returns.
+	if me.options.errorHandler != nil {
+		ctx.handlers = append(ctx.handlers, me.options.errorHandler)
+	}
+
+	ctx.handlers = append(ctx.handlers, func(ctx *Context) error {
 		// Bodies declaring more than the body limit are rejected without
 		// reading them. Unknown sizes are enforced while reading instead.
 		if me.options.maxBodyBytes >= 0 && ctx.request.ContentLength > int64(me.options.maxBodyBytes) {
 			return ErrRequestEntityTooLarge
 		}
 		return ctx.Next()
-	}}
+	})
 
 	var targetRoute *routeEntry
 
@@ -171,10 +176,11 @@ func IsValidHttpMethod(method string) bool {
 // Request flow: middlewares registered with [App.Use] before this call
 // whose prefix matches the request path run first, in registration order,
 // then the route middlewares from [WithMiddlewares], then handler. When the
-// path matches but the method is unregistered, the app's [ErrorHandler] is
-// invoked with [ErrMethodNotAllowed] after any matching middlewares; when
-// nothing matches it is invoked with [ErrNotFound] after any matching
-// middlewares, so a custom handler can inspect or override them.
+// path matches but the method is unregistered, the app's configured error
+// handler (see [WithErrorHandler]) is invoked with [ErrMethodNotAllowed] after
+// any matching middlewares; when nothing matches it is invoked with
+// [ErrNotFound] after any matching middlewares, so a custom handler can inspect
+// or override them.
 func (me *App) Map(method string, pattern string, handler Handler, options ...RouteOption) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
@@ -302,7 +308,8 @@ func (me *App) MapAll(pattern string, handler Handler, options ...RouteOption) {
 // otherwise [ErrNotFound].
 //
 // Each middleware must call [Context.Next] to continue the chain; a
-// returned error from the chain is passed to the app's [ErrorHandler].
+// returned error from the chain is handled by the app's configured error
+// handler (see [WithErrorHandler]).
 // A middleware that writes a response without calling [Context.Next]
 // short-circuits the chain, so it can serve requests without a route.
 func (me *App) Use(prefix string, handlers ...Handler) {
@@ -337,8 +344,9 @@ func (me *App) UseAll(handlers ...Handler) {
 // Call [Context.Next] to invoke the next handler in the chain and return
 // its error (typically `return ctx.Next()`). A call with no handlers left
 // returns [ErrNotFound]. Return nil to end the chain
-// successfully, or a non-nil error to abort and invoke the app
-// [ErrorHandler]. Use the [Context] Write methods to buffer a response.
+// successfully, or a non-nil error to abort and be handled by the app's
+// configured error handler (see [WithErrorHandler]). Use the [Context] Write
+// methods to buffer a response.
 //
 // Status and body are buffered until the chain finishes, so headers or
 // status set after [Context.Next] returns still apply. Do not mix buffered

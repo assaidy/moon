@@ -56,8 +56,8 @@ func testErrorHandlerResponse(t *testing.T, handlerErr error) (int, map[string]a
 	t.Helper()
 
 	var logged error
-	app := New(WithErrorHandler(func(ctx *Context, err error) error {
-		logged = DefaultErrorHandler(ctx, err)
+	app := New(WithErrorHandler(func(ctx *Context) error {
+		logged = DefaultErrorHandler(ctx)
 		return logged
 	}))
 	app.Map(http.MethodGet, "/x", func(ctx *Context) error {

@@ -32,9 +32,9 @@ type RequestLoggingEntry struct {
 type RequestLoggingEntryBefore func(*Context)
 
 // RequestLoggingEntryValue renders the value logged for a
-// [RequestLoggingEntry] after the handler chain finished. err is the error
-// the app's [ErrorHandler] returned, nil when the chain succeeded, so it
-// matches the error the response carries. Keep it cheap and non-blocking.
+// [RequestLoggingEntry] after the handler chain finished. err is the error the
+// chain returned, nil when the chain succeeded, so it matches the error the
+// response carries. Keep it cheap and non-blocking.
 type RequestLoggingEntryValue func(*Context, error) any
 
 // defaultRequestLoggingEntries is the entry list every app starts with.
@@ -127,8 +127,8 @@ var (
 		},
 	}
 
-	// RleError logs the error the app's [ErrorHandler] returned, or nil when
-	// the handler chain succeeded.
+	// RleError logs the error the chain returned, or nil when the handler chain
+	// succeeded.
 	RleError = RequestLoggingEntry{
 		Key: "error",
 		Value: func(ctx *Context, err error) any {
@@ -191,8 +191,8 @@ func (me *App) AddRequestLoggingEntry(entry RequestLoggingEntry) {
 }
 
 // logRequest logs the handled request with one attribute per entry in rle,
-// the list captured when the request started. err is what the app's
-// [ErrorHandler] returned, nil when the handler chain succeeded.
+// the list captured when the request started. err is the error the chain
+// returned, nil when the handler chain succeeded.
 func (me *App) logRequest(ctx *Context, err error, rle []RequestLoggingEntry) {
 	args := make([]any, 0, len(rle)*2)
 	for _, e := range rle {

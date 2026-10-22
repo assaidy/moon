@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-// Error is the standard JSON error body written by the default [ErrorHandler].
+// Error is the standard JSON error body written by [DefaultErrorHandler].
 // StatusCode sets the response status and is never serialized. Kind is a
 // machine-readable code matched by [Error.Is]. Details carries optional extra
 // context and is omitted when nil.
@@ -92,26 +92,31 @@ var (
 	ErrNetworkAuthenticationRequired = NewError(http.StatusNetworkAuthenticationRequired, "network_authentication_required", "Network authentication is required.")
 )
 
-// ErrorHandler handles an error returned by the handler chain.
-// This includes [ErrNotFound] for unknown paths and
-// [ErrMethodNotAllowed] for unregistered methods, so a custom handler can
-// inspect or override them.
-// Use the [Context] Write methods to send the response, then return the
-// error to log: request logging, when enabled via
-// [WithRequestLogging], logs the returned error, so returning
-// nil keeps the failure out of the request record.
-// It is set via [WithErrorHandler].
-type ErrorHandler func(ctx *Context, err error) error
-
-// DefaultErrorHandler writes an [Error] as JSON with its status code,
-// stripping Details for internal_server_error, and turns any other error
-// into a generic [ErrInternalServerError] response so handler failures are
-// never exposed to the client.
+// DefaultErrorHandler is the error handler a [New] app registers by default.
+// It calls [Context.Next] and handles the error the chain returns, including
+// [ErrNotFound] for unknown paths and [ErrMethodNotAllowed] for unregistered
+// methods.
+//
+// It writes that error as JSON with its status code, stripping Details for
+// internal_server_error, and turns any other error into a generic
+// [ErrInternalServerError] response so handler failures are never exposed to
+// the client.
 //
 // It returns the error to log: err itself when it is an [Error], keeping
 // its Details in the logs, and [ErrInternalServerError] with err as Details
-// otherwise, so request logging always records an [Error].
-func DefaultErrorHandler(ctx *Context, err error) error {
+// otherwise, so request logging always records an [Error]. It returns nil when
+// the chain succeeded.
+//
+// It is registered as the first handler in the chain, so error rendering runs
+// after the rest of the chain returns. To measure that rendering time, for
+// example with the response_time handler, pass nil to [WithErrorHandler] and
+// register DefaultErrorHandler after the measuring handler instead.
+func DefaultErrorHandler(ctx *Context) error {
+	err := ctx.Next()
+	if err == nil {
+		return nil
+	}
+
 	response := ErrInternalServerError
 	if e, ok := errors.AsType[Error](err); ok {
 		// internal_server_error keeps the generic body, so internal details

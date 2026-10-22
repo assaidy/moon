@@ -1303,13 +1303,12 @@ func TestContext_IsMiddleware(t *testing.T) {
 		require.Equal(t, []bool{true, false, false, false}, mids)
 	})
 
-	t.Run("route only and unmatched are not middleware", func(t *testing.T) {
+	t.Run("error handler is middleware, route and unmatched are not", func(t *testing.T) {
 		var mids []bool
 
-		app := New(WithErrorHandler(func(ctx *Context, err error) error {
+		app := New(WithErrorHandler(func(ctx *Context) error {
 			mids = append(mids, ctx.IsMiddleware())
-			ctx.WriteStatus(http.StatusNotFound)
-			return err
+			return ctx.Next()
 		}))
 		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
 			mids = append(mids, ctx.IsMiddleware())
@@ -1318,7 +1317,7 @@ func TestContext_IsMiddleware(t *testing.T) {
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
 		app.Test(httptest.NewRequest(http.MethodGet, "/missing", nil))
-		require.Equal(t, []bool{false, false}, mids)
+		require.Equal(t, []bool{true, false, true}, mids)
 	})
 }
 
