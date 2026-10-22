@@ -302,7 +302,8 @@ func WithAllowedMethods(methods []string) Option {
 
 // WithAllowedHeaders sets the headers listed in Access-Control-Allow-Headers
 // on preflight responses: the browser only sends the listed request headers
-// in the actual request. Surrounding whitespace is trimmed; it panics on an
+// in the actual request. Surrounding whitespace is trimmed and each name is
+// canonicalized ("content-type" becomes "Content-Type"); it panics on an
 // empty value. Pass it to [New].
 //
 // Default: none
@@ -311,7 +312,7 @@ func WithAllowedHeaders(headers []string) Option {
 		for i, h := range headers {
 			h = strings.TrimSpace(h)
 			moon.Assert(h != "", fmt.Sprintf("empty header value at index %d", i))
-			headers[i] = h
+			headers[i] = http.CanonicalHeaderKey(h)
 		}
 		o.allowedHeaders = headers
 		o.allowedHeadersString = strings.Join(headers, ", ")
@@ -321,7 +322,8 @@ func WithAllowedHeaders(headers []string) Option {
 // WithExposedHeaders sets the headers listed in
 // Access-Control-Expose-Headers: by default scripts on another origin may
 // only read a short list of response headers, and this widens it. Surrounding
-// whitespace is trimmed; it panics on an empty value. Pass it to [New].
+// whitespace is trimmed and each name is canonicalized ("x-page" becomes
+// "X-Page"); it panics on an empty value. Pass it to [New].
 //
 // Default: none
 func WithExposedHeaders(headers []string) Option {
@@ -329,7 +331,7 @@ func WithExposedHeaders(headers []string) Option {
 		for i, h := range headers {
 			h = strings.TrimSpace(h)
 			moon.Assert(h != "", fmt.Sprintf("empty header value at index %d", i))
-			headers[i] = h
+			headers[i] = http.CanonicalHeaderKey(h)
 		}
 		o.exposedHeaders = headers
 		o.exposedHeadersString = strings.Join(headers, ", ")

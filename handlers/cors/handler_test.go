@@ -555,11 +555,11 @@ func TestHandleGeneralRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "credentials and exposed headers",
+			name: "credentials and canonicalized exposed headers",
 			handler: New(
 				WithAllowedOrigins([]string{"https://app.example"}),
 				WithAllowCredentials(true),
-				WithExposedHeaders([]string{"X-Total-Count", "X-Page"})),
+				WithExposedHeaders([]string{" x-total-count ", "X-PAGE"})),
 			headers: map[string]string{headerOrigin: "https://app.example"},
 			wantHeader: map[string]string{
 				headerAccessControlAllowOrigin:      "https://app.example",
@@ -734,9 +734,9 @@ func TestHandlePreflight(t *testing.T) {
 			wantAbsent: []string{headerAccessControlMaxAge, headerAccessControlAllowHeaders},
 		},
 		{
-			name: "allowed headers and max age",
+			name: "allowed headers are canonicalized and max age is set",
 			handler: New(
-				WithAllowedHeaders([]string{"Content-Type", "Authorization"}),
+				WithAllowedHeaders([]string{" content-type ", "AUTHORIZATION"}),
 				WithMaxAge(600)),
 			headers: map[string]string{
 				headerOrigin:                      "https://any.example",
