@@ -164,8 +164,13 @@ func TestHandleHsts(t *testing.T) {
 			want:    []string{"max-age=31536000", "includeSubDomains", "preload"},
 		},
 		{
-			name:    "zero max age omits directives",
+			name:    "zero max age sets empty max-age",
 			handler: New(WithHstsMaxAge(0), WithHstsIncludeSubdomains(true), WithHstsPreloadEnabled(true)),
+			want:    []string{"max-age=0", "includeSubDomains", "preload"},
+		},
+		{
+			name:    "negative max age disables header",
+			handler: New(WithHstsMaxAge(-1), WithHstsIncludeSubdomains(true), WithHstsPreloadEnabled(true)),
 			want:    nil,
 		},
 	}

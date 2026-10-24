@@ -73,6 +73,7 @@ func New(opts ...Option) *Handler {
 		xDnsPrefetchControl:       "off",
 		xDownloadOptions:          "noopen",
 		xPermittedCrossDomain:     "none",
+		hstsMaxAge:                -1,
 		hstsIncludeSubdomains:     true,
 	}
 	for _, opt := range opts {
@@ -130,13 +131,12 @@ func WithXFrameOptions(s string) Option {
 }
 
 // WithHstsMaxAge sets the max-age (in seconds) of the
-// Strict-Transport-Security header. It panics on a negative value.
-// Zero disables the header. Pass it to [New].
+// Strict-Transport-Security header. A negative value disables the header.
+// Pass it to [New].
 //
-// Default: 0 (disabled)
+// Default: -1 (disabled)
 func WithHstsMaxAge(seconds int) Option {
 	return func(o *options) {
-		moon.Assert(seconds >= 0, "hsts max age cannot be negative")
 		o.hstsMaxAge = seconds
 	}
 }
@@ -289,7 +289,7 @@ func WithXPermittedCrossDomainPolicies(s string) Option {
 
 // Handle sets the configured security headers, then runs the chain.
 // Headers with empty values are omitted, and Strict-Transport-Security is
-// only set when a positive max-age is configured (see
+// only set when a non-negative max-age is configured (see
 // [WithHstsMaxAge]).
 func (me *Handler) Handle(ctx *moon.Context) error {
 	if me.options.skip != nil && me.options.skip(ctx) {
@@ -308,7 +308,7 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 		ctx.SetHeader("X-Frame-Options", me.options.xFrameOptions)
 	}
 
-	if me.options.hstsMaxAge > 0 {
+	if me.options.hstsMaxAge >= 0 {
 		header := "Strict-Transport-Security"
 		ctx.AddHeader(header, fmt.Sprintf("max-age=%d", me.options.hstsMaxAge))
 		if me.options.hstsIncludeSubdomains {
