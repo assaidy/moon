@@ -16,8 +16,6 @@ func (me *App) registerRootHandler() {
 		if r.URL.Path != "/" {
 			r.URL.Path = strings.TrimRight(r.URL.Path, "/")
 		}
-		// normalize the path so matching is case-insensitive
-		r.URL.Path = strings.ToLower(r.URL.Path)
 
 		ctx := me.newContext(w, r)
 		me.dispatch(ctx)
@@ -73,7 +71,7 @@ func (me *App) dispatch(ctx *Context) {
 
 	routes := me.routesPerMethod[ctx.GetMethod()]
 	for i := range routes {
-		if params, ok := routes[i].matchPath(ctx.GetPath()); ok {
+		if params, ok := routes[i].matchPath(ctx.GetPath(), me.options.caseSensitiveMatching); ok {
 			ctx.params = params
 			ctx.routeId = routes[i].id
 			targetRoute = routes[i]
@@ -86,7 +84,7 @@ func (me *App) dispatch(ctx *Context) {
 			// only filter by order if we found a matching route.
 			continue
 		}
-		if middleware.matchPath(ctx.GetPath()) {
+		if middleware.matchPath(ctx.GetPath(), me.options.caseSensitiveMatching) {
 			ctx.handlers = append(ctx.handlers, middleware.handlers...)
 		}
 	}
@@ -102,7 +100,7 @@ func (me *App) dispatch(ctx *Context) {
 			continue
 		}
 		for _, route := range routes {
-			if _, ok := route.matchPath(ctx.GetPath()); ok {
+			if _, ok := route.matchPath(ctx.GetPath(), me.options.caseSensitiveMatching); ok {
 				ctx.handlers = append(ctx.handlers, func(ctx *Context) error { return ErrMethodNotAllowed })
 				return
 			}
@@ -156,7 +154,8 @@ func IsValidHttpMethod(method string) bool {
 // " GET " are equivalent. Prefer the [MethodGet], [MethodPost], ...
 // constants, or the [App.MapGet], [App.MapPost], ... shortcuts.
 //
-// pattern is lowercased before validation, so matching ignores letter case:
+// pattern is trimmed before validation and kept as given. Letter case is
+// significant only when [WithCaseSensitiveMatching] is enabled; by default
 // "/API/Users", "/Api/Users" and "/api/users" are the same route.
 //
 // See [ParsePattern] for the pattern grammar.
@@ -183,7 +182,7 @@ func IsValidHttpMethod(method string) bool {
 // or override them.
 func (me *App) Map(method string, pattern string, handler Handler, options ...RouteOption) {
 	method = strings.ToUpper(strings.TrimSpace(method))
-	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	pattern = strings.TrimSpace(pattern)
 	Assert(IsValidHttpMethod(method), "invalid http method")
 	segments, names, err := ParsePattern(pattern)
 	Assert(err == nil, fmt.Sprintf("invalid pattern: %s", err))
@@ -292,7 +291,9 @@ func (me *App) MapAll(pattern string, handler Handler, options ...RouteOption) {
 // hold ":param", ":param?", "*" and "+" segments like routes; they are
 // expanded for the match but their values are not captured.
 //
-// prefix is lowercased before validation, so matching ignores letter case.
+// prefix is trimmed before validation and kept as given. Letter case is
+// significant only when [WithCaseSensitiveMatching] is enabled; by default
+// matching ignores it.
 //
 // See [ParsePattern] for the pattern grammar.
 //
@@ -313,7 +314,7 @@ func (me *App) MapAll(pattern string, handler Handler, options ...RouteOption) {
 // A middleware that writes a response without calling [Context.Next]
 // short-circuits the chain, so it can serve requests without a route.
 func (me *App) Use(prefix string, handlers ...Handler) {
-	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	prefix = strings.TrimSpace(prefix)
 	segments, _, err := ParsePattern(prefix)
 	Assert(err == nil, fmt.Sprintf("invalid prefix: %s", err))
 
@@ -535,6 +536,18 @@ func pieceEnd(path string, pos int) int {
 	return len(path)
 }
 
+// hasPathPrefix reports whether path starts with prefix, ignoring letter case
+// unless caseSensitive is true. prefix holds only ASCII route literals.
+func hasPathPrefix(path, prefix string, caseSensitive bool) bool {
+	if len(path) < len(prefix) {
+		return false
+	}
+	if caseSensitive {
+		return path[:len(prefix)] == prefix
+	}
+	return strings.EqualFold(path[:len(prefix)], prefix)
+}
+
 func areNamesUnique(names []string) bool {
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
@@ -591,11 +604,13 @@ func WithId(id string) RouteOption {
 	}
 }
 
-// matchPath returns the captured parameters and true on an exact match,
-// nil and false otherwise. The params map is built only on success.
-func (me routeEntry) matchPath(path string) (map[string]string, bool) {
-	// The path must already be normalized (lowercase, no trailing
-	// slash, leading '/'); see [App.registerRootHandler].
+// matchPath returns the captured parameters and true on a match, nil and
+// false otherwise. The params map is built only on success. Literal parts are
+// compared case-insensitively unless caseSensitive is true; captured values
+// always keep the case they have in path.
+func (me routeEntry) matchPath(path string, caseSensitive bool) (map[string]string, bool) {
+	// The path must already be normalized (no trailing slash, leading
+	// '/'); see [App.registerRootHandler].
 	if len(path) == 0 || path[0] != '/' {
 		return nil, false
 	}
@@ -647,7 +662,7 @@ func (me routeEntry) matchPath(path string) (map[string]string, bool) {
 		switch p.Kind {
 		case PartLiteral:
 			// Literal: the path must continue with it, else dead end.
-			if !strings.HasPrefix(path[pos:], p.Text) {
+			if !hasPathPrefix(path[pos:], p.Text, caseSensitive) {
 				return false
 			}
 			return match(segIdx, partIdx+1, pos+len(p.Text), wildcIdx, plusIdx)
@@ -758,10 +773,11 @@ type middlewareEntry struct {
 
 // matchPath reports whether the entry's prefix covers path: every prefix
 // part must match, leftover path is ignored, so "/api"
-// covers "/api/users" but not "/apiv2". Values are not captured.
-func (me middlewareEntry) matchPath(path string) bool {
-	// The path must already be normalized (lowercase, no trailing
-	// slash, leading '/'); see [App.registerRootHandler].
+// covers "/api/users" but not "/apiv2". Values are not captured. Literal
+// parts are compared case-insensitively unless caseSensitive is true.
+func (me middlewareEntry) matchPath(path string, caseSensitive bool) bool {
+	// The path must already be normalized (no trailing slash, leading
+	// '/'); see [App.registerRootHandler].
 	if len(path) == 0 || path[0] != '/' {
 		return false
 	}
@@ -798,7 +814,7 @@ func (me middlewareEntry) matchPath(path string) bool {
 		switch p.Kind {
 		case PartLiteral:
 			// Literal: the path must continue with it, else dead end.
-			if !strings.HasPrefix(path[pos:], p.Text) {
+			if !hasPathPrefix(path[pos:], p.Text, caseSensitive) {
 				return false
 			}
 			return match(segIdx, partIdx+1, pos+len(p.Text))

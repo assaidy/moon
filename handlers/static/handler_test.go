@@ -8,6 +8,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -110,8 +112,113 @@ func TestHandle_ServesIndexFile(t *testing.T) {
 	}
 }
 
+func TestHandle_CaseInsensitiveFallback(t *testing.T) {
+	fsys := fstest.MapFS{
+		"Logo.PNG":        &fstest.MapFile{Data: []byte("logo")},
+		"docs/INDEX.HTML": &fstest.MapFile{Data: []byte("<h1>docs</h1>")},
+		"Foo/bar.txt":     &fstest.MapFile{Data: []byte("bar")},
+		"foo/baz.txt":     &fstest.MapFile{Data: []byte("baz")},
+		"A.txt":           &fstest.MapFile{Data: []byte("upper")},
+		"a.txt":           &fstest.MapFile{Data: []byte("lower")},
+	}
+
+	newApp := func(t *testing.T, opts ...Option) *moon.App {
+		t.Helper()
+		opts = append([]Option{
+			WithFileSystem(fsys),
+			WithStripPathPrefix("/files"),
+		}, opts...)
+		app := moon.New()
+		app.Map(http.MethodGet, "/files/*", New(opts...).Handle)
+		return app
+	}
+
+	t.Run("exact case wins", func(t *testing.T) {
+		for path, want := range map[string]string{
+			"/files/A.txt": "upper",
+			"/files/a.txt": "lower",
+		} {
+			resp := newApp(t).Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+			require.Equal(t, want, readBody(t, resp), "path: %s", path)
+		}
+	})
+
+	t.Run("falls back to a case-insensitive file", func(t *testing.T) {
+		resp := newApp(t).Test(httptest.NewRequest(http.MethodGet, "/files/logo.png", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "logo", readBody(t, resp))
+	})
+
+	t.Run("falls back for a case-variant mount prefix", func(t *testing.T) {
+		resp := newApp(t).Test(httptest.NewRequest(http.MethodGet, "/FILES/Logo.PNG", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "logo", readBody(t, resp))
+	})
+
+	t.Run("falls back for an index file", func(t *testing.T) {
+		resp := newApp(t).Test(httptest.NewRequest(http.MethodGet, "/files/docs", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "<h1>docs</h1>", readBody(t, resp))
+	})
+
+	t.Run("falls back for a case-variant directory", func(t *testing.T) {
+		resp := newApp(t).Test(httptest.NewRequest(http.MethodGet, "/FILES/DOCS", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "<h1>docs</h1>", readBody(t, resp))
+	})
+
+	t.Run("backtracks between case-insensitive directories", func(t *testing.T) {
+		resp := newApp(t).Test(httptest.NewRequest(http.MethodGet, "/files/FOO/baz.txt", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "baz", readBody(t, resp))
+	})
+
+	t.Run("ambiguous fallback uses lexical order", func(t *testing.T) {
+		resp := newApp(t).Test(httptest.NewRequest(http.MethodGet, "/files/A.TXT", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "upper", readBody(t, resp))
+	})
+
+	t.Run("fallback can be disabled", func(t *testing.T) {
+		app := newApp(t, WithCaseInsensitiveFallback(false))
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/Logo.PNG", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		for _, path := range []string{"/files/logo.png", "/FILES/Logo.PNG", "/files/docs"} {
+			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusNotFound, resp.StatusCode, "path: %s", path)
+		}
+	})
+}
+
+func TestHandle_CaseInsensitiveFallbackOS(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "Docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Logo.PNG"), []byte("logo"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Docs", "INDEX.HTML"), []byte("docs"), 0o644))
+
+	app := moon.New()
+	h := New(
+		WithRoot(root),
+		WithStripPathPrefix("/files"),
+	)
+	app.MapGet("/files/*", h.Handle)
+
+	for path, want := range map[string]string{
+		"/files/logo.png": "logo",
+		"/FILES/Logo.PNG": "logo",
+		"/files/docs":     "docs",
+	} {
+		resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+		require.Equal(t, want, readBody(t, resp), "path: %s", path)
+	}
+}
+
 func TestHandle_ServesCustomIndexName(t *testing.T) {
-	app := newTestApp(t, WithIndexNames([]string{"default.htm"}))
+	app := newTestApp(t, WithIndexNames([]string{" default.htm "}))
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/custom", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -572,6 +679,27 @@ func TestHandle_LimitsDistinctByteRanges(t *testing.T) {
 
 func TestWithMaxDistinctRanges_PanicsOnZero(t *testing.T) {
 	require.Panics(t, func() { WithMaxDistinctRanges(0) })
+}
+
+func TestWithIndexNames_TrimsAndRejectsNonBaseNames(t *testing.T) {
+	for _, name := range []string{
+		"",
+		"   ",
+		".",
+		"..",
+		"/",
+		"/index.html",
+		"dir/",
+		"sub/index.html",
+		`sub\index.html`,
+	} {
+		require.Panics(t, func() { WithIndexNames([]string{name}) }, "name: %q", name)
+	}
+
+	require.NotPanics(t, func() { WithIndexNames(nil) })
+
+	h := New(WithIndexNames([]string{" index.html ", " index.htm "}))
+	require.Equal(t, []string{"index.html", "index.htm"}, h.options.indexNames)
 }
 
 // unlistableFS hides the [fs.ReadDirFile] implementation of the directories

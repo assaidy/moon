@@ -394,7 +394,7 @@ func TestRouter_MatchPath(t *testing.T) {
 			segs, names, err := ParsePattern(tc.pattern)
 			require.NoError(t, err)
 			route := routeEntry{pattern: tc.pattern, segments: segs, names: names}
-			gotParams, gotMatch := route.matchPath(tc.path)
+			gotParams, gotMatch := route.matchPath(tc.path, false)
 			require.Equal(t, tc.wantMatch, gotMatch)
 			require.Equal(t, tc.wantParams, gotParams)
 		})
@@ -435,14 +435,14 @@ func TestRouter_MiddlewareMatchPath(t *testing.T) {
 			segs, _, err := ParsePattern(tc.prefix)
 			require.NoError(t, err)
 			mw := middlewareEntry{prefix: tc.prefix, segments: segs}
-			require.Equal(t, tc.want, mw.matchPath(tc.path))
+			require.Equal(t, tc.want, mw.matchPath(tc.path, false))
 		})
 	}
 }
 
-// Route and middleware matching ignore letter case: App.Map and App.Use
-// lowercase their patterns at registration, and the request path is
-// lowercased before dispatch, so "/API/Users" and "/api/users" are one route.
+// Route and middleware matching ignores letter case by default: patterns are
+// kept as registered and the request path is kept as received, so
+// "/API/Users" and "/api/users" are the same route.
 func TestRouter_CaseInsensitivePaths(t *testing.T) {
 	t.Run("request path case is ignored", func(t *testing.T) {
 		app := New()
@@ -501,10 +501,10 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 		resp := app.Test(httptest.NewRequest(http.MethodGet, "/users/AbC", nil))
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 
-		// the whole request path is lowercased before dispatch,
-		// so captured values are lowercase too
-		require.Equal(t, "/users/abc", gotPath)
-		require.Equal(t, "abc", gotParam)
+		// the path is preserved as received, so captured values keep
+		// their original case too
+		require.Equal(t, "/users/AbC", gotPath)
+		require.Equal(t, "AbC", gotParam)
 	})
 
 	t.Run("wildcard route matches case-insensitively", func(t *testing.T) {
@@ -560,7 +560,7 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 
-	t.Run("route patterns are lowercased too", func(t *testing.T) {
+	t.Run("route patterns are kept as registered", func(t *testing.T) {
 		app := New()
 		app.MapGet("/API/Users", func(ctx *Context) error {
 			return ctx.Write(http.StatusOK, "route")
@@ -569,6 +569,85 @@ func TestRouter_CaseInsensitivePaths(t *testing.T) {
 		for _, path := range []string{"/api/users", "/API/USERS", "/Api/Users"} {
 			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
 			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+		}
+	})
+}
+
+func TestRouter_CaseSensitiveMatching(t *testing.T) {
+	t.Run("exact paths match", func(t *testing.T) {
+		app := New(WithCaseSensitiveMatching(true))
+		app.MapGet("/API/Users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/API/Users", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("case variants do not match", func(t *testing.T) {
+		app := New(WithCaseSensitiveMatching(true))
+		app.MapGet("/API/Users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		for _, path := range []string{"/api/users", "/Api/Users", "/API/users"} {
+			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusNotFound, resp.StatusCode, "path: %s", path)
+		}
+	})
+
+	t.Run("wrong method on the exact path keeps 405", func(t *testing.T) {
+		app := New(WithCaseSensitiveMatching(true))
+		app.MapGet("/users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodPost, "/users", nil))
+		require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+		resp = app.Test(httptest.NewRequest(http.MethodPost, "/USERS", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("middleware matches exact case only", func(t *testing.T) {
+		app := New(WithCaseSensitiveMatching(true))
+		var ran bool
+		app.Use("/API/*", func(ctx *Context) error {
+			ran = true
+			return ctx.Next()
+		})
+		app.MapGet("/API/users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "route")
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/api/users", nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.False(t, ran)
+
+		resp = app.Test(httptest.NewRequest(http.MethodGet, "/API/users", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.True(t, ran)
+	})
+
+	t.Run("routes differing only by case coexist", func(t *testing.T) {
+		app := New(WithCaseSensitiveMatching(true))
+		app.MapGet("/users", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "lower")
+		})
+		app.MapGet("/USERS", func(ctx *Context) error {
+			return ctx.Write(http.StatusOK, "upper")
+		})
+
+		for path, want := range map[string]string{
+			"/users": "lower",
+			"/USERS": "upper",
+		} {
+			resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.Equal(t, want, string(body), "path: %s", path)
 		}
 	})
 }

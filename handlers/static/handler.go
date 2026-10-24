@@ -17,6 +17,10 @@
 // the requested bytes when the file can be seeked, following the rules of
 // [WithByteRanges]. Requests with a method other than GET and HEAD continue
 // the chain.
+//
+// Paths are resolved with their exact letter case first. When
+// [WithCaseInsensitiveFallback] is enabled (the default), a path that does
+// not exist exactly is resolved again ignoring letter case.
 package static
 
 import (
@@ -64,6 +68,7 @@ func New(opts ...Option) *Handler {
 		coalesceOverlappingRanges: true,
 		maxDistinctRanges:         100,
 		maxAge:                    -1,
+		caseInsensitiveFallback:   true,
 	}
 	for _, opt := range opts {
 		opt(&options)
@@ -90,6 +95,7 @@ type options struct {
 	coalesceOverlappingRanges bool
 	directoryBrowsing         bool
 	maxAge                    int
+	caseInsensitiveFallback   bool
 	notFoundHandler           moon.Handler
 }
 
@@ -123,21 +129,38 @@ func WithRoot(s string) Option {
 }
 
 // WithIndexNames sets the file names served for directory requests, tried
-// in order. The first one that exists in the directory is served; when none
-// does, the directory is listed if [WithDirectoryBrowsing] is enabled and
-// treated as not found otherwise. Pass it to [New].
+// in order. Surrounding whitespace is trimmed. Each name must be a base file
+// name: it cannot be empty, ".", "..", or contain a path separator. The first
+// one that exists in the directory is served; when none does, the directory
+// is listed if [WithDirectoryBrowsing] is enabled and treated as not found
+// otherwise. When [WithCaseInsensitiveFallback] is enabled, a name that does
+// not exist exactly is matched against the directory entries ignoring case.
+// Pass it to [New].
 //
 // Default: []string{"index.html"}
 func WithIndexNames(names []string) Option {
-	return func(o *options) {
-		o.indexNames = names
+	trimmed := make([]string, len(names))
+	for i, name := range names {
+		name = strings.TrimSpace(name)
+		moon.Assert(isBaseName(name), fmt.Sprintf("index name %q must be a file name without path separators", name))
+		trimmed[i] = name
 	}
+	return func(o *options) {
+		o.indexNames = trimmed
+	}
+}
+
+// isBaseName reports whether name can denote a single file entry: non-empty,
+// not a dot entry, and free of path separators.
+func isBaseName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`)
 }
 
 // WithStripPathPrefix sets a path prefix removed from the request path
 // before resolving it, for mounting the handler under a route prefix. For
 // example, with "/static" a request for "/static/css/app.css" serves
-// "css/app.css" below the root. Pass it to [New].
+// "css/app.css" below the root. Matching follows
+// [WithCaseInsensitiveFallback]. Pass it to [New].
 //
 // Default: "" (nothing is stripped)
 func WithStripPathPrefix(s string) Option {
@@ -259,6 +282,24 @@ func WithMaxAge(i int) Option {
 	}
 }
 
+// WithCaseInsensitiveFallback controls what happens when the exact request
+// path does not resolve to a file. When enabled, the path is resolved again by
+// matching each segment against directory entries ignoring letter case,
+// preferring an exact name at each step and then entries in lexical order.
+// [WithIndexNames] and [WithStripPathPrefix] are retried the same way.
+//
+// Exact requests always win, so files whose names differ only by case do not
+// collide unless the requested path matches neither exactly; in that case the
+// first matching entry in lexical order is used. When disabled, paths and
+// prefixes must match the filesystem exactly. Pass it to [New].
+//
+// Default: true
+func WithCaseInsensitiveFallback(b bool) Option {
+	return func(o *options) {
+		o.caseInsensitiveFallback = b
+	}
+}
+
 // WithNotFoundHandler sets the handler answering requests that resolve to
 // nothing to serve, instead of continuing the chain via
 // [moon.Context.Next]. It is not consulted for failures while writing the
@@ -316,23 +357,27 @@ type resolved struct {
 // resolve maps the request path to a file: any configured prefix is
 // stripped, the path is joined with the root and opened, and a directory is
 // replaced by its first existing index file, or kept open to be listed when
-// directory browsing is enabled and no index exists. The returned error is
-// never exposed to the client, only used to fall back to the not-found path.
+// directory browsing is enabled and no index exists. When the exact path
+// cannot be opened and [WithCaseInsensitiveFallback] is enabled, the path is
+// resolved again by matching each segment case-insensitively. The returned
+// error is never exposed to the client, only used to fall back to the
+// not-found path.
 func (me *Handler) resolve(ctx *moon.Context) (resolved, error) {
 	p := ctx.GetPath()
 	if me.options.stripPathPrefix != "" {
-		p = stripPathPrefix(p, me.options.stripPathPrefix)
+		p = me.stripPrefix(p)
 	}
 
 	name := path.Join(me.options.root, p)
-	file, err := me.open(name)
-	if err != nil {
-		return resolved{}, err
+	file, info, err := me.openAndStat(name)
+	if err != nil && me.options.caseInsensitiveFallback {
+		resolvedName, resolveErr := me.resolveCaseInsensitive(p)
+		if resolveErr == nil {
+			name = resolvedName
+			file, info, err = me.openAndStat(name)
+		}
 	}
-
-	info, err := file.Stat()
 	if err != nil {
-		file.Close()
 		return resolved{}, err
 	}
 
@@ -354,23 +399,139 @@ func (me *Handler) resolve(ctx *moon.Context) (resolved, error) {
 	return resolved{file: file, info: info, name: name}, nil
 }
 
+// openAndStat opens name and stats it, closing the file again when stat
+// fails, so callers own the returned file on success.
+func (me *Handler) openAndStat(name string) (fs.File, fs.FileInfo, error) {
+	file, err := me.open(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	return file, info, nil
+}
+
+// resolveCaseInsensitive finds the actual path for p below the root by
+// matching each segment against directory entries ignoring letter case. An
+// exact entry name is preferred at each segment; the remaining matches are
+// tried in lexical order, backtracking when a candidate leads to no match
+// further down. It returns the path with the entries' actual letter case.
+func (me *Handler) resolveCaseInsensitive(p string) (string, error) {
+	return me.walkCaseInsensitive(me.options.root, pathSegments(p))
+}
+
+// walkCaseInsensitive resolves segs below dir, as described by
+// [Handler.resolveCaseInsensitive]. Intermediate segments must be
+// directories; the final match may be a file or a directory.
+func (me *Handler) walkCaseInsensitive(dir string, segs []string) (string, error) {
+	if len(segs) == 0 {
+		return dir, nil
+	}
+
+	entries, err := me.readDir(dir)
+	if err != nil {
+		return "", err
+	}
+
+	for _, name := range matchEntryNames(entries, segs[0]) {
+		next := path.Join(dir, name)
+		if len(segs) == 1 {
+			file, _, err := me.openAndStat(next)
+			if err != nil {
+				continue
+			}
+			file.Close()
+			return next, nil
+		}
+		if resolved, err := me.walkCaseInsensitive(next, segs[1:]); err == nil {
+			return resolved, nil
+		}
+	}
+
+	return "", fs.ErrNotExist
+}
+
+// pathSegments splits a request path into the segments resolved below the
+// root. The leading slash and empty segments are ignored.
+func pathSegments(p string) []string {
+	p = strings.TrimPrefix(path.Clean(p), "/")
+	if p == "" || p == "." {
+		return nil
+	}
+	return strings.Split(p, "/")
+}
+
+// matchEntryNames returns the entry names matching name, preferring the exact
+// name when present. Other case-insensitive matches keep the directory's
+// lexical order, which makes the fallback deterministic.
+func matchEntryNames(entries []fs.DirEntry, name string) []string {
+	var exact string
+	var matches []string
+	for _, entry := range entries {
+		entryName := entry.Name()
+		if entryName == name {
+			exact = entryName
+			continue
+		}
+		if strings.EqualFold(entryName, name) {
+			matches = append(matches, entryName)
+		}
+	}
+	if exact == "" {
+		return matches
+	}
+	return append([]string{exact}, matches...)
+}
+
+// readDir lists dir from the configured filesystem. Both fs.ReadDir and
+// os.ReadDir return entries sorted by name.
+func (me *Handler) readDir(dir string) ([]fs.DirEntry, error) {
+	if me.options.fs != nil {
+		return fs.ReadDir(me.options.fs, dir)
+	}
+	return os.ReadDir(dir)
+}
+
 // resolveIndex opens the first of [WithIndexNames] that exists as a file in
-// the directory dir, or reports an error when none does.
+// the directory dir, or reports an error when none does. The exact name is
+// tried first; when [WithCaseInsensitiveFallback] is enabled, a name that does
+// not exist exactly is matched against the directory entries ignoring case.
 func (me *Handler) resolveIndex(dir string) (resolved, error) {
 	for _, index := range me.options.indexNames {
-		name := path.Join(dir, index)
-		file, err := me.open(name)
+		if r, ok := me.openIndex(path.Join(dir, index)); ok {
+			return r, nil
+		}
+		if !me.options.caseInsensitiveFallback {
+			continue
+		}
+		entries, err := me.readDir(dir)
 		if err != nil {
 			continue
 		}
-		info, err := file.Stat()
-		if err != nil || info.IsDir() {
-			file.Close()
-			continue
+		for _, name := range matchEntryNames(entries, index) {
+			if r, ok := me.openIndex(path.Join(dir, name)); ok {
+				return r, nil
+			}
 		}
-		return resolved{file: file, info: info, name: name}, nil
 	}
 	return resolved{}, fs.ErrNotExist
+}
+
+// openIndex opens name when it is a servable file, closing it and reporting
+// false when it cannot be opened or is a directory.
+func (me *Handler) openIndex(name string) (resolved, bool) {
+	file, info, err := me.openAndStat(name)
+	if err != nil {
+		return resolved{}, false
+	}
+	if info.IsDir() {
+		file.Close()
+		return resolved{}, false
+	}
+	return resolved{file: file, info: info, name: name}, true
 }
 
 // serve writes r as the response: the headers describing it and, for
@@ -683,8 +844,8 @@ func setDownloadHeader(ctx *moon.Context, name string) {
 // [WithNotFoundHandler] when configured, and by continuing the chain via
 // [moon.Context.Next] otherwise. Continuing lets a later handler serve the
 // request when this handler runs as middleware, and resolves to
-// [moon.ErrNotFound] when it is the last handler, so a custom
-// [moon.ErrorHandler] still sees it.
+// [moon.ErrNotFound] when it is the last handler, so a custom error handler
+// still sees it.
 func (me *Handler) notFound(ctx *moon.Context) error {
 	if me.options.notFoundHandler != nil {
 		return me.options.notFoundHandler(ctx)
@@ -701,20 +862,42 @@ func (me *Handler) open(name string) (fs.File, error) {
 	return os.Open(name)
 }
 
-// stripPathPrefix removes prefix from name: the path is expected to be
-// normalized (lowercase, no trailing slash, leading '/'), so the prefix may
-// be followed by a slash or the end of the path.
-func stripPathPrefix(name, prefix string) string {
-	if name == prefix {
-		return "/"
+// stripPrefix removes the configured path prefix from name. The exact prefix
+// is tried first; when [WithCaseInsensitiveFallback] is enabled, it is retried
+// ignoring letter case so a case-variant mount path can still resolve its
+// files.
+func (me *Handler) stripPrefix(name string) string {
+	if stripped, ok := cutPathPrefix(name, me.options.stripPathPrefix, true); ok {
+		return stripped
+	}
+	if me.options.caseInsensitiveFallback {
+		if stripped, ok := cutPathPrefix(name, me.options.stripPathPrefix, false); ok {
+			return stripped
+		}
+	}
+	return name
+}
+
+// cutPathPrefix removes prefix from name and reports whether it was present.
+// A leading slash is kept on the result. Comparisons follow caseSensitive.
+func cutPathPrefix(name, prefix string, caseSensitive bool) (string, bool) {
+	var pathEqual = func(a, b string, caseSensitive bool) bool {
+		if caseSensitive {
+			return a == b
+		}
+		return strings.EqualFold(a, b)
+	}
+
+	if pathEqual(name, prefix, caseSensitive) {
+		return "/", true
 	}
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-	if after, found := strings.CutPrefix(name, prefix); found {
-		return "/" + after
+	if len(name) < len(prefix) || !pathEqual(name[:len(prefix)], prefix, caseSensitive) {
+		return "", false
 	}
-	return name
+	return "/" + name[len(prefix):], true
 }
 
 // parseRangesResult describes the outcome of parsing the request's Range

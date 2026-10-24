@@ -105,6 +105,7 @@ type appOptions struct {
 	listenAddress               string
 	logger                      *slog.Logger
 	errorHandler                Handler
+	caseSensitiveMatching       bool
 	enableRequestLogging        bool
 	enableGeneralOptionsHandler bool
 	readTimeout                 time.Duration
@@ -175,6 +176,23 @@ func WithLogger(l *slog.Logger) AppOption {
 func WithErrorHandler(eh Handler) AppOption {
 	return func(o *appOptions) {
 		o.errorHandler = eh
+	}
+}
+
+// WithCaseSensitiveMatching determines whether route and middleware path
+// matching is case sensitive. It affects path matching only; methods are
+// still normalized to their canonical uppercase form.
+//
+// When false, patterns and request paths are compared ignoring letter case,
+// so "/API/Users" and "/api/users" are the same route. When true, they must
+// match exactly. Paths and patterns are kept as provided either way, so path
+// parameters and wildcard captures preserve the request's letter case.
+// Pass it to [New].
+//
+// Default: false
+func WithCaseSensitiveMatching(b bool) AppOption {
+	return func(o *appOptions) {
+		o.caseSensitiveMatching = b
 	}
 }
 

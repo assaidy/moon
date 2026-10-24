@@ -87,7 +87,7 @@ projects that want a productive framework without hidden runtime machinery.
 ## Features
 
 - **Pattern router** with literals, named parameters, optional parameters,
-  wildcards, plus segments, escaping and case-insensitive matching.
+  wildcards, plus segments, escaping and case-insensitive matching by default.
 - **Method-specific registration** with shortcuts for every supported method and
   `MapAll` for catch-all registrations.
 - **Middleware** registered for path prefixes, plus per-route middleware.
@@ -355,8 +355,11 @@ in one pattern panic at registration.
 
 #### Matching rules
 
-- Request paths and registered patterns are lowercased, so matching is
-  case-insensitive: `/API/Users` and `/api/users` are the same route.
+- Route and middleware matching ignores letter case by default, so
+  `/API/Users` and `/api/users` are the same route. Pass
+  `WithCaseSensitiveMatching(true)` to require an exact match.
+- Request paths and registered patterns are kept as provided, so path
+  parameters and wildcard captures preserve the request's letter case.
 - Trailing slashes are removed from request paths, except for the root `/`.
 - The first route registered for a method whose pattern matches wins. Registering
   the same method and pattern twice is allowed, but the first registration is the
@@ -1211,6 +1214,7 @@ request logging paths as live requests.
 | `WithListenAddress(address)` | `:http`, or `:https` with TLS | TCP address to listen on. |
 | `WithLogger(logger)` | `slog.Default()` | Logger for framework, service and request logs. Panics on nil. |
 | `WithErrorHandler(handler)` | `DefaultErrorHandler` | Handles errors from the chain, including 404 and 405. Registered first in the chain; `nil` disables it. |
+| `WithCaseSensitiveMatching(bool)` | `false` | Requires exact letter case in route and middleware path matching. Path parameters keep the request's case either way. |
 | `WithRequestLogging(bool)` | `false` | Logs every handled request. |
 | `WithRequestLoggingEntries(entries)` | `RleDuration`, `RleRemote`, `RleMethod`, `RlePath`, `RleStatus`, `RleError` | Replaces the request logging list. |
 | `WithGeneralOptionsHandler(bool)` | `false` | Lets the server answer general `OPTIONS` requests. |
