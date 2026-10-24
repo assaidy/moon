@@ -201,11 +201,12 @@ func WithDownload(b bool) Option {
 //     holding one part per range otherwise: parts carry their own
 //     Content-Range and the file's content type, and no top-level
 //     Content-Range is set;
-//   - a 416 Requested Range Not Satisfiable response when nothing is left
-//     to serve (every range is zero-length or lies outside the file, as
-//     for any range asked of an empty file) or when more ranges remain
-//     than [WithMaxDistinctRanges] allows. The response carries a
-//     Content-Range header reporting the file size, e.g. "bytes */100".
+//   - a 416 Requested Range Not Satisfiable response when no requested range
+//     is usable (every range starts at or past the end of the file, or is a
+//     zero-length suffix; an empty file makes every range unusable) or when
+//     more ranges remain than [WithMaxDistinctRanges] allows. The response
+//     carries a Content-Range header reporting the file size, e.g.
+//     "bytes */100".
 //
 // A Range header that cannot be parsed, or that uses a unit other than
 // bytes, is ignored and the whole file is served. HEAD requests ignore
