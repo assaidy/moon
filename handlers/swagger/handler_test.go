@@ -391,13 +391,41 @@ func TestHandle_CustomMountPath(t *testing.T) {
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/docs", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body := readBody(t, resp)
-	require.Contains(t, body, `"/docs/openapi.json"`)
+	require.Contains(t, body, `"/Docs/openapi.json"`)
 
-	document := getDocument(t, app, "/docs/openapi.json")
+	document := getDocument(t, app, "/Docs/openapi.json")
 	require.Contains(t, document.Paths, "/docs/{*}")
 
 	resp = app.Test(httptest.NewRequest(http.MethodGet, "/docs/nope", nil))
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestHandle_CaseInsensitiveMountMatching(t *testing.T) {
+	app := moon.New()
+	app.MapGet("/docs/*", New(WithMountPath("/Docs")).Handle)
+
+	for _, path := range []string{"/docs", "/DOCS/INDEX.HTML", "/docs/OpenAPI.JSON"} {
+		resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+	}
+}
+
+func TestHandle_CaseSensitiveMountMatching(t *testing.T) {
+	app := moon.New()
+	app.MapGet("/Docs/*", New(
+		WithMountPath("/Docs"),
+		WithCaseSensitiveMountMatching(true),
+	).Handle)
+
+	for _, path := range []string{"/Docs", "/Docs/index.html", "/Docs/openapi.json"} {
+		resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode, "path: %s", path)
+	}
+
+	for _, path := range []string{"/docs", "/Docs/INDEX.HTML", "/Docs/OpenAPI.JSON"} {
+		resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusNotFound, resp.StatusCode, "path: %s", path)
+	}
 }
 
 func TestHandle_CustomUiAssets(t *testing.T) {

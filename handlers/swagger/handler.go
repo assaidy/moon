@@ -86,14 +86,15 @@ type Handler struct {
 // options holds the configuration of a [Handler]. All fields are private;
 // pass [Option]s to [New] to configure it.
 type options struct {
-	mountPath   string
-	title       string
-	version     string
-	description string
-	serverUrl   string
-	components  map[string]any
-	uiCssUrl    string
-	uiJsUrl     string
+	mountPath             string
+	caseSensitiveMatching bool
+	title                 string
+	version               string
+	description           string
+	serverUrl             string
+	components            map[string]any
+	uiCssUrl              string
+	uiJsUrl               string
 }
 
 // New returns a handler built from sensible defaults, customized by the given
@@ -124,9 +125,9 @@ func New(opts ...Option) *Handler {
 type Option func(*options)
 
 // WithMountPath sets the path the handler is mounted on. A missing leading
-// slash is added, and the path is cleaned and lowercased to match moon's
-// case-insensitive routing. The UI is served at the mount path and at
-// "<mount>/index.html"; the OpenAPI document is served at
+// slash is added, and the path is cleaned. Letter case is preserved; matching
+// follows [WithCaseSensitiveMountMatching]. The UI is served at the mount path and
+// at "<mount>/index.html"; the OpenAPI document is served at
 // "<mount>/openapi.json". Register the handler with a wildcard so those paths
 // reach it:
 //
@@ -134,7 +135,7 @@ type Option func(*options)
 //
 // Default: [DefaultMountPath]
 func WithMountPath(mountPath string) Option {
-	mountPath = strings.ToLower(strings.TrimSpace(mountPath))
+	mountPath = strings.TrimSpace(mountPath)
 	moon.Assert(mountPath != "", "swagger mount path cannot be empty")
 	if !strings.HasPrefix(mountPath, "/") {
 		mountPath = "/" + mountPath
@@ -143,6 +144,18 @@ func WithMountPath(mountPath string) Option {
 
 	return func(o *options) {
 		o.mountPath = mountPath
+	}
+}
+
+// WithCaseSensitiveMountMatching determines whether request paths are matched
+// against the mount path case-sensitively. It applies to the whole mounted
+// path, including "<mount>/index.html" and "<mount>/openapi.json". Pass it to
+// [New].
+//
+// Default: false (case-insensitive matching)
+func WithCaseSensitiveMountMatching(b bool) Option {
+	return func(o *options) {
+		o.caseSensitiveMatching = b
 	}
 }
 
@@ -233,10 +246,10 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 	if !ok {
 		return ctx.Next()
 	}
-	switch suffix {
-	case "", "/index.html":
+	switch {
+	case suffix == "" || me.pathMatches(suffix, "/index.html"):
 		return me.writeUi(ctx)
-	case "/" + SpecFileName:
+	case me.pathMatches(suffix, "/"+SpecFileName):
 		return me.writeSpec(ctx)
 	default:
 		return ctx.Next()
@@ -244,7 +257,8 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 }
 
 // suffix returns the part of requestPath below the mount path, or false when
-// the path is outside the mount.
+// the path is outside the mount. The mount comparison follows
+// [WithCaseSensitiveMountMatching].
 func (me *Handler) suffix(requestPath string) (string, bool) {
 	mountPath := me.options.mountPath
 	if mountPath == "/" {
@@ -253,13 +267,23 @@ func (me *Handler) suffix(requestPath string) (string, bool) {
 		}
 		return requestPath, strings.HasPrefix(requestPath, "/")
 	}
-	if requestPath == mountPath {
+	if me.pathMatches(requestPath, mountPath) {
 		return "", true
 	}
-	if strings.HasPrefix(requestPath, mountPath+"/") {
+	prefix := mountPath + "/"
+	if len(requestPath) >= len(prefix) && me.pathMatches(requestPath[:len(prefix)], prefix) {
 		return requestPath[len(mountPath):], true
 	}
 	return "", false
+}
+
+// pathMatches reports whether a and b are equal, ignoring letter case unless
+// [WithCaseSensitiveMountMatching] is enabled.
+func (me *Handler) pathMatches(a, b string) bool {
+	if me.options.caseSensitiveMatching {
+		return a == b
+	}
+	return strings.EqualFold(a, b)
 }
 
 func (me *Handler) writeUi(ctx *moon.Context) error {
