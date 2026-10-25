@@ -163,7 +163,10 @@ func (me *App) startOneService(service Service) error {
 }
 
 // StopServices stops all started services according to the configured
-// mode ([WithParallelServiceStop]).
+// mode ([WithParallelServiceStop]). Services are stopped in reverse
+// registration order, so services that depend on earlier services are stopped
+// before their dependencies. Parallel mode initiates the stops concurrently
+// in that order.
 //
 // It is called automatically by [App.Shutdown]. It is exported so tests that
 // started services via [App.StartServices] can stop them without ever
@@ -184,7 +187,9 @@ func (me *App) StopServices() {
 }
 
 func (me *App) stopServicesSequential() {
-	for i, s := range me.services {
+	// stop in reverse registration order so services that depend on earlier
+	// services are stopped before their dependencies.
+	for i, s := range slices.Backward(me.services) {
 		if s.started {
 			me.stopOneService(s.value.(Service))
 			me.services[i].started = false
@@ -197,7 +202,11 @@ func (me *App) stopServicesParallel() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	for i, s := range me.services {
+	// stop in reverse. see [App.stopServicesSequential]
+	// it doesn't make sense as it's concurrent, but keep it for unified
+	// stop behavior. once per-service options are added, start/stop will be
+	// refactored into a single function each.
+	for i, s := range slices.Backward(me.services) {
 		if s.started {
 			wg.Go(func() {
 				me.stopOneService(s.value.(Service))

@@ -740,6 +740,9 @@ Lifecycle details:
   service remains visible to `GetService`; the start error is returned.
 - `WithParallelServiceStart(true)` starts services concurrently;
   `WithParallelServiceStop(true)` stops them concurrently.
+- Services stop in reverse registration order, so services that depend on
+  earlier services stop before their dependencies. With parallel stop, the
+  stops are initiated concurrently in that order.
 - In prefork mode, the parent process does not start services. Each child
   process starts and stops its own.
 - `CheckServicesReadiness(services...)` reports whether every given service is

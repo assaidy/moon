@@ -13,6 +13,7 @@ import (
 type stubBase struct {
 	name       string
 	ready      bool
+	stopOrder  *[]string
 	startErr   error
 	stopErr    error
 	startCalls atomic.Int32
@@ -30,6 +31,9 @@ func (s *stubBase) Start() error {
 
 func (s *stubBase) Stop() error {
 	s.stopCalls.Add(1)
+	if s.stopOrder != nil {
+		*s.stopOrder = append(*s.stopOrder, s.name)
+	}
 	return s.stopErr
 }
 
@@ -157,6 +161,21 @@ func TestApp_CheckServicesReadiness(t *testing.T) {
 
 		require.False(t, app.CheckServicesReadiness())
 	})
+}
+
+func TestService_StopOrder(t *testing.T) {
+	app := New()
+	var order []string
+	a, b := newStubA(), newStubB()
+	a.stopOrder = &order
+	b.stopOrder = &order
+	app.AddService(a)
+	app.AddService(b)
+	require.NoError(t, app.StartServices())
+
+	app.StopServices()
+
+	require.Equal(t, []string{"b", "a"}, order)
 }
 
 func TestService_StartStop(t *testing.T) {
