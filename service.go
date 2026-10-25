@@ -24,18 +24,28 @@ type Service interface {
 	// Stop shuts the service down.
 	Stop() error
 
-	// IsAvailable reports whether the service is currently available for use.
-	IsAvailable() bool
-
-	// TODO: create a utility to track availability inside services.
+	// IsReady reports whether the service is ready for use.
+	IsReady() bool
 }
 
-// AreAllServicesAvailable reports whether every given service is non-nil
-// and available (see [Service.IsAvailable]). It returns true when called
-// with no services.
-func AreAllServicesAvailable(services ...Service) bool {
+// CheckServicesReadiness reports whether every given service is non-nil
+// and ready (see [Service.IsReady]). It returns true when called with no
+// services.
+func CheckServicesReadiness(services ...Service) bool {
 	for _, s := range services {
-		if s == nil || !s.IsAvailable() {
+		if s == nil || !s.IsReady() {
+			return false
+		}
+	}
+	return true
+}
+
+// CheckServicesReadiness reports whether every registered service has started
+// and is ready (see [Service.IsReady]). It returns true when no services are
+// registered.
+func (me *App) CheckServicesReadiness() bool {
+	for _, s := range me.services {
+		if !s.started || !s.value.(Service).IsReady() {
 			return false
 		}
 	}

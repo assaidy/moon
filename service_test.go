@@ -12,6 +12,7 @@ import (
 
 type stubBase struct {
 	name       string
+	ready      bool
 	startErr   error
 	stopErr    error
 	startCalls atomic.Int32
@@ -20,7 +21,7 @@ type stubBase struct {
 
 func (s *stubBase) Name() string { return s.name }
 
-func (s *stubBase) IsAvailable() bool { return true }
+func (s *stubBase) IsReady() bool { return s.ready }
 
 func (s *stubBase) Start() error {
 	s.startCalls.Add(1)
@@ -35,8 +36,8 @@ func (s *stubBase) Stop() error {
 type stubServiceA struct{ *stubBase }
 type stubServiceB struct{ *stubBase }
 
-func newStubA() *stubServiceA { return &stubServiceA{&stubBase{name: "a"}} }
-func newStubB() *stubServiceB { return &stubServiceB{&stubBase{name: "b"}} }
+func newStubA() *stubServiceA { return &stubServiceA{&stubBase{name: "a", ready: true}} }
+func newStubB() *stubServiceB { return &stubServiceB{&stubBase{name: "b", ready: true}} }
 
 func TestService_AddGet(t *testing.T) {
 	t.Run("nil panics", func(t *testing.T) {
@@ -89,37 +90,72 @@ func TestService_AddGet(t *testing.T) {
 	})
 }
 
-type stubAvailability struct {
-	name      string
-	available bool
+type stubReadiness struct {
+	name  string
+	ready bool
 }
 
-func (s stubAvailability) Name() string { return s.name }
-func (s stubAvailability) Start() error { return nil }
-func (s stubAvailability) Stop() error  { return nil }
-func (s stubAvailability) IsAvailable() bool {
-	return s.available
+func (s stubReadiness) Name() string { return s.name }
+func (s stubReadiness) Start() error { return nil }
+func (s stubReadiness) Stop() error  { return nil }
+func (s stubReadiness) IsReady() bool {
+	return s.ready
 }
 
-func TestAreAllServicesAvailable(t *testing.T) {
-	newAvail := func(available bool) stubAvailability {
-		return stubAvailability{name: "s", available: available}
+func TestCheckServicesReadiness(t *testing.T) {
+	newReady := func(ready bool) stubReadiness {
+		return stubReadiness{name: "s", ready: ready}
 	}
 
 	t.Run("no services", func(t *testing.T) {
-		require.True(t, AreAllServicesAvailable())
+		require.True(t, CheckServicesReadiness())
 	})
 
-	t.Run("all available", func(t *testing.T) {
-		require.True(t, AreAllServicesAvailable(newAvail(true), newAvail(true)))
+	t.Run("all ready", func(t *testing.T) {
+		require.True(t, CheckServicesReadiness(newReady(true), newReady(true)))
 	})
 
-	t.Run("one unavailable", func(t *testing.T) {
-		require.False(t, AreAllServicesAvailable(newAvail(true), newAvail(false)))
+	t.Run("one not ready", func(t *testing.T) {
+		require.False(t, CheckServicesReadiness(newReady(true), newReady(false)))
 	})
 
 	t.Run("nil service", func(t *testing.T) {
-		require.False(t, AreAllServicesAvailable(newAvail(true), nil))
+		require.False(t, CheckServicesReadiness(newReady(true), nil))
+	})
+}
+
+func TestApp_CheckServicesReadiness(t *testing.T) {
+	t.Run("no services", func(t *testing.T) {
+		require.True(t, New().CheckServicesReadiness())
+	})
+
+	t.Run("all started and ready", func(t *testing.T) {
+		app := New()
+		app.AddService(newStubA())
+		app.AddService(newStubB())
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
+
+		require.True(t, app.CheckServicesReadiness())
+	})
+
+	t.Run("registered but not started", func(t *testing.T) {
+		app := New()
+		app.AddService(newStubA())
+
+		require.False(t, app.CheckServicesReadiness())
+	})
+
+	t.Run("one not ready", func(t *testing.T) {
+		app := New()
+		a, b := newStubA(), newStubB()
+		app.AddService(a)
+		app.AddService(b)
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
+		b.ready = false
+
+		require.False(t, app.CheckServicesReadiness())
 	})
 }
 

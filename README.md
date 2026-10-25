@@ -708,7 +708,7 @@ type Service interface {
     Name() string
     Start() error
     Stop() error
-    IsAvailable() bool
+    IsReady() bool
 }
 ```
 
@@ -742,8 +742,10 @@ Lifecycle details:
   `WithParallelServiceStop(true)` stops them concurrently.
 - In prefork mode, the parent process does not start services. Each child
   process starts and stops its own.
-- `AreAllServicesAvailable(services...)` reports whether every given service is
-  non-nil and currently available.
+- `CheckServicesReadiness(services...)` reports whether every given service is
+  non-nil and currently ready.
+- `App.CheckServicesReadiness()` reports whether every registered service has
+  started and is ready, and returns true when no services are registered.
 
 For tests:
 
@@ -1294,7 +1296,7 @@ pointers, unsafe pointers, interfaces and slices, including typed nils.
 - Request logging entries are protected by a mutex when appended, and each request
   uses a snapshot taken when it starts.
 - Services own their own concurrency and must implement `Start`, `Stop` and
-  `IsAvailable` safely for the way the app invokes them.
+  `IsReady` safely for the way the app invokes them.
 
 ### Response buffering and streaming
 

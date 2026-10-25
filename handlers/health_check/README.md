@@ -67,7 +67,7 @@ All options are passed to `health_check.New`.
 
 ```go
 health_check.WithProbe(func(ctx *moon.Context) bool {
-    return db.IsAvailable()
+    return db.IsReady()
 })
 ```
 
@@ -140,7 +140,28 @@ app.MapGet(health_check.LivenessEndpoint, health_check.New().Handle)
 ```go
 app.MapGet(health_check.ReadinessEndpoint, health_check.New(
     health_check.WithProbe(func(ctx *moon.Context) bool {
-        return db.IsAvailable() && cache.IsAvailable()
+        return db.IsReady() && cache.IsReady()
+    }),
+).Handle)
+```
+
+Moon services expose `IsReady`, and `moon.CheckServicesReadiness` can combine
+them. The `App` method checks every registered service that has started:
+
+```go
+app.MapGet(health_check.ReadinessEndpoint, health_check.New(
+    health_check.WithProbe(func(ctx *moon.Context) bool {
+        return app.CheckServicesReadiness()
+    }),
+).Handle)
+```
+
+To check a specific set of services instead, pass them explicitly:
+
+```go
+app.MapGet(health_check.ReadinessEndpoint, health_check.New(
+    health_check.WithProbe(func(ctx *moon.Context) bool {
+        return moon.CheckServicesReadiness(db, cache, queue)
     }),
 ).Handle)
 ```
@@ -159,17 +180,6 @@ app.MapGet(health_check.StartupEndpoint, health_check.New(
 ).Handle)
 ```
 
-Moon services expose `IsAvailable`, and `moon.AreAllServicesAvailable` can combine
-them:
-
-```go
-app.MapGet(health_check.ReadinessEndpoint, health_check.New(
-    health_check.WithProbe(func(ctx *moon.Context) bool {
-        return moon.AreAllServicesAvailable(db, cache, queue)
-    }),
-).Handle)
-```
-
 ## Examples
 
 ### JSON readiness response
@@ -177,7 +187,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
 ```go
 app.MapGet(health_check.ReadinessEndpoint, health_check.New(
     health_check.WithProbe(func(ctx *moon.Context) bool {
-        return db.IsAvailable()
+        return db.IsReady()
     }),
     health_check.WithResponse(func(ctx *moon.Context, ok bool) error {
         if !ok {
@@ -204,13 +214,14 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
         if !ctx.GetDependency[Config]().HealthChecksEnabled {
             return true
         }
-        return ctx.GetService[*Database]().IsAvailable()
+        return ctx.GetService[*Database]().IsReady()
     }),
 ).Handle)
 ```
 
-`GetService` panics if the service was never started. In tests, call
-`app.StartServices()` before exercising handlers that use services.
+`GetService` panics if no service of that type was registered or if it was
+registered but never started. In tests, call `app.StartServices()` before
+exercising handlers that use services.
 
 ### Kubernetes-style probes
 
