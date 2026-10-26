@@ -125,6 +125,7 @@ func (me *App) forkChildren() error {
 		me.childProcessesMutex.RLock()
 		for proc := range me.childProcesses {
 			me.options.logger.Info("stopping prefork process", "pid", proc.Pid)
+			// FIX: what if children aren't listening for this signal (SIGINT)?
 			proc.Signal(syscall.SIGINT)
 		}
 		me.childProcessesMutex.RUnlock()
