@@ -119,11 +119,15 @@ var (
 	}
 
 	// RleStatus logs the response status code as an int, defaulting to 200
-	// when the handler chain wrote no status. See [Context.GetStatusCode].
+	// when no status was recorded, including raw paths that only flushed,
+	// hijacked or accessed headers. See [Context.GetStatusCode].
 	RleStatus = RequestLoggingEntry{
 		Key: "status",
 		Value: func(ctx *Context, err error) any {
-			return ctx.GetStatusCode()
+			if code := ctx.GetStatusCode(); code != 0 {
+				return code
+			}
+			return 200
 		},
 	}
 

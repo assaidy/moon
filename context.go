@@ -30,12 +30,16 @@ type Context struct {
 	request *http.Request
 	// response buffers status and body until the handler chain finishes,
 	// then flushes them to the client. Headers go directly to the underlying
-	// writer. This lets middleware set headers or status after calling
-	// [Context.Next] (e.g. response-time).
+	// writer, so middleware can set them before or after [Context.Next] (e.g.
+	// response-time, helmet, CORS). The buffered status can also be set after
+	// [Context.Next] returns.
 	//
 	// Do not mix buffered writes with the raw writer from Unwrap (including
 	// via [http.NewResponseController]): any use of the raw writer marks the
-	// request as raw and the buffered response is discarded at flush.
+	// request as raw and the buffered status and body are discarded at flush.
+	// Headers set before the raw response is committed are sent with it;
+	// headers set after have no effect. The raw path tracks its own status
+	// code separately; see [Context.GetStatusCode].
 	response *httpResponseWriterWrapper
 
 	readRequestBodyOnce  sync.Once
@@ -56,8 +60,10 @@ func (me *App) newContext(
 ) *Context {
 	ctx := new(Context)
 	ctx.app = me
-	ctx.response = &httpResponseWriterWrapper{bodyBuffer: bodyBufferPool.Get().(*bytes.Buffer)}
-	ctx.response.tracker = &httpResponseWriterTracker{writer: w, statusCode: &ctx.response.statusCode}
+	ctx.response = &httpResponseWriterWrapper{
+		bodyBuffer: bodyBufferPool.Get().(*bytes.Buffer),
+		tracker:    &httpResponseWriterTracker{writer: w},
+	}
 	ctx.request = r
 	body := r.Body
 	if me.options.maxBodyBytes >= 0 {
@@ -104,9 +110,11 @@ type httpResponseWriterWrapper struct {
 var _ http.ResponseWriter = (*httpResponseWriterWrapper)(nil)
 
 // Header implements [http.ResponseWriter]. It writes directly to the
-// underlying writer; headers alone never flush, so it is safe to set them
-// before or after the status code, after [Context.Next] returns, or before
+// underlying writer; headers alone never flush, so they can be set before or
+// after the buffered status code, after [Context.Next] returns, or before
 // switching to the raw path (e.g. SSE via [http.NewResponseController]).
+// A raw write or flush commits the current headers; changes after it have no
+// effect.
 func (me *httpResponseWriterWrapper) Header() http.Header {
 	return me.tracker.writer.Header()
 }
@@ -129,31 +137,32 @@ func (me *httpResponseWriterWrapper) WriteHeader(statusCode int) {
 
 // Unwrap returns the raw-path writer. Any use of it (Header/Write/WriteHeader/
 // Flush/Hijack, directly or via [http.NewResponseController]) marks the request
-// as raw: the buffered flush is skipped and the raw response stands.
+// as raw: the buffered status and body are discarded and the raw response
+// stands. Headers are shared with the buffered writer. The raw path records
+// its own status code, separate from the buffered one.
 func (me *httpResponseWriterWrapper) Unwrap() http.ResponseWriter {
 	return me.tracker
 }
 
 // flush sends the buffered status and body unless the raw writer was used,
-// in which case the buffered response is discarded and the raw one stands.
-// Headers were already written directly to the underlying writer. The status
-// defaults to 200 before the raw check so request logging, the only context
-// use after flush, logs 200 for a raw use without an explicit status.
+// in which case the buffered status and body are discarded and the raw
+// response stands. Headers were already written directly to the underlying
+// writer. A buffered response with no status defaults to 200.
 func (me *httpResponseWriterWrapper) flush() {
-	if me.statusCode == 0 {
-		me.statusCode = 200
-	}
 	if me.tracker.used {
 		return
 	}
-	me.tracker.WriteHeader(me.statusCode)
-	me.tracker.Write(me.bodyBuffer.Bytes())
+	if me.statusCode == 0 {
+		me.statusCode = 200
+	}
+	me.tracker.writer.WriteHeader(me.statusCode)
+	me.tracker.writer.Write(me.bodyBuffer.Bytes())
 }
 
 type httpResponseWriterTracker struct {
 	writer     http.ResponseWriter
-	used       bool
-	statusCode *int
+	used       bool // whether the raw writer was used; skips the buffered flush.
+	statusCode int  // raw status code, separate from the buffered one.
 }
 
 var _ http.ResponseWriter = (*httpResponseWriterTracker)(nil)
@@ -161,42 +170,39 @@ var _ http.Flusher = (*httpResponseWriterTracker)(nil)
 var _ http.Hijacker = (*httpResponseWriterTracker)(nil)
 
 // Header implements [http.ResponseWriter] on the raw path. Any call marks the
-// request as raw and the buffered response is discarded at flush.
+// request as raw and the buffered status and body are discarded at flush.
 func (me *httpResponseWriterTracker) Header() http.Header {
 	me.used = true
 	return me.writer.Header()
 }
 
 // Write implements [http.ResponseWriter] on the raw path. It marks the request
-// as raw and defaults the shared status code to 200 when unset.
+// as raw and defaults the raw status code to 200 when unset.
 func (me *httpResponseWriterTracker) Write(data []byte) (int, error) {
 	me.used = true
-	if *me.statusCode == 0 {
+	if me.statusCode == 0 {
 		me.WriteHeader(200)
 	}
 	return me.writer.Write(data)
 }
 
 // WriteHeader implements [http.ResponseWriter] on the raw path. It marks the
-// request as raw and records the shared status code.
+// request as raw and records the raw status code.
 func (me *httpResponseWriterTracker) WriteHeader(statusCode int) {
 	me.used = true
-	*me.statusCode = statusCode
+	me.statusCode = statusCode
 	me.writer.WriteHeader(statusCode)
 }
 
 // Flush implements [http.Flusher] on the raw path. It marks the request as raw
-// and defaults the shared status code to 200 when unset.
+// and flushes the underlying writer; it does not record a status code.
 func (me *httpResponseWriterTracker) Flush() {
 	me.used = true
-	if *me.statusCode == 0 {
-		*me.statusCode = 200
-	}
 	http.NewResponseController(me.writer).Flush()
 }
 
 // Hijack implements [http.Hijacker] on the raw path. It marks the request as
-// raw; the buffered response is discarded.
+// raw; the buffered status and body are discarded and no status is recorded.
 func (me *httpResponseWriterTracker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	me.used = true
 	return http.NewResponseController(me.writer).Hijack()
@@ -210,9 +216,11 @@ func (me *Context) GetHttpRequest() *http.Request {
 
 // GetHttpResponseWriter returns the response writer. Status and body are
 // buffered until flush, while headers go directly to the underlying writer:
-// they can be set before or after the status code, and after [Context.Next]
-// returns. Call Unwrap to get the raw writer without buffering; the returned
-// wrapper is buffered. Any raw use discards the buffer at flush.
+// they can be set before or after the buffered status code, and after
+// [Context.Next] returns. Call Unwrap to get the raw writer without buffering;
+// the returned wrapper is buffered. Any raw use discards the buffered status
+// and body at flush. Headers set before the raw response is committed are sent
+// with it; headers set after have no effect.
 func (me *Context) GetHttpResponseWriter() *httpResponseWriterWrapper {
 	return me.response
 }
@@ -294,16 +302,18 @@ func (me *Context) GetAllHeaders() map[string][]string {
 
 // SetHeader sets a response header directly on the underlying writer,
 // overwriting any previous values. Headers alone never flush, so it can be
-// called before or after the status code is set, and after [Context.Next]
-// returns.
+// called before or after the buffered status code, and after [Context.Next]
+// returns. A raw write or flush commits the current headers; changes after it
+// have no effect.
 func (me *Context) SetHeader(key, value string) {
 	me.response.Header().Set(key, value)
 }
 
 // AddHeader appends a response header value directly on the underlying
 // writer, keeping previous values. Headers alone never flush, so it can be
-// called before or after the status code is set, and after [Context.Next]
-// returns.
+// called before or after the buffered status code, and after [Context.Next]
+// returns. A raw write or flush commits the current headers; changes after it
+// have no effect.
 func (me *Context) AddHeader(key, value string) {
 	me.response.Header().Add(key, value)
 }
@@ -432,24 +442,32 @@ func (me *Context) ClearCookie(name string) {
 	}
 }
 
-// GetStatusCode returns the response status code recorded so far, shared by
-// the buffered and raw paths, or 0 when nothing was written yet.
+// GetStatusCode returns the status code recorded for the response path in
+// use: the buffered status before the raw writer is used, or the raw status
+// after. The raw status is only set by raw Write and WriteHeader; raw Flush,
+// Hijack and Header leave it unset. It is 0 when no status was recorded.
 func (me *Context) GetStatusCode() int {
+	if me.response.tracker.used {
+		return me.response.tracker.statusCode
+	}
 	return me.response.statusCode
 }
 
-// SetStatusCode records the response status code; it is sent at flush.
-// A later call overwrites the previous value, and headers or body set before
-// or after still flush together.
+// SetStatusCode records the buffered response status code; it is sent at
+// flush. A later call overwrites the previous value, and headers or body set
+// before or after still flush together.
 //
-// The status code starts at 0 (unwritten); if the handler chain finishes
-// without writing anything, 200 is sent on the wire automatically.
+// The buffered status is discarded when the raw writer is used; the raw path
+// has its own status (see [Context.GetStatusCode]). The buffered status starts
+// at 0 (unwritten); when the handler chain finishes without writing anything,
+// 200 is sent on the wire automatically.
 func (me *Context) SetStatusCode(statusCode int) {
 	me.response.WriteHeader(statusCode)
 }
 
 // Write buffers the status code with the raw string or bytes body; both are
-// sent at flush. It returns the buffer write error (always nil).
+// sent at flush unless the raw writer was used, in which case they are
+// discarded. It returns the buffer write error (always nil).
 func (me *Context) Write[T ~[]byte | ~string](statusCode int, raw T) error {
 	me.response.WriteHeader(statusCode)
 	_, err := me.response.Write([]byte(raw))

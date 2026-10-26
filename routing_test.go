@@ -1189,4 +1189,32 @@ func TestRouter_RequestLoggingStatus(t *testing.T) {
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
 		require.Equal(t, int64(http.StatusCreated), loggedStatus(t, logs))
 	})
+
+	t.Run("logs raw status", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := New(WithLogger(slog.New(logs)), WithRequestLogging(true))
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+			raw := ctx.GetHttpResponseWriter().Unwrap()
+			raw.WriteHeader(http.StatusCreated)
+			_, err := raw.Write([]byte("raw"))
+			return err
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+		require.Equal(t, int64(http.StatusCreated), loggedStatus(t, logs))
+	})
+
+	t.Run("defaults raw flush status to 200", func(t *testing.T) {
+		logs := &captureLogHandler{}
+		app := New(WithLogger(slog.New(logs)), WithRequestLogging(true))
+		app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+			raw := ctx.GetHttpResponseWriter().Unwrap()
+			return http.NewResponseController(raw).Flush()
+		})
+
+		resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, int64(http.StatusOK), loggedStatus(t, logs))
+	})
 }

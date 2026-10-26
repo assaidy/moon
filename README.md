@@ -267,8 +267,10 @@ Chain rules:
 - Returning a non-nil error ends the chain; the error handler registered first
   in the chain (see `WithErrorHandler`) receives it.
 - `Next` when no handlers remain returns `moon.ErrNotFound`.
-- Because responses are buffered, a middleware can set headers or a status after
-  `Next` returns and still affect the response.
+- Because the status and body are buffered, a middleware can set a buffered
+  status after `Next` returns and still affect the response. Headers are written
+  directly and can also be set after `Next` returns, unless a handler used the
+  raw writer.
 - `Context.IsMiddleware` reports whether the currently executing handler runs
   before the route handler: handlers registered by `Use`, the error handler and
   the app's internal pre-route handlers. It is false for route middlewares and
@@ -554,7 +556,9 @@ status := ctx.GetStatusCode()
 ```
 
 `SetHeader` replaces values, while `AddHeader` appends. A later status write
-overwrites an earlier one.
+overwrites an earlier one. `SetStatusCode` affects the buffered response only;
+the raw path has its own status (see
+[Buffered writes and the raw path](#buffered-writes-and-the-raw-path)).
 
 `Redirect` sets `Location` and the status code:
 
@@ -583,8 +587,8 @@ func timing(ctx *moon.Context) error {
 }
 ```
 
-The buffer is flushed after the chain, including the error handler, runs. If the
-handler chain writes nothing, the status defaults to `200`.
+The buffer is flushed after the chain, including the error handler, runs. A
+buffered response with no status code defaults to `200`.
 
 Some responses cannot be buffered: server-sent events, WebSockets, large
 streaming downloads and anything that needs `http.Flusher` or `http.Hijacker`.
@@ -593,10 +597,14 @@ Use the raw writer for those. Call `Unwrap` to get the raw writer;
 
 ```go
 func stream(ctx *moon.Context) error {
+    ctx.SetHeader("Content-Type", "text/event-stream")
+    ctx.SetHeader("Cache-Control", "no-cache")
+
     w := ctx.GetHttpResponseWriter().Unwrap()
+    w.WriteHeader(http.StatusOK) // commits headers above; status must be set with the raw writer to take effect
     controller := http.NewResponseController(w)
     // Use controller or write directly to w from here.
-    _, err := w.Write([]byte("chunk"))
+    _, err := w.Write([]byte("data: chunk\n\n"))
     _ = controller.Flush()
     return err
 }
@@ -604,7 +612,16 @@ func stream(ctx *moon.Context) error {
 
 Any raw use (directly or through `http.NewResponseController`) marks the request
 as raw. At flush time the buffered status and body are discarded and the raw
-response stands. Do not mix buffered writes with raw writes in one request.
+response stands, so do not mix buffered writes with raw writes in one request.
+
+Headers are shared: the handler or outer middleware can set them before the
+first raw write or flush, which commits them. Headers set after the raw response
+is committed have no effect. This header sharing is what lets middleware such
+as helmet and CORS add headers to a raw response. Status is tracked separately
+for the two paths: `SetStatusCode` affects only the buffered response, so use
+the raw `WriteHeader` when streaming. Raw `Write` defaults to `200`; raw
+`Flush`, `Hijack` and `Header` calls record no status, so `GetStatusCode`
+returns `0` for them unless the raw path also wrote one.
 
 #### Locals
 
@@ -1304,14 +1321,17 @@ pointers, unsafe pointers, interfaces and slices, including typed nils.
 ### Response buffering and streaming
 
 Moon buffers response status and body so middleware can post-process responses.
-This is convenient for compression, timing, CORS and error handling, but it has
-consequences:
+Headers are written directly to the underlying writer. This is convenient for
+compression, timing, CORS and error handling, but it has consequences:
 
 - Large response bodies are held in memory until the chain finishes.
 - Streaming responses must use the raw writer.
-- Mixing buffered and raw writes discards the buffered response.
+- Mixing buffered and raw writes discards the buffered status and body; a raw
+  write or flush commits the current headers, so set them before it.
+- Status codes are tracked separately for the buffered and raw paths.
 - `Context.Read` similarly buffers request bodies up to the configured limit.
 
 For large downloads, server-sent events, WebSockets and similar workloads, use
 `GetHttpResponseWriter().Unwrap()` with `http.NewResponseController`, and stream
-request bodies from `GetHttpRequest().Body`.
+request bodies from `GetHttpRequest().Body`. Set headers before the first raw
+write or flush and write the status on the raw path.

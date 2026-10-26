@@ -349,10 +349,11 @@ func (me *App) UseAll(handlers ...Handler) {
 // configured error handler (see [WithErrorHandler]). Use the [Context] Write
 // methods to buffer a response.
 //
-// Status and body are buffered until the chain finishes, so headers or
-// status set after [Context.Next] returns still apply. Do not mix buffered
-// writes with the raw writer from Unwrap in one request; raw use discards
-// the buffer.
+// Status and body are buffered until the chain finishes, so a buffered status
+// set after [Context.Next] returns still applies; headers are written directly
+// and can also be set then. Do not mix buffered writes with the raw writer from
+// Unwrap in one request; raw use discards the buffered status and body. Headers
+// set before the raw response is committed are sent with it.
 type Handler func(ctx *Context) error
 
 // PartKind identifies how a [Part] matches. See [ParsePattern].
