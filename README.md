@@ -595,20 +595,99 @@ streaming downloads and anything that needs `http.Flusher` or `http.Hijacker`.
 Use the raw writer for those. Call `Unwrap` to get the raw writer;
 `GetHttpResponseWriter` itself returns the buffered writer.
 
+A complete app exposing both a WebSocket echo endpoint and a server-sent events
+endpoint. The WebSocket handler checks for an upgrade request, then hands the raw
+writer to the upgrader. The SSE handler sets its headers with the context
+helpers, writes each event to the raw writer and flushes it; those headers are
+still committed because headers are shared with the raw path, and the request
+context's `Done` channel stops the loop when the client disconnects:
+
 ```go
-func stream(ctx *moon.Context) error {
+package main
+
+import (
+    "fmt"
+    "net/http"
+    "time"
+
+    "github.com/assaidy/moon"
+    "github.com/gorilla/websocket"
+)
+
+func main() {
+    app := moon.New(moon.WithListenAddress(":3000"))
+    app.MapGet("/websockets", handleWebSocket)
+    app.MapGet("/events", handleEvents)
+
+    if err := app.Start(); err != nil {
+        panic(err)
+    }
+}
+
+// handleWebSocket upgrades the request to a WebSocket connection and echoes
+// every message back to the client.
+func handleWebSocket(ctx *moon.Context) error {
+    if !websocket.IsWebSocketUpgrade(ctx.GetHttpRequest()) {
+        return moon.ErrUpgradeRequired
+    }
+
+    upgrader := websocket.Upgrader{}
+    conn, err := upgrader.Upgrade(ctx.GetHttpResponseWriter().Unwrap(), ctx.GetHttpRequest(), nil)
+    if err != nil {
+        // The upgrader has already written its reply to the raw writer, so this
+        // error will not be written. Return it anyway so it appears in request logging.
+        return fmt.Errorf("websocket: unexpected upgrade error: %w", err)
+    }
+    defer conn.Close()
+
+    logger := ctx.GetAppLogger()
+
+    for {
+        messageType, messagePayload, err := conn.ReadMessage()
+        if err != nil {
+            if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+                logger.Error("failed to read websocket message", "error", err)
+            }
+            return nil
+        }
+
+        if err := conn.WriteMessage(messageType, messagePayload); err != nil {
+            if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+                logger.Error("failed to write websocket message", "error", err)
+            }
+            return nil
+        }
+    }
+}
+
+// handleEvents streams the current server time as server-sent events until the
+// client disconnects.
+func handleEvents(ctx *moon.Context) error {
     ctx.SetHeader("Content-Type", "text/event-stream")
     ctx.SetHeader("Cache-Control", "no-cache")
 
-    w := ctx.GetHttpResponseWriter().Unwrap()
-    w.WriteHeader(http.StatusOK) // commits headers above; status must be set with the raw writer to take effect
-    controller := http.NewResponseController(w)
-    // Use controller or write directly to w from here.
-    _, err := w.Write([]byte("data: chunk\n\n"))
-    _ = controller.Flush()
-    return err
+    writer := ctx.GetHttpResponseWriter().Unwrap()
+    controller := http.NewResponseController(writer)
+
+    ticker := time.NewTicker(1 * time.Second)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ctx.Done():
+            return nil
+
+        case t := <-ticker.C:
+            fmt.Fprintf(writer, "data: The server time is %s\n\n", t.Format(time.TimeOnly))
+            controller.Flush()
+        }
+    }
 }
 ```
+
+Both handlers never write a buffered status or body. The raw `Write` and `Flush`
+calls commit the headers above with an implicit `200`; call the raw
+`WriteHeader` first when another status is needed.
 
 Any raw use (directly or through `http.NewResponseController`) marks the request
 as raw. At flush time the buffered status and body are discarded and the raw
