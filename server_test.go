@@ -36,17 +36,6 @@ func waitServing(t *testing.T, addr string) {
 	t.Fatalf("server did not start serving %s", addr)
 }
 
-func TestServer_IsPreforkChild(t *testing.T) {
-	t.Setenv(preforkChildEnv, "1")
-	require.True(t, IsPreforkChild())
-
-	t.Setenv(preforkChildEnv, "")
-	require.False(t, IsPreforkChild())
-
-	t.Setenv(preforkChildEnv, "0")
-	require.False(t, IsPreforkChild())
-}
-
 func TestServer_StartServiceFailure(t *testing.T) {
 	app := New(WithListenAddress("127.0.0.1:0"))
 	svc := newStubA()
@@ -124,28 +113,6 @@ func TestServer_RunUntilSignal(t *testing.T) {
 	})
 }
 
-func TestServer_GetListener(t *testing.T) {
-	t.Run("plain binds", func(t *testing.T) {
-		app := New()
-		l, err := app.getListener("127.0.0.1:0")
-		require.NoError(t, err)
-		require.NoError(t, l.Close())
-	})
-
-	t.Run("prefork binds", func(t *testing.T) {
-		app := New(WithPrefork(true))
-		l, err := app.getListener("127.0.0.1:0")
-		require.NoError(t, err)
-		require.NoError(t, l.Close())
-	})
-
-	t.Run("invalid address errors", func(t *testing.T) {
-		app := New()
-		_, err := app.getListener("invalid")
-		require.Error(t, err)
-	})
-}
-
 func TestServer_IgnoreErrServerClosed(t *testing.T) {
 	require.NoError(t, ignoreErrServerClosed(nil))
 	require.NoError(t, ignoreErrServerClosed(http.ErrServerClosed))
@@ -174,11 +141,5 @@ func TestServer_Shutdown(t *testing.T) {
 
 		require.NoError(t, app.Shutdown())
 		require.Equal(t, int32(1), svc.stopCalls.Load())
-	})
-
-	t.Run("prefork child takes server path", func(t *testing.T) {
-		t.Setenv(preforkChildEnv, "1")
-		app := New(WithPrefork(true))
-		require.NoError(t, app.Shutdown())
 	})
 }

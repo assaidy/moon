@@ -99,14 +99,7 @@ func (me *Context) GetService[T Service]() T {
 // start services without listening, e.g. TestMain or TestXxx setups that
 // exercise handlers via [App.Test] without binding a port.
 func (me *App) StartServices() error {
-	// in prefork mode, don't start services in parent process.
-	// it doesn't listen for requests. it just starts children.
-	if me.options.preforkIsEnabled && !IsPreforkChild() {
-		return nil
-	}
-
 	me.options.logger.Info("starting all services", "pid", os.Getpid())
-
 	if me.options.serviceStartParallel {
 		return me.startServicesParallel()
 	} else {
@@ -172,13 +165,7 @@ func (me *App) startOneService(service Service) error {
 // started services via [App.StartServices] can stop them without ever
 // listening.
 func (me *App) StopServices() {
-	// see comment in [App.StartServices]
-	if me.options.preforkIsEnabled && !IsPreforkChild() {
-		return
-	}
-
 	me.options.logger.Info("stopping all services", "pid", os.Getpid())
-
 	if me.options.serviceStopParallel {
 		me.stopServicesParallel()
 	} else {

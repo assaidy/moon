@@ -141,7 +141,6 @@ var (
 	}
 
 	// RlePid logs the process id of the process that handled the request.
-	// Under prefork every child logs its own pid.
 	RlePid = RequestLoggingEntry{
 		Key: "pid",
 		Value: func(ctx *Context, err error) any {

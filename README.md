@@ -51,7 +51,6 @@ built-in handlers, while keeping every moving part visible in ordinary Go code.
   - [Server configuration](#server-configuration)
     - [Timeouts and limits](#timeouts-and-limits)
     - [TLS and HTTP/2](#tls-and-http2)
-    - [Prefork](#prefork)
     - [Graceful shutdown](#graceful-shutdown)
   - [Testing](#testing)
 - [Configuration Reference](#configuration-reference)
@@ -108,8 +107,6 @@ projects that want a productive framework without hidden runtime machinery.
   request IDs, health checks, static files, API documentation, etc.
 - **Server configuration** for TLS, HTTP/2, custom protocols, timeouts, header
   limits and body limits.
-- **Prefork mode** for running multiple worker processes behind a shared port
-  through `SO_REUSEPORT`.
 - **In-process testing** through `App.Test`.
 
 ## Requirements and Installation
@@ -839,8 +836,6 @@ Lifecycle details:
 - Services stop in reverse registration order, so services that depend on
   earlier services stop before their dependencies. With parallel stop, the
   stops are initiated concurrently in that order.
-- In prefork mode, the parent process does not start services. Each child
-  process starts and stops its own.
 - `CheckServicesReadiness(services...)` reports whether every given service is
   non-nil and currently ready.
 - `App.CheckServicesReadiness()` reports whether every registered service has
@@ -1220,41 +1215,10 @@ app := moon.New(
 When TLS is enabled and no listen address is set, the default address is
 `:https`; otherwise it is `:http`.
 
-#### Prefork
-
-Prefork starts multiple child processes that listen on the same port through
-`SO_REUSEPORT`:
-
-```go
-app := moon.New(
-    moon.WithListenAddress(":3000"),
-    moon.WithPrefork(true),
-    moon.WithPreforkChildrenCount(4),
-    moon.WithPreforkRetriesCount(3),
-)
-```
-
-- `WithPrefork(true)` enables prefork. Default: `false`.
-- `WithPreforkChildrenCount(n)` sets the number of children. Default:
-  `runtime.NumCPU()`.
-- `WithPreforkRetriesCount(n)` sets how many times a stopped child is respawned
-  before `Start` returns `ErrPreforkRetriesExceeded`. Negative values mean
-  unlimited retries; zero means no retries. Default: `-1` (unlimited).
-- `IsPreforkChild()` reports whether the current process is a prefork child.
-- The parent process does not listen or start services; each child does both.
-- Children run in their own process groups, and the parent relays shutdown to
-  them.
-- Prefork depends on `SO_REUSEPORT` support from the operating system.
-
-`App.Start` blocks in the parent while it supervises children. `App.Shutdown`
-stops the children. `App.RunUntilSignal` waits for a signal before calling
-`Shutdown`.
-
 #### Graceful shutdown
 
 `Shutdown` performs an HTTP server shutdown, waits according to
-`WithShutdownTimeout`, then stops all started services. In prefork mode the parent
-signals its children and waits for them to stop.
+`WithShutdownTimeout`, then stops all started services.
 
 `RunUntilSignal` is the high-level lifecycle method. It starts the app, waits for
 one of the provided signals, then calls `Shutdown`. When no signals are provided,
@@ -1326,9 +1290,6 @@ request logging paths as live requests.
 | `WithMaxHeaderBytes(bytes)` | `http.DefaultMaxHeaderBytes` (1 MiB) | Maximum header bytes parsed. |
 | `WithMaxHeaderValueCount(count)` | `http.DefaultMaxHeaderValueCount` (500) | Maximum header values parsed. |
 | `WithMaxBodyBytes(bytes)` | 4 MiB | Maximum request body size accepted by `Read`. Negative disables. Zero rejects every request body. |
-| `WithPrefork(bool)` | `false` | Enables prefork child processes. |
-| `WithPreforkChildrenCount(count)` | `runtime.NumCPU()` | Number of prefork children. |
-| `WithPreforkRetriesCount(count)` | `-1` (unlimited) | Respawn attempts before `ErrPreforkRetriesExceeded`; negative is unlimited, zero means none. |
 | `WithTls(certFile, keyFile)` | disabled | Enables TLS with a certificate and key. |
 | `WithTlsConfig(config)` | nil | Sets a TLS configuration; nil leaves the default. |
 | `WithHttp2Config(config)` | nil | Sets an HTTP/2 configuration; nil leaves the default. |

@@ -6,9 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -34,14 +32,6 @@ type App struct {
 
 	rleMutex sync.RWMutex
 
-	childProcessesMutex     sync.RWMutex
-	childProcesses          map[*os.Process]struct{}
-	childProcessesWaitGroup sync.WaitGroup
-	childProcessResultChan  chan childProcessResult
-	shutdownChan            chan struct{}
-	shuttingDown            atomic.Bool
-	allChildrenStoppedChan  chan struct{}
-
 	options appOptions
 }
 
@@ -53,17 +43,15 @@ type App struct {
 //	app := New(WithListenAddress(":3000"))
 func New(opts ...AppOption) *App {
 	options := appOptions{
-		logger:               slog.Default(),
-		errorHandler:         DefaultErrorHandler,
-		preforkChildrenCount: runtime.NumCPU(),
-		preforkRetriesCount:  -1,
-		clientPriority:       true,
-		readTimeout:          -1,
-		writeTimeout:         -1,
-		idleTimeout:          -1,
-		shutdownTimeout:      -1,
-		maxBodyBytes:         4 << 20, // 4MB
-		rle:                  defaultRequestLoggingEntries,
+		logger:          slog.Default(),
+		errorHandler:    DefaultErrorHandler,
+		clientPriority:  true,
+		readTimeout:     -1,
+		writeTimeout:    -1,
+		idleTimeout:     -1,
+		shutdownTimeout: -1,
+		maxBodyBytes:    4 << 20, // 4MB
+		rle:             defaultRequestLoggingEntries,
 	}
 	for _, opt := range opts {
 		opt(&options)
@@ -88,10 +76,8 @@ func New(opts ...AppOption) *App {
 			Protocols:                    options.protocols,
 			DisableClientPriority:        !options.clientPriority,
 		},
-		dependencies:           make(map[reflect.Type]any),
-		shutdownChan:           make(chan struct{}),
-		allChildrenStoppedChan: make(chan struct{}),
-		options:                options,
+		dependencies: make(map[reflect.Type]any),
+		options:      options,
 	}
 
 	app.registerRootHandler()
@@ -114,9 +100,6 @@ type appOptions struct {
 	idleTimeout                 time.Duration
 	maxHeaderBytes              int
 	maxHeaderValueCount         int
-	preforkIsEnabled            bool
-	preforkChildrenCount        int
-	preforkRetriesCount         int
 	useTls                      bool
 	certFile                    string
 	keyFile                     string
@@ -355,42 +338,6 @@ func WithMaxHeaderValueCount(i int) AppOption {
 func WithMaxBodyBytes(n int) AppOption {
 	return func(o *appOptions) {
 		o.maxBodyBytes = n
-	}
-}
-
-// WithPrefork determines whether to use a prefork listener for the server.
-// If enabled, the app starts multiple child processes that listen on the same
-// port by enabling the SO_REUSEPORT socket option.
-// Pass it to [New].
-//
-// Default: false
-func WithPrefork(b bool) AppOption {
-	return func(o *appOptions) {
-		o.preforkIsEnabled = b
-	}
-}
-
-// WithPreforkChildrenCount sets the number of child processes to start when
-// prefork is enabled. Pass it to [New].
-//
-// Default: number of logical CPUs from [runtime.NumCPU]
-func WithPreforkChildrenCount(i int) AppOption {
-	Assert(i > 0)
-	return func(o *appOptions) {
-		o.preforkChildrenCount = i
-	}
-}
-
-// WithPreforkRetriesCount sets the number of times the prefork parent will
-// respawn a worker child process after it stops or crashes before giving up.
-// Once this limit is reached, [ErrPreforkRetriesExceeded] is returned from
-// [App.Start]. A negative value disables the retry limit, while zero allows no
-// retries. Pass it to [New].
-//
-// Default: unlimited retries
-func WithPreforkRetriesCount(i int) AppOption {
-	return func(o *appOptions) {
-		o.preforkRetriesCount = i
 	}
 }
 

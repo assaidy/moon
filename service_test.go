@@ -288,18 +288,6 @@ func TestService_StartStop(t *testing.T) {
 		require.Equal(t, int32(0), a.stopCalls.Load())
 	})
 
-	t.Run("prefork parent starts nothing", func(t *testing.T) {
-		t.Setenv(preforkChildEnv, "")
-		app := New(WithPrefork(true))
-		a := newStubA()
-		app.AddService(a)
-
-		require.NoError(t, app.StartServices())
-		require.Equal(t, int32(0), a.startCalls.Load())
-		app.StopServices()
-		require.Equal(t, int32(0), a.stopCalls.Load())
-	})
-
 	t.Run("shutdown tolerates stop error", func(t *testing.T) {
 		app := New()
 		a := newStubA()

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"testing"
 	"time"
 
@@ -20,9 +19,6 @@ func TestWithDefaults(t *testing.T) {
 	require.Same(t, slog.Default(), app.options.logger)
 	require.NotNil(t, app.options.errorHandler)
 	require.False(t, app.options.enableRequestLogging)
-	require.False(t, app.options.preforkIsEnabled)
-	require.Equal(t, runtime.NumCPU(), app.options.preforkChildrenCount)
-	require.Equal(t, -1, app.options.preforkRetriesCount)
 	require.False(t, app.options.useTls)
 	require.Equal(t, "", app.options.certFile)
 	require.Equal(t, "", app.options.keyFile)
@@ -249,25 +245,6 @@ func TestWithMaxHeaderValueCount(t *testing.T) {
 	require.Equal(t, 10, app.httpServer.MaxHeaderValueCount)
 	require.Panics(t, func() { New(WithMaxHeaderValueCount(0)) })
 	require.Panics(t, func() { New(WithMaxHeaderValueCount(-1)) })
-}
-
-func TestWithPrefork(t *testing.T) {
-	require.True(t, New(WithPrefork(true)).options.preforkIsEnabled)
-	require.False(t, New(WithPrefork(false)).options.preforkIsEnabled)
-}
-
-func TestWithPreforkChildrenCount(t *testing.T) {
-	app := New(WithPreforkChildrenCount(3))
-	require.Equal(t, 3, app.options.preforkChildrenCount)
-	require.Panics(t, func() { New(WithPreforkChildrenCount(0)) })
-	require.Panics(t, func() { New(WithPreforkChildrenCount(-1)) })
-}
-
-func TestWithPreforkRetriesCount(t *testing.T) {
-	require.Equal(t, 0, New(WithPreforkRetriesCount(0)).options.preforkRetriesCount)
-	require.Equal(t, 7, New(WithPreforkRetriesCount(7)).options.preforkRetriesCount)
-	require.Equal(t, -1, New(WithPreforkRetriesCount(-1)).options.preforkRetriesCount)
-	require.Equal(t, -2, New(WithPreforkRetriesCount(-2)).options.preforkRetriesCount)
 }
 
 func TestWithTls(t *testing.T) {
