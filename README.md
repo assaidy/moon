@@ -616,7 +616,7 @@ func main() {
     app.MapGet("/websockets", handleWebSocket)
     app.MapGet("/events", handleEvents)
 
-    if err := app.Start(); err != nil {
+    if err := app.RunUntilSignal(); err != nil {
         panic(err)
     }
 }
@@ -629,7 +629,11 @@ func handleWebSocket(ctx *moon.Context) error {
     }
 
     upgrader := websocket.Upgrader{}
-    conn, err := upgrader.Upgrade(ctx.GetHttpResponseWriter().Unwrap(), ctx.GetHttpRequest(), nil)
+    conn, err := upgrader.Upgrade(
+        ctx.GetHttpResponseWriter().Unwrap(),
+        ctx.GetHttpRequest(),
+        nil,
+    )
     if err != nil {
         // The upgrader has already written its reply to the raw writer, so this
         // error will not be written. Return it anyway so it appears in request logging.
@@ -642,14 +646,22 @@ func handleWebSocket(ctx *moon.Context) error {
     for {
         messageType, messagePayload, err := conn.ReadMessage()
         if err != nil {
-            if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+            if websocket.IsUnexpectedCloseError(
+                err,
+                websocket.CloseNormalClosure,
+                websocket.CloseGoingAway,
+            ) {
                 logger.Error("failed to read websocket message", "error", err)
             }
             return nil
         }
 
         if err := conn.WriteMessage(messageType, messagePayload); err != nil {
-            if websocket.IsUnexpectedCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+            if websocket.IsUnexpectedCloseError(
+                err,
+                websocket.CloseNormalClosure,
+                websocket.CloseGoingAway,
+            ) {
                 logger.Error("failed to write websocket message", "error", err)
             }
             return nil
