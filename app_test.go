@@ -22,8 +22,6 @@ func TestWithDefaults(t *testing.T) {
 	require.False(t, app.options.useTls)
 	require.Equal(t, "", app.options.certFile)
 	require.Equal(t, "", app.options.keyFile)
-	require.False(t, app.options.serviceStartParallel)
-	require.False(t, app.options.serviceStopParallel)
 	require.Equal(t, time.Duration(-1), app.options.readTimeout)
 	require.Equal(t, time.Duration(0), app.options.readHeaderTimeout)
 	require.Equal(t, time.Duration(-1), app.options.writeTimeout)
@@ -280,14 +278,6 @@ func TestWithProtocols(t *testing.T) {
 func TestWithClientPriority(t *testing.T) {
 	require.False(t, New(WithClientPriority(true)).httpServer.DisableClientPriority)
 	require.True(t, New(WithClientPriority(false)).httpServer.DisableClientPriority)
-}
-
-func TestWithParallelServiceStart(t *testing.T) {
-	require.True(t, New(WithParallelServiceStart(true)).options.serviceStartParallel)
-}
-
-func TestWithParallelServiceStop(t *testing.T) {
-	require.True(t, New(WithParallelServiceStop(true)).options.serviceStopParallel)
 }
 
 func TestWithShutdownTimeout(t *testing.T) {

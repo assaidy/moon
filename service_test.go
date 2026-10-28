@@ -179,7 +179,7 @@ func TestService_StopOrder(t *testing.T) {
 }
 
 func TestService_StartStop(t *testing.T) {
-	t.Run("sequential happy path", func(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {
 		app := New()
 		a, b := newStubA(), newStubB()
 		app.AddService(a)
@@ -199,19 +199,27 @@ func TestService_StartStop(t *testing.T) {
 		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
 	})
 
-	t.Run("parallel happy path", func(t *testing.T) {
-		app := New(WithParallelServiceStart(true), WithParallelServiceStop(true))
+	t.Run("already started services are skipped", func(t *testing.T) {
+		app := New()
 		a, b := newStubA(), newStubB()
 		app.AddService(a)
 		app.AddService(b)
 		require.NoError(t, app.StartServices())
+		require.NoError(t, app.StartServices())
 
 		require.Equal(t, int32(1), a.startCalls.Load())
 		require.Equal(t, int32(1), b.startCalls.Load())
+	})
+
+	t.Run("stopped services start again", func(t *testing.T) {
+		app := New()
+		a := newStubA()
+		app.AddService(a)
+		require.NoError(t, app.StartServices())
 
 		app.StopServices()
-		require.Equal(t, int32(1), a.stopCalls.Load())
-		require.Equal(t, int32(1), b.stopCalls.Load())
+		require.NoError(t, app.StartServices())
+		require.Equal(t, int32(2), a.startCalls.Load())
 	})
 
 	t.Run("start failure aborts and discards", func(t *testing.T) {
@@ -224,14 +232,15 @@ func TestService_StartStop(t *testing.T) {
 
 		err := app.StartServices()
 		require.ErrorIs(t, err, startBoom)
+		require.ErrorContains(t, err, `failed to start "b" service`)
 
 		// failed service never started, never stopped, never visible
 		require.Equal(t, int32(1), b.startCalls.Load())
 		require.Equal(t, int32(0), b.stopCalls.Load())
 
-		// the other service was either never started, or started then
-		// stopped and discarded along the abort
-		require.Equal(t, a.startCalls.Load(), a.stopCalls.Load())
+		// the other service was started then stopped and discarded along the abort
+		require.Equal(t, int32(1), a.startCalls.Load())
+		require.Equal(t, int32(1), a.stopCalls.Load())
 
 		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetService[*stubServiceA]() })
@@ -239,19 +248,6 @@ func TestService_StartStop(t *testing.T) {
 			return nil
 		})
 		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
-	})
-
-	t.Run("parallel start failure", func(t *testing.T) {
-		startBoom := errors.New("start boom")
-		app := New(WithParallelServiceStart(true))
-		a, b := newStubA(), newStubB()
-		b.startErr = startBoom
-		app.AddService(a)
-		app.AddService(b)
-
-		require.ErrorIs(t, app.StartServices(), startBoom)
-		require.Equal(t, int32(0), b.stopCalls.Load())
-		require.Equal(t, a.startCalls.Load(), a.stopCalls.Load())
 	})
 
 	t.Run("stop failure swallowed", func(t *testing.T) {
@@ -263,20 +259,7 @@ func TestService_StartStop(t *testing.T) {
 
 		app.StopServices()
 		require.Equal(t, int32(1), a.stopCalls.Load())
-	})
-
-	t.Run("parallel stop failure swallowed", func(t *testing.T) {
-		app := New(WithParallelServiceStop(true))
-		a, b := newStubA(), newStubB()
-		a.stopErr = errors.New("stop a")
-		b.stopErr = errors.New("stop b")
-		app.AddService(a)
-		app.AddService(b)
-		require.NoError(t, app.StartServices())
-
-		app.StopServices()
-		require.Equal(t, int32(1), a.stopCalls.Load())
-		require.Equal(t, int32(1), b.stopCalls.Load())
+		require.True(t, app.CheckServicesReadiness())
 	})
 
 	t.Run("stop without start is clean", func(t *testing.T) {

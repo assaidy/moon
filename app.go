@@ -107,8 +107,6 @@ type appOptions struct {
 	http2Config                 *http.HTTP2Config
 	protocols                   *http.Protocols
 	clientPriority              bool
-	serviceStartParallel        bool
-	serviceStopParallel         bool
 	shutdownTimeout             time.Duration
 	passLocalsToContext         bool
 	maxBodyBytes                int
@@ -399,26 +397,6 @@ func WithProtocols(p *http.Protocols) AppOption {
 func WithClientPriority(b bool) AppOption {
 	return func(o *appOptions) {
 		o.clientPriority = b
-	}
-}
-
-// WithParallelServiceStart determines whether services are started concurrently
-// instead of one after another. Pass it to [New].
-//
-// Default: false
-func WithParallelServiceStart(b bool) AppOption {
-	return func(o *appOptions) {
-		o.serviceStartParallel = b
-	}
-}
-
-// WithParallelServiceStop determines whether services are stopped concurrently
-// instead of one after another. Pass it to [New].
-//
-// Default: false
-func WithParallelServiceStop(b bool) AppOption {
-	return func(o *appOptions) {
-		o.serviceStopParallel = b
 	}
 }
 

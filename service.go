@@ -2,13 +2,9 @@ package moon
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
-
-	"golang.org/x/sync/errgroup"
 )
 
 // Service is a managed background resource owned by the [App].
@@ -54,8 +50,8 @@ func (me *App) CheckServicesReadiness() bool {
 
 type serviceInfo struct {
 	type_   reflect.Type
-	started bool
 	value   any
+	started bool
 }
 
 // AddService registers a service that becomes retrievable through
@@ -71,6 +67,7 @@ func (me *App) AddService[T Service](s T) {
 		slices.IndexFunc(me.services, func(s serviceInfo) bool { return s.type_ == t }) == -1,
 		fmt.Sprintf("service of type: %s is already registered", t.String()),
 	)
+
 	me.services = append(me.services, serviceInfo{type_: t, value: s})
 }
 
@@ -87,8 +84,8 @@ func (me *Context) GetService[T Service]() T {
 	return s.value.(T)
 }
 
-// StartServices starts all registered services according to the configured
-// mode ([WithParallelServiceStart]).
+// StartServices starts all registered services in registration order.
+// Services that are already started are left untouched.
 // If any service fails to start, already-started services are stopped and
 // discarded; the start error is returned.
 //
@@ -99,120 +96,48 @@ func (me *Context) GetService[T Service]() T {
 // start services without listening, e.g. TestMain or TestXxx setups that
 // exercise handlers via [App.Test] without binding a port.
 func (me *App) StartServices() error {
-	me.options.logger.Info("starting all services", "pid", os.Getpid())
-	if me.options.serviceStartParallel {
-		return me.startServicesParallel()
-	} else {
-		return me.startServicesSequential()
-	}
-}
-
-func (me *App) startServicesSequential() error {
-	for i, s := range me.services {
-		if err := me.startOneService(s.value.(Service)); err != nil {
-			me.StopServices()
-			return err
-		}
-		me.services[i].started = true
-	}
-
-	me.options.logger.Info("all services started")
-	return nil
-}
-
-func (me *App) startServicesParallel() error {
-	var wg errgroup.Group
-	var mu sync.Mutex
+	me.options.logger.Info("starting all services")
 
 	for i, s := range me.services {
-		wg.Go(func() error {
-			if err := me.startOneService(s.value.(Service)); err != nil {
-				return err
+		if !s.started {
+			service := s.value.(Service)
+			if err := service.Start(); err != nil {
+				me.options.logger.Error("failed to start service", "name", service.Name(), "error", err)
+				me.StopServices()
+				return fmt.Errorf("failed to start %q service: %w", service.Name(), err)
 			}
-			mu.Lock()
 			me.services[i].started = true
-			mu.Unlock()
-			return nil
-		})
-	}
-
-	if err := wg.Wait(); err != nil {
-		me.StopServices()
-		return err
+		}
 	}
 
 	me.options.logger.Info("all services started")
 	return nil
 }
 
-func (me *App) startOneService(service Service) error {
-	if err := service.Start(); err != nil {
-		me.options.logger.Error("failed to start service", "name", service.Name(), "error", err, "pid", os.Getpid())
-		return err
-	}
-
-	me.options.logger.Info("service started", "name", service.Name(), "pid", os.Getpid())
-	return nil
-}
-
-// StopServices stops all started services according to the configured
-// mode ([WithParallelServiceStop]). Services are stopped in reverse
-// registration order, so services that depend on earlier services are stopped
-// before their dependencies. Parallel mode initiates the stops concurrently
-// in that order.
+// StopServices stops all started services in reverse registration order, so
+// services that depend on earlier services are stopped before their
+// dependencies. A failed stop is logged and leaves the service marked as
+// started.
 //
 // It is called automatically by [App.Shutdown]. It is exported so tests that
 // started services via [App.StartServices] can stop them without ever
 // listening.
 func (me *App) StopServices() {
-	me.options.logger.Info("stopping all services", "pid", os.Getpid())
-	if me.options.serviceStopParallel {
-		me.stopServicesParallel()
-	} else {
-		me.stopServicesSequential()
-	}
-}
+	me.options.logger.Info("stopping all services")
 
-func (me *App) stopServicesSequential() {
 	// stop in reverse registration order so services that depend on earlier
 	// services are stopped before their dependencies.
 	for i, s := range slices.Backward(me.services) {
 		if s.started {
-			me.stopOneService(s.value.(Service))
+			service := s.value.(Service)
+			if err := service.Stop(); err != nil {
+				me.options.logger.Error("failed to stop service", "name", service.Name(), "error", err)
+				continue
+			}
+			me.options.logger.Info("service stopped", "name", service.Name())
 			me.services[i].started = false
 		}
 	}
+
 	me.options.logger.Info("all services stopped")
-}
-
-func (me *App) stopServicesParallel() {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	// stop in reverse. see [App.stopServicesSequential]
-	// it doesn't make sense as it's concurrent, but keep it for unified
-	// stop behavior. once per-service options are added, start/stop will be
-	// refactored into a single function each.
-	for i, s := range slices.Backward(me.services) {
-		if s.started {
-			wg.Go(func() {
-				me.stopOneService(s.value.(Service))
-				mu.Lock()
-				me.services[i].started = false
-				mu.Unlock()
-			})
-		}
-	}
-
-	wg.Wait()
-	me.options.logger.Info("all services stopped")
-}
-
-func (me *App) stopOneService(service Service) {
-	if err := service.Stop(); err != nil {
-		me.options.logger.Error("failed to stop service", "name", service.Name(), "error", err, "pid", os.Getpid())
-		return
-	}
-
-	me.options.logger.Info("service stopped", "name", service.Name(), "pid", os.Getpid())
 }

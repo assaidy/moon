@@ -99,8 +99,8 @@ projects that want a productive framework without hidden runtime machinery.
 - **Codecs** for JSON, XML and MessagePack, plus a `Codec` interface for custom
   formats.
 - **Typed dependencies** registered on the app and retrieved in handlers.
-- **Managed services** with ordered or parallel start/stop and automatic cleanup
-  during shutdown.
+- **Managed services** with ordered start/stop and automatic cleanup during
+  shutdown.
 - **Request logging** with pluggable per-request entries.
 - **API-spec metadata** attached to routes and consumed by documentation handlers.
 - **Optional handlers** for common concerns such as CORS, security headers,
@@ -816,7 +816,8 @@ whitespace-only, or a service of the same concrete type is already registered.
 
 Services are started by `App.Start`, or explicitly by `App.StartServices` when
 testing without listening. They are stopped by `App.Shutdown` or explicitly by
-`App.StopServices`.
+`App.StopServices`. Starting services again skips those that are already
+started, and successfully stopped services can be started again.
 
 Retrieve a started service in a handler:
 
@@ -831,11 +832,9 @@ Lifecycle details:
 
 - If any service fails to start, all services started so far are stopped and no
   service remains visible to `GetService`; the start error is returned.
-- `WithParallelServiceStart(true)` starts services concurrently;
-  `WithParallelServiceStop(true)` stops them concurrently.
 - Services stop in reverse registration order, so services that depend on
-  earlier services stop before their dependencies. With parallel stop, the
-  stops are initiated concurrently in that order.
+  earlier services stop before their dependencies.
+- A service that fails to stop is logged and remains marked as started.
 - `CheckServicesReadiness(services...)` reports whether every given service is
   non-nil and currently ready.
 - `App.CheckServicesReadiness()` reports whether every registered service has
@@ -1295,8 +1294,6 @@ request logging paths as live requests.
 | `WithHttp2Config(config)` | nil | Sets an HTTP/2 configuration; nil leaves the default. |
 | `WithProtocols(protocols)` | nil (HTTP/1 and HTTP/2) | Sets accepted protocols; nil leaves the default. |
 | `WithClientPriority(bool)` | `true` | Respects HTTP/2 client priorities. |
-| `WithParallelServiceStart(bool)` | `false` | Starts services concurrently. |
-| `WithParallelServiceStop(bool)` | `false` | Stops services concurrently. |
 | `WithShutdownTimeout(duration)` | `-1` (disabled) | Maximum time for HTTP server shutdown. Negative disables. Zero panics. |
 | `WithPassLocalsToContext(bool)` | `false` | Mirrors locals into the request context. |
 

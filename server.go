@@ -32,7 +32,7 @@ func (me *App) Start() error {
 		return err
 	}
 
-	me.options.logger.Info("starting server", "address", address, "pid", os.Getpid())
+	me.options.logger.Info("starting server", "address", address)
 	if me.options.useTls {
 		return ignoreErrServerClosed(me.httpServer.ServeTLS(listener, me.options.certFile, me.options.keyFile))
 	} else {
@@ -92,6 +92,6 @@ func (me *App) Shutdown() error {
 		defer cancel()
 	}
 
-	me.options.logger.Info("shutting down server", "pid", os.Getpid())
+	me.options.logger.Info("shutting down server")
 	return me.httpServer.Shutdown(ctx)
 }
