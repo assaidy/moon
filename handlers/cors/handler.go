@@ -101,7 +101,7 @@ func New(opts ...Option) *Handler {
 type options struct {
 	skip                 func(ctx *moon.Context) bool
 	allowedOrigins       []string
-	allowedOriginsFunc   func(origin string) bool
+	allowedOriginsFunc   func(origin string) (bool, error)
 	allowedMethods       []string
 	allowedMethodsString string
 	allowedHeaders       []string
@@ -268,6 +268,12 @@ func WithAllowedOrigins(origins []string) Option {
 // [WithAllowedOrigins]; when it allows the origin, that raw origin is
 // echoed back in Access-Control-Allow-Origin. Pass it to [New].
 //
+// Returning an error means the decision could not be made, for example
+// because the origin registry is unavailable. The handler then responds
+// with 500 instead of treating the origin as denied, so a backend failure
+// is not silently mistaken for a CORS rejection. Rejecting an origin is
+// done with (false, nil).
+//
 // Warning: never let the function return true for every origin. This is
 // particularly crucial when [WithAllowCredentials] is set to true:
 // doing so bypasses the restriction of a wildcard origin with credentials,
@@ -276,7 +282,7 @@ func WithAllowedOrigins(origins []string) Option {
 // instead of a function.
 //
 // Default: nil (only the static list decides)
-func WithAllowedOriginsFunc(f func(origin string) bool) Option {
+func WithAllowedOriginsFunc(f func(origin string) (bool, error)) Option {
 	return func(o *options) {
 		o.allowedOriginsFunc = f
 	}
@@ -453,12 +459,16 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 	}
 
 	if isPreflightRequest(ctx) {
-		me.setResponseHeadersForPreflightRequest(ctx)
+		if err := me.setResponseHeadersForPreflightRequest(ctx); err != nil {
+			return err
+		}
 		ctx.SetStatusCode(http.StatusNoContent)
 		return nil
 	}
 
-	me.setResponseHeadersForGeneralRequest(ctx)
+	if err := me.setResponseHeadersForGeneralRequest(ctx); err != nil {
+		return err
+	}
 	return ctx.Next()
 }
 
@@ -484,8 +494,11 @@ func isPreflightRequest(ctx *moon.Context) bool {
 // The preflight response must carry Access-Control-Allow-Origin like any
 // other CORS response, otherwise the browser rejects it with a network
 // error: https://fetch.spec.whatwg.org/#cors-preflight-fetch
-func (me *Handler) setResponseHeadersForPreflightRequest(ctx *moon.Context) {
-	origin := me.getAllowedOrigin(ctx)
+func (me *Handler) setResponseHeadersForPreflightRequest(ctx *moon.Context) error {
+	origin, err := me.getAllowedOrigin(ctx)
+	if err != nil {
+		return err
+	}
 	if origin != "" {
 		ctx.SetHeader(headerAccessControlAllowOrigin, origin)
 		if me.options.allowCredentials {
@@ -505,6 +518,7 @@ func (me *Handler) setResponseHeadersForPreflightRequest(ctx *moon.Context) {
 		ctx.SetHeader(headerAccessControlAllowPrivateNetwork, "true")
 	}
 	ctx.SetHeader(headerVary, preflightVary)
+	return nil
 }
 
 var preflightVary = strings.Join(
@@ -515,8 +529,11 @@ var preflightVary = strings.Join(
 // setResponseHeadersForGeneralRequest answers the actual (non-preflight)
 // request: it resolves the allowed origin, then sets the CORS headers the
 // browser needs to hand the response to the calling script.
-func (me *Handler) setResponseHeadersForGeneralRequest(ctx *moon.Context) {
-	origin := me.getAllowedOrigin(ctx)
+func (me *Handler) setResponseHeadersForGeneralRequest(ctx *moon.Context) error {
+	origin, err := me.getAllowedOrigin(ctx)
+	if err != nil {
+		return err
+	}
 	if origin == "" {
 		// No Origin header means the request is outside the scope of CORS,
 		// and a disallowed origin gets no CORS headers at all. Caches must
@@ -525,7 +542,7 @@ func (me *Handler) setResponseHeadersForGeneralRequest(ctx *moon.Context) {
 		if !slices.Contains(me.options.allowedOrigins, "*") {
 			ctx.SetHeader(headerVary, headerOrigin)
 		}
-		return
+		return nil
 	}
 	ctx.SetHeader(headerAccessControlAllowOrigin, origin)
 	if me.options.allowCredentials {
@@ -537,6 +554,7 @@ func (me *Handler) setResponseHeadersForGeneralRequest(ctx *moon.Context) {
 	if origin != "*" {
 		ctx.SetHeader(headerVary, headerOrigin)
 	}
+	return nil
 }
 
 // getAllowedOrigin resolves the value for Access-Control-Allow-Origin: the
@@ -545,24 +563,35 @@ func (me *Handler) setResponseHeadersForGeneralRequest(ctx *moon.Context) {
 // origin is not allowed, in which case no CORS headers are set.
 //
 // The static list at [WithAllowedOrigins] is consulted first, and
-// [WithAllowedOriginsFunc] only runs when the list does not match.
-func (me *Handler) getAllowedOrigin(ctx *moon.Context) string {
+// [WithAllowedOriginsFunc] only runs when the list does not match. A
+// non-nil error means the dynamic check could not decide; it is already
+// wrapped as a 500 response.
+func (me *Handler) getAllowedOrigin(ctx *moon.Context) (string, error) {
 	origin := ctx.GetHeader(headerOrigin)
 	if origin == "" {
-		return ""
+		return "", nil
 	}
 	if slices.Contains(me.options.allowedOrigins, "*") {
-		return "*"
+		return "*", nil
 	}
 	normalized, ok := normalizeOrigin(origin)
 	if !ok {
-		return ""
+		return "", nil
 	}
 	if originMatches(normalized, me.options.allowedOrigins) {
-		return normalized
+		return normalized, nil
 	}
-	if me.options.allowedOriginsFunc != nil && me.options.allowedOriginsFunc(origin) {
-		return origin
+	if me.options.allowedOriginsFunc != nil {
+		allowed, err := me.options.allowedOriginsFunc(origin)
+		if err != nil {
+			// A failing policy check is a server-side problem, not a denied
+			// origin: report 500 instead of silently omitting CORS headers,
+			// which would look like an ordinary CORS rejection.
+			return "", moon.ErrInternalServerError.WithDetails(err)
+		}
+		if allowed {
+			return origin, nil
+		}
 	}
-	return ""
+	return "", nil
 }

@@ -113,7 +113,7 @@ All options are passed to `cors.New`. Options are applied in order.
 | Option | Default | Description |
 | --- | --- | --- |
 | `WithAllowedOrigins([]string)` | `{"*"}` | Origins allowed to read responses. Supports exact origins, subdomain wildcards and `"*"`. |
-| `WithAllowedOriginsFunc(func(string) bool)` | `nil` | Dynamic origin decision, consulted when the static list does not match. |
+| `WithAllowedOriginsFunc(func(string) (bool, error))` | `nil` | Dynamic origin decision, consulted when the static list does not match. |
 | `WithAllowedMethods([]string)` | `HEAD, GET, POST, PUT, PATCH, DELETE, QUERY` | Methods written to `Access-Control-Allow-Methods` on preflight responses. |
 | `WithAllowedHeaders([]string)` | none | Request headers written to `Access-Control-Allow-Headers` on preflight responses. Names are canonicalized. |
 | `WithExposedHeaders([]string)` | none | Response headers exposed to browser scripts through `Access-Control-Expose-Headers`. Names are canonicalized. |
@@ -165,11 +165,17 @@ When it returns true, the raw request origin is echoed in
 ```go
 app.UseAll(cors.New(
     cors.WithAllowedOrigins([]string{"https://app.example.com"}),
-    cors.WithAllowedOriginsFunc(func(origin string) bool {
-        return strings.HasSuffix(origin, ".internal.example.com")
+    cors.WithAllowedOriginsFunc(func(origin string) (bool, error) {
+        return strings.HasSuffix(origin, ".internal.example.com"), nil
     }),
 ).Handle)
 ```
+
+Returning an error means the decision could not be made, for example because
+the origin registry is unavailable. The handler responds with `500 Internal
+Server Error` instead of treating the origin as denied, so a backend failure is
+not silently mistaken for a CORS rejection. Rejecting an origin is done with
+`(false, nil)`.
 
 Never return true for every origin. Doing so defeats the credentials restriction
 that prevents `"*"` from being combined with `WithAllowCredentials`. If every
@@ -357,7 +363,7 @@ Options:
 
 ```go
 func WithAllowedOrigins(origins []string) Option
-func WithAllowedOriginsFunc(f func(origin string) bool) Option
+func WithAllowedOriginsFunc(f func(origin string) (bool, error)) Option
 func WithAllowedMethods(methods []string) Option
 func WithAllowedHeaders(headers []string) Option
 func WithExposedHeaders(headers []string) Option

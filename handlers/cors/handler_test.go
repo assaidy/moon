@@ -1,6 +1,7 @@
 package cors
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -600,9 +601,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		calledWith := ""
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(origin string) bool {
+			WithAllowedOriginsFunc(func(origin string) (bool, error) {
 				calledWith = origin
-				return origin == "https://dynamic.example"
+				return origin == "https://dynamic.example", nil
 			}))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
@@ -617,9 +618,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		calledWith := ""
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(origin string) bool {
+			WithAllowedOriginsFunc(func(origin string) (bool, error) {
 				calledWith = origin
-				return true
+				return true, nil
 			}))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
@@ -632,7 +633,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 	t.Run("rejecting func emits no allow origin", func(t *testing.T) {
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) bool { return false }))
+			WithAllowedOriginsFunc(func(string) (bool, error) { return false, nil }))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
 			map[string]string{headerOrigin: "https://dynamic.example"})
@@ -645,9 +646,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		called := false
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) bool {
+			WithAllowedOriginsFunc(func(string) (bool, error) {
 				called = true
-				return false
+				return false, nil
 			}))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
@@ -661,9 +662,9 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		called := false
 		handler := New(
 			WithAllowedOrigins([]string{"*"}),
-			WithAllowedOriginsFunc(func(string) bool {
+			WithAllowedOriginsFunc(func(string) (bool, error) {
 				called = true
-				return false
+				return false, nil
 			}))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
@@ -678,15 +679,46 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		called := false
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) bool {
+			WithAllowedOriginsFunc(func(string) (bool, error) {
 				called = true
-				return true
+				return true, nil
 			}))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
 			map[string]string{headerOrigin: "not an origin"})
 
 		require.False(t, called, "the func must not run for a malformed origin")
+		requireAbsentHeaders(t, resp, headerAccessControlAllowOrigin)
+	})
+
+	t.Run("error from the func is an internal error", func(t *testing.T) {
+		handler := New(
+			WithAllowedOrigins([]string{"https://app.example"}),
+			WithAllowedOriginsFunc(func(string) (bool, error) {
+				return false, errors.New("origin registry unavailable")
+			}))
+
+		resp := request(newTestApp(handler), http.MethodGet, "/resource",
+			map[string]string{headerOrigin: "https://dynamic.example"})
+
+		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+		requireAbsentHeaders(t, resp, headerAccessControlAllowOrigin)
+	})
+
+	t.Run("error from the func fails the preflight", func(t *testing.T) {
+		handler := New(
+			WithAllowedOrigins([]string{"https://app.example"}),
+			WithAllowedOriginsFunc(func(string) (bool, error) {
+				return false, errors.New("origin registry unavailable")
+			}))
+
+		resp := request(newTestApp(handler), http.MethodOptions, "/resource",
+			map[string]string{
+				headerOrigin:                     "https://dynamic.example",
+				headerAccessControlRequestMethod: moon.MethodGet,
+			})
+
+		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 		requireAbsentHeaders(t, resp, headerAccessControlAllowOrigin)
 	})
 }
