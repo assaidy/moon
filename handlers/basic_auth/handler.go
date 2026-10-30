@@ -3,15 +3,16 @@
 // (RFC 9110). Register [Handler.Handle] as a middleware:
 //
 //	app.UseAll(basic_auth.New(
-//		basic_auth.WithAuthorizer(func(user, password string, ctx *moon.Context) (bool, error) {
+//		basic_auth.WithAuthorizer(func(ctx *moon.Context, user, password string) (bool, error) {
 //			return user == "admin" && password == "secret", nil
 //		}),
 //	).Handle)
 //
-// The authorizer receives the decoded user-id and password and reports whether
-// they are valid. An error means the decision could not be made, for example
-// because the user store is unavailable, and is answered with 500 rather than
-// 401 so a backend failure is not mistaken for bad credentials.
+// The authorizer receives the request context, the decoded user-id and
+// password, and reports whether they are valid. An error means the decision
+// could not be made, for example because the user store is unavailable, and
+// is answered with 500 rather than 401 so a backend failure is not mistaken
+// for bad credentials.
 //
 // On success the user-id is stored in a context local (see [DefaultLocalKey]
 // and [WithLocalKey]) and the chain runs. Missing, malformed or rejected
@@ -70,7 +71,7 @@ func New(opts ...Option) *Handler {
 type options struct {
 	skip        func(*moon.Context) bool
 	headerLimit int
-	authorizer  func(user, password string, ctx *moon.Context) (bool, error)
+	authorizer  func(ctx *moon.Context, user, password string) (bool, error)
 	realm       string
 	localKey    string
 }
@@ -99,13 +100,13 @@ func WithSkip(f func(*moon.Context) bool) Option {
 }
 
 // WithAuthorizer sets the function that validates credentials. It receives
-// the decoded user-id and password, plus the request context, and returns true
+// the request context, the decoded user-id and password, and returns true
 // to accept them. An error means the decision could not be made, for example
 // because the user store is unavailable; the handler answers with 500 instead
 // of 401. Rejecting credentials is done with (false, nil).
 //
 // It is required and panics on nil. Pass it to [New].
-func WithAuthorizer(f func(user, password string, ctx *moon.Context) (bool, error)) Option {
+func WithAuthorizer(f func(ctx *moon.Context, user, password string) (bool, error)) Option {
 	moon.Assert(f != nil, "authorizer func cannot be nil")
 	return func(o *options) {
 		o.authorizer = f
@@ -259,7 +260,7 @@ func (me *Handler) Handle(ctx *moon.Context) error {
 		return me.unauthorized(ctx)
 	}
 
-	ok, err := me.options.authorizer(user, password, ctx)
+	ok, err := me.options.authorizer(ctx, user, password)
 	if err != nil {
 		// The credentials may be fine; the authorizer itself failed. Report an
 		// internal error so the client is not told to retry its password, and

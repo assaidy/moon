@@ -26,7 +26,7 @@ func rawBasicAuthorization(userPass []byte) string {
 	return "Basic " + base64.StdEncoding.EncodeToString(userPass)
 }
 
-func allowAll(string, string, *moon.Context) (bool, error) {
+func allowAll(*moon.Context, string, string) (bool, error) {
 	return true, nil
 }
 
@@ -68,7 +68,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "wrong password challenges",
-			handler: New(WithAuthorizer(func(user, password string, _ *moon.Context) (bool, error) {
+			handler: New(WithAuthorizer(func(_ *moon.Context, user, password string) (bool, error) {
 				return user == "alice" && password == "secret", nil
 			})),
 			headers:    []string{basicAuthorization("alice", "wrong")},
@@ -77,7 +77,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "unknown user challenges",
-			handler: New(WithAuthorizer(func(user, _ string, _ *moon.Context) (bool, error) {
+			handler: New(WithAuthorizer(func(_ *moon.Context, user, _ string) (bool, error) {
 				return user == "alice", nil
 			})),
 			headers:    []string{basicAuthorization("bob", "secret")},
@@ -86,7 +86,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "authorizer failure is internal error",
-			handler: New(WithAuthorizer(func(string, string, *moon.Context) (bool, error) {
+			handler: New(WithAuthorizer(func(*moon.Context, string, string) (bool, error) {
 				return false, errors.New("user store unavailable")
 			})),
 			headers:    []string{validAuth},
@@ -101,7 +101,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "password may contain colons",
-			handler: New(WithAuthorizer(func(_, password string, _ *moon.Context) (bool, error) {
+			handler: New(WithAuthorizer(func(_ *moon.Context, _, password string) (bool, error) {
 				return password == "pa:ss", nil
 			})),
 			headers:      []string{basicAuthorization("alice", "pa:ss")},
@@ -185,7 +185,7 @@ func TestHandle(t *testing.T) {
 		{
 			name: "header limit exceeded is 431",
 			handler: New(
-				WithAuthorizer(func(string, string, *moon.Context) (bool, error) {
+				WithAuthorizer(func(*moon.Context, string, string) (bool, error) {
 					return false, errors.New("authorizer must not run")
 				}),
 				WithHeaderLimit(10),
@@ -215,7 +215,7 @@ func TestHandle(t *testing.T) {
 			name: "skip bypasses authentication",
 			handler: New(
 				WithSkip(func(*moon.Context) bool { return true }),
-				WithAuthorizer(func(string, string, *moon.Context) (bool, error) {
+				WithAuthorizer(func(*moon.Context, string, string) (bool, error) {
 					return false, errors.New("authorizer must not run")
 				}),
 			),
@@ -273,7 +273,7 @@ func TestHandle(t *testing.T) {
 		},
 		{
 			name: "authorizer receives request context",
-			handler: New(WithAuthorizer(func(_, _ string, ctx *moon.Context) (bool, error) {
+			handler: New(WithAuthorizer(func(ctx *moon.Context, _, _ string) (bool, error) {
 				return ctx.GetHeader("X-Probe") == "probe-value", nil
 			})),
 			headers:      []string{validAuth},

@@ -101,7 +101,7 @@ func New(opts ...Option) *Handler {
 type options struct {
 	skip                 func(ctx *moon.Context) bool
 	allowedOrigins       []string
-	allowedOriginsFunc   func(origin string) (bool, error)
+	allowedOriginsFunc   func(ctx *moon.Context, origin string) (bool, error)
 	allowedMethods       []string
 	allowedMethodsString string
 	allowedHeaders       []string
@@ -262,11 +262,11 @@ func WithAllowedOrigins(origins []string) Option {
 }
 
 // WithAllowedOriginsFunc sets a function that decides whether the request
-// origin is allowed, based on application logic. It receives the raw value
-// of the Origin request header and returns true to allow it, and it is only
-// consulted when the origin does not match the list given to
-// [WithAllowedOrigins]; when it allows the origin, that raw origin is
-// echoed back in Access-Control-Allow-Origin. Pass it to [New].
+// origin is allowed, based on application logic. It receives the request
+// context followed by the raw value of the Origin request header and returns
+// true to allow it, and it is only consulted when the origin does not match
+// the list given to [WithAllowedOrigins]; when it allows the origin, that raw
+// origin is echoed back in Access-Control-Allow-Origin. Pass it to [New].
 //
 // Returning an error means the decision could not be made, for example
 // because the origin registry is unavailable. The handler then responds
@@ -282,7 +282,7 @@ func WithAllowedOrigins(origins []string) Option {
 // instead of a function.
 //
 // Default: nil (only the static list decides)
-func WithAllowedOriginsFunc(f func(origin string) (bool, error)) Option {
+func WithAllowedOriginsFunc(f func(ctx *moon.Context, origin string) (bool, error)) Option {
 	return func(o *options) {
 		o.allowedOriginsFunc = f
 	}
@@ -582,7 +582,7 @@ func (me *Handler) getAllowedOrigin(ctx *moon.Context) (string, error) {
 		return normalized, nil
 	}
 	if me.options.allowedOriginsFunc != nil {
-		allowed, err := me.options.allowedOriginsFunc(origin)
+		allowed, err := me.options.allowedOriginsFunc(ctx, origin)
 		if err != nil {
 			// A failing policy check is a server-side problem, not a denied
 			// origin: report 500 instead of silently omitting CORS headers,

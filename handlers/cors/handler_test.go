@@ -601,7 +601,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		calledWith := ""
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(origin string) (bool, error) {
+			WithAllowedOriginsFunc(func(_ *moon.Context, origin string) (bool, error) {
 				calledWith = origin
 				return origin == "https://dynamic.example", nil
 			}))
@@ -618,7 +618,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		calledWith := ""
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(origin string) (bool, error) {
+			WithAllowedOriginsFunc(func(_ *moon.Context, origin string) (bool, error) {
 				calledWith = origin
 				return true, nil
 			}))
@@ -633,7 +633,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 	t.Run("rejecting func emits no allow origin", func(t *testing.T) {
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) (bool, error) { return false, nil }))
+			WithAllowedOriginsFunc(func(*moon.Context, string) (bool, error) { return false, nil }))
 
 		resp := request(newTestApp(handler), http.MethodGet, "/resource",
 			map[string]string{headerOrigin: "https://dynamic.example"})
@@ -646,7 +646,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		called := false
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) (bool, error) {
+			WithAllowedOriginsFunc(func(*moon.Context, string) (bool, error) {
 				called = true
 				return false, nil
 			}))
@@ -662,7 +662,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		called := false
 		handler := New(
 			WithAllowedOrigins([]string{"*"}),
-			WithAllowedOriginsFunc(func(string) (bool, error) {
+			WithAllowedOriginsFunc(func(*moon.Context, string) (bool, error) {
 				called = true
 				return false, nil
 			}))
@@ -679,7 +679,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 		called := false
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) (bool, error) {
+			WithAllowedOriginsFunc(func(*moon.Context, string) (bool, error) {
 				called = true
 				return true, nil
 			}))
@@ -694,7 +694,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 	t.Run("error from the func is an internal error", func(t *testing.T) {
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) (bool, error) {
+			WithAllowedOriginsFunc(func(*moon.Context, string) (bool, error) {
 				return false, errors.New("origin registry unavailable")
 			}))
 
@@ -708,7 +708,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 	t.Run("error from the func fails the preflight", func(t *testing.T) {
 		handler := New(
 			WithAllowedOrigins([]string{"https://app.example"}),
-			WithAllowedOriginsFunc(func(string) (bool, error) {
+			WithAllowedOriginsFunc(func(*moon.Context, string) (bool, error) {
 				return false, errors.New("origin registry unavailable")
 			}))
 

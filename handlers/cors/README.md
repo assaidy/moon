@@ -113,7 +113,7 @@ All options are passed to `cors.New`. Options are applied in order.
 | Option | Default | Description |
 | --- | --- | --- |
 | `WithAllowedOrigins([]string)` | `{"*"}` | Origins allowed to read responses. Supports exact origins, subdomain wildcards and `"*"`. |
-| `WithAllowedOriginsFunc(func(string) (bool, error))` | `nil` | Dynamic origin decision, consulted when the static list does not match. |
+| `WithAllowedOriginsFunc(func(ctx *moon.Context, origin string) (bool, error))` | `nil` | Dynamic origin decision, consulted when the static list does not match. |
 | `WithAllowedMethods([]string)` | `HEAD, GET, POST, PUT, PATCH, DELETE, QUERY` | Methods written to `Access-Control-Allow-Methods` on preflight responses. |
 | `WithAllowedHeaders([]string)` | none | Request headers written to `Access-Control-Allow-Headers` on preflight responses. Names are canonicalized. |
 | `WithExposedHeaders([]string)` | none | Response headers exposed to browser scripts through `Access-Control-Expose-Headers`. Names are canonicalized. |
@@ -157,15 +157,15 @@ origins.
 
 ### `WithAllowedOriginsFunc`
 
-The function receives the raw `Origin` request header and returns whether to
-allow it. It is only consulted when the origin does not match the static list.
-When it returns true, the raw request origin is echoed in
-`Access-Control-Allow-Origin`.
+The function receives the request context and the raw `Origin` request header,
+and returns whether to allow it. It is only consulted when the origin does not
+match the static list. When it returns true, the raw request origin is echoed
+in `Access-Control-Allow-Origin`.
 
 ```go
 app.UseAll(cors.New(
     cors.WithAllowedOrigins([]string{"https://app.example.com"}),
-    cors.WithAllowedOriginsFunc(func(origin string) (bool, error) {
+    cors.WithAllowedOriginsFunc(func(ctx *moon.Context, origin string) (bool, error) {
         return strings.HasSuffix(origin, ".internal.example.com"), nil
     }),
 ).Handle)
@@ -181,10 +181,10 @@ Never return true for every origin. Doing so defeats the credentials restriction
 that prevents `"*"` from being combined with `WithAllowCredentials`. If every
 origin should be allowed, use `"*"` in `WithAllowedOrigins` instead.
 
-The function receives the raw `Origin` header, so validate it carefully if it is
-used for anything beyond suffix checks. When it returns true, the handler echoes
-that same raw origin unchanged; origins matched from the static list are echoed
-in normalized form instead.
+The function receives the request context and the raw `Origin` header, so
+validate it carefully if it is used for anything beyond suffix checks. When it
+returns true, the handler echoes that same raw origin unchanged; origins
+matched from the static list are echoed in normalized form instead.
 
 ### `WithAllowedMethods`
 
@@ -363,7 +363,7 @@ Options:
 
 ```go
 func WithAllowedOrigins(origins []string) Option
-func WithAllowedOriginsFunc(f func(origin string) (bool, error)) Option
+func WithAllowedOriginsFunc(f func(ctx *moon.Context, origin string) (bool, error)) Option
 func WithAllowedMethods(methods []string) Option
 func WithAllowedHeaders(headers []string) Option
 func WithExposedHeaders(headers []string) Option

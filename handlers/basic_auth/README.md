@@ -21,7 +21,7 @@ import "github.com/assaidy/moon/handlers/basic_auth"
 ## Quick start
 
 ```go
-func authorize(user, password string, ctx *moon.Context) (bool, error) {
+func authorize(ctx *moon.Context, user, password string) (bool, error) {
     return user == "admin" && password == "secret", nil
 }
 
@@ -108,7 +108,7 @@ All options are passed to `basic_auth.New`.
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `WithAuthorizer(func(user, password string, ctx *moon.Context) (bool, error))` | required | Validates credentials; a nil func panics. |
+| `WithAuthorizer(func(ctx *moon.Context, user, password string) (bool, error))` | required | Validates credentials; a nil func panics. |
 | `WithRealm(string)` | `"Restricted"` | Realm advertised in the challenge. Trimmed; empty or control characters panic. |
 | `WithHeaderLimit(int)` | `-1` | Maximum `Authorization` value length in bytes. Positive values cap; negative disables; zero panics. |
 | `WithLocalKey(string)` | `DefaultLocalKey` | Context local key holding the user-id, used as-is. Empty panics. |
@@ -117,13 +117,13 @@ All options are passed to `basic_auth.New`.
 ### `WithAuthorizer`
 
 ```go
-basic_auth.WithAuthorizer(func(user, password string, ctx *moon.Context) (bool, error) {
+basic_auth.WithAuthorizer(func(ctx *moon.Context, user, password string) (bool, error) {
     return user == "admin" && password == "secret", nil
 })
 ```
 
-Sets the function that validates credentials. It receives the decoded user-id
-and password, plus the request context. The return values mean:
+Sets the function that validates credentials. It receives the request context,
+the decoded user-id and password. The return values mean:
 
 | Result | Behavior |
 | --- | --- |
@@ -144,7 +144,7 @@ control characters.
 Use a constant-time comparison for secrets:
 
 ```go
-func authorize(user, password string, ctx *moon.Context) (bool, error) {
+func authorize(ctx *moon.Context, user, password string) (bool, error) {
     want, ok := users[user]
     if !ok {
         return false, nil
@@ -239,7 +239,7 @@ var users = map[string]string{
     "alice": "hunter2",
 }
 
-func authorize(user, password string, ctx *moon.Context) (bool, error) {
+func authorize(ctx *moon.Context, user, password string) (bool, error) {
     want, ok := users[user]
     if !ok {
         return false, nil
@@ -255,7 +255,7 @@ Store hashes, not plaintext passwords, in real applications.
 ### Database lookup with errors
 
 ```go
-func authorize(user, password string, ctx *moon.Context) (bool, error) {
+func authorize(ctx *moon.Context, user, password string) (bool, error) {
     hash, err := users.PasswordHash(ctx, user)
     if err != nil {
         return false, err // answered with 500
@@ -368,7 +368,7 @@ Options:
 
 ```go
 func WithSkip(f func(ctx *moon.Context) bool) Option
-func WithAuthorizer(f func(user, password string, ctx *moon.Context) (bool, error)) Option
+func WithAuthorizer(f func(ctx *moon.Context, user, password string) (bool, error)) Option
 func WithHeaderLimit(i int) Option
 func WithRealm(s string) Option
 func WithLocalKey(s string) Option
