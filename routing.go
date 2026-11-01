@@ -73,7 +73,7 @@ func (me *App) dispatch(ctx *Context) {
 	for i := range routes {
 		if params, ok := routes[i].matchPath(ctx.GetPath(), me.options.caseSensitiveMatching); ok {
 			ctx.params = params
-			ctx.routeId = routes[i].id
+			ctx.routeFlags = slices.Clone(routes[i].flags)
 			targetRoute = routes[i]
 			break
 		}
@@ -168,7 +168,7 @@ func IsValidHttpMethod(method string) bool {
 //
 //   - [WithMiddlewares] inserts middlewares that run before handler, after
 //     every matching middleware registered with [App.Use].
-//   - [WithId] sets the id returned by [Context.GetRouteId].
+//   - [WithFlags] adds flags returned by [Context.GetRouteFlags].
 //   - [WithApiSpec] attaches documentation metadata created by [NewApiSpec].
 //     Invalid metadata panics at registration.
 //
@@ -569,8 +569,8 @@ type routeEntry struct {
 	names    []string
 	handlers []Handler
 	order    int
-	id       string  // multiple routes can have the same id.
-	spec     apiSpec // documentation metadata; see WithApiSpec.
+	flags    []string // multiple routes can have the same flags.
+	spec     apiSpec  // documentation metadata; see WithApiSpec.
 }
 
 // RouteOption configures a route at registration time. Pass options to
@@ -594,14 +594,29 @@ func WithMiddlewares(handlers ...Handler) RouteOption {
 	}
 }
 
-// WithId sets the route id returned by [Context.GetRouteId]. The id is
-// stored exactly as given: it may be empty, hold surrounding white space, or
-// repeat across routes, including the routes registered by [App.MapAll] for
-// each method. Callers that need a unique key combine it with
-// [Context.GetMethod].
-func WithId(id string) RouteOption {
+// WithFlags adds flags to the route. Flags identify routes in handlers and
+// middlewares so they can apply or avoid behavior without matching paths again.
+// Surrounding whitespace is trimmed, empty flags are ignored, and a flag already
+// present on the route is not added again.
+//
+// Read the flags with [Context.GetRouteFlags] or test one with
+// [Context.IsRouteFlag]. The flags of routes registered by [App.MapAll] are
+// applied to every method.
+func WithFlags(flags ...string) RouteOption {
+	normalized := make([]string, 0, len(flags))
+	for _, flag := range flags {
+		flag = strings.TrimSpace(flag)
+		if flag == "" {
+			continue
+		}
+		normalized = append(normalized, flag)
+	}
 	return func(re *routeEntry) {
-		re.id = id
+		for _, flag := range normalized {
+			if !slices.Contains(re.flags, flag) {
+				re.flags = append(re.flags, flag)
+			}
+		}
 	}
 }
 

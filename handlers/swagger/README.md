@@ -40,7 +40,7 @@ Document a route with `moon.WithApiSpec`:
 
 ```go
 app.MapGet("/users/:id", getUser,
-    moon.WithId("get-user"),
+    moon.WithFlags("users"),
     moon.WithApiSpec(moon.NewApiSpec(
         moon.WithSummary("Get a user"),
         moon.WithOperationId("getUser"),

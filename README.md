@@ -438,6 +438,32 @@ app.MapGet("/admin", adminPage,
 The route middleware runs after matching `Use` middleware and before the route
 handler. Each middleware must call `Next` to reach the handler.
 
+#### Route flags
+
+Attach flags to a route at registration:
+
+```go
+app.MapGet("/admin", adminPage,
+    moon.WithFlags("admin", "requires-auth"),
+)
+```
+
+Read them from any middleware or handler:
+
+```go
+if ctx.IsRouteFlag("requires-auth") {
+    // apply behavior for this route
+}
+```
+
+`GetRouteFlags` returns the full list when you need to inspect all of them.
+`IsRouteFlag` trims surrounding whitespace and reports whether the matched route
+has the flag. Flags are trimmed, empty flags are ignored, and a flag already
+present on the route is not added again. They are available only after matching,
+so a request answered with `moon.ErrMethodNotAllowed` or `moon.ErrNotFound` has
+no flags (`nil`). The slice belongs to the request, so modifying it does not
+affect the route or other requests.
+
 #### Not found and method not allowed
 
 When no route matches, the chain returns:
@@ -452,7 +478,7 @@ response. The default error handler writes a JSON error body.
 ### Context
 
 `Context` is created per request. It carries the request and response, matched
-route parameters and id, locals, app state, and access to dependencies and
+route parameters and flags, locals, app state, and access to dependencies and
 services.
 
 #### Request access
@@ -470,7 +496,8 @@ ctx.GetHeader("Accept")  // request header value
 ctx.GetAllHeaders()      // map[string][]string
 ctx.GetRemoteAddress()   // "127.0.0.1:54321"
 ctx.GetAppLogger()       // *slog.Logger from WithLogger
-ctx.GetRouteId()         // route id from WithId, or ""
+ctx.GetRouteFlags()      // route flags from WithFlags, or nil
+ctx.IsRouteFlag("admin") // whether the route has the flag
 ctx.GetHttpRequest()     // underlying *http.Request
 ```
 
@@ -1127,7 +1154,7 @@ format:
 
 ```go
 app.MapGet("/users/:id", getUser,
-    moon.WithId("get-user"),
+    moon.WithFlags("users"),
     moon.WithApiSpec(moon.NewApiSpec(
         moon.WithSummary("Get a user"),
         moon.WithDescription("Returns a single user by ID."),
@@ -1314,7 +1341,7 @@ request logging paths as live requests.
 | Option | Description |
 | --- | --- |
 | `WithMiddlewares(handlers...)` | Adds route-specific middleware before the route handler. |
-| `WithId(id)` | Sets the id returned by `Context.GetRouteId`. Ids are not required to be unique. |
+| `WithFlags(flags...)` | Adds flags returned by `Context.GetRouteFlags` and testable with `Context.IsRouteFlag`. Duplicates are ignored. |
 | `WithApiSpec(spec)` | Attaches metadata created by `NewApiSpec`. Invalid metadata panics at registration. |
 
 ### Request logging entries

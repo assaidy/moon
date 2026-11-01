@@ -1053,51 +1053,70 @@ func TestRouter_RouteOptions(t *testing.T) {
 		require.Equal(t, []string{"y"}, called)
 	})
 
-	t.Run("route id is visible in handler and middlewares", func(t *testing.T) {
-		var inMw, inHandler string
+	t.Run("route flags are visible in handler and middlewares", func(t *testing.T) {
+		var inMw, inHandler []string
 
 		app := New()
 		app.Map(http.MethodGet, "/x",
 			func(ctx *Context) error {
-				inHandler = ctx.GetRouteId()
+				inHandler = ctx.GetRouteFlags()
 				return nil
 			},
 			WithMiddlewares(func(ctx *Context) error {
-				inMw = ctx.GetRouteId()
+				inMw = ctx.GetRouteFlags()
 				return ctx.Next()
 			}),
-			WithId("get_x"),
+			WithFlags("get_x", "public"),
 		)
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
-		require.Equal(t, "get_x", inMw)
-		require.Equal(t, "get_x", inHandler)
+		require.Equal(t, []string{"get_x", "public"}, inMw)
+		require.Equal(t, []string{"get_x", "public"}, inHandler)
 	})
 
-	t.Run("route id is stored as given", func(t *testing.T) {
-		for _, id := range []string{"", "  get_x  ", " "} {
-			var got string
+	t.Run("route flags are normalized and deduplicated", func(t *testing.T) {
+		var got []string
 
-			app := New()
-			app.MapGet("/x", func(ctx *Context) error {
-				got = ctx.GetRouteId()
-				return nil
-			}, WithId(id))
+		app := New()
+		app.MapGet("/x", func(ctx *Context) error {
+			got = ctx.GetRouteFlags()
+			return nil
+		},
+			WithFlags("  public  ", "", " ", "public"),
+			WithFlags("admin"),
+			WithFlags("public"),
+		)
 
-			app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
-			require.Equal(t, id, got)
-		}
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.Equal(t, []string{"public", "admin"}, got)
 	})
 
-	t.Run("route id is empty when unmatched or method not allowed", func(t *testing.T) {
-		var ids []string
+	t.Run("IsRouteFlag trims and matches route flags", func(t *testing.T) {
+		var found, missing, empty bool
+
+		app := New()
+		app.MapGet("/x", func(ctx *Context) error {
+			found = ctx.IsRouteFlag("  public  ")
+			missing = ctx.IsRouteFlag("missing")
+			empty = ctx.IsRouteFlag(" ")
+			return nil
+		}, WithFlags("public"))
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		require.True(t, found)
+		require.False(t, missing)
+		require.False(t, empty)
+	})
+
+	t.Run("route flags are nil when unmatched or method not allowed", func(t *testing.T) {
+		var flags [][]string
 
 		app := New()
 		app.Use("/*", func(ctx *Context) error {
-			ids = append(ids, ctx.GetRouteId())
+			flags = append(flags, ctx.GetRouteFlags())
 			return ctx.Next()
 		})
-		app.MapGet("/x", func(ctx *Context) error { return nil }, WithId("get_x"))
+		app.MapGet("/x", func(ctx *Context) error { return nil }, WithFlags("get_x"))
 
 		for _, tc := range []struct {
 			method string
@@ -1109,35 +1128,61 @@ func TestRouter_RouteOptions(t *testing.T) {
 			app.Test(httptest.NewRequest(tc.method, tc.path, nil))
 		}
 
-		require.Equal(t, []string{"", ""}, ids)
+		require.Equal(t, [][]string{nil, nil}, flags)
 	})
 
-	t.Run("route id is empty by default", func(t *testing.T) {
-		var got = "unset"
+	t.Run("route flags are nil by default", func(t *testing.T) {
+		var got = []string{"unset"}
 
 		app := New()
 		app.MapGet("/x", func(ctx *Context) error {
-			got = ctx.GetRouteId()
+			got = ctx.GetRouteFlags()
 			return nil
 		})
 
 		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
-		require.Equal(t, "", got)
+		require.Nil(t, got)
+	})
+
+	t.Run("route flags are isolated per request", func(t *testing.T) {
+		var got []string
+
+		app := New()
+		app.MapGet("/x", func(ctx *Context) error {
+			flags := ctx.GetRouteFlags()
+			if len(got) == 0 {
+				flags[0] = "changed"
+				flags = append(flags, "extra")
+				got = flags
+				return nil
+			}
+			got = ctx.GetRouteFlags()
+			return nil
+		}, WithFlags("public"))
+
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+		app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+
+		require.Equal(t, []string{"public"}, got)
 	})
 
 	t.Run("MapAll applies the same options to every method", func(t *testing.T) {
-		var ids []string
+		var flags [][]string
 
 		app := New()
 		app.MapAll("/x", func(ctx *Context) error {
-			ids = append(ids, ctx.GetRouteId())
+			flags = append(flags, ctx.GetRouteFlags())
 			return nil
-		}, WithId("all_x"))
+		}, WithFlags("all_x", "public"))
 
 		for _, method := range []string{http.MethodGet, http.MethodPost, MethodQuery} {
 			app.Test(httptest.NewRequest(method, "/x", nil))
 		}
-		require.Equal(t, []string{"all_x", "all_x", "all_x"}, ids)
+		require.Equal(t, [][]string{
+			{"all_x", "public"},
+			{"all_x", "public"},
+			{"all_x", "public"},
+		}, flags)
 	})
 }
 

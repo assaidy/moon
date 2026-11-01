@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ type Context struct {
 	requestBodyReadError error
 	requestBodyBuffer    *bytes.Buffer
 	params               map[string]string
-	routeId              string // id of the matched route; see GetRouteId.
+	routeFlags           []string // flags of the matched route; see GetRouteFlags.
 	handlers             []Handler
 	nextHandlerIndex     int
 	middlewareCount      int
@@ -248,11 +249,22 @@ func (me *Context) GetPath() string {
 	return me.request.URL.Path
 }
 
-// GetRouteId returns the id of the matched route, as set by [WithId], or
-// "" when the route has no id. Requests that matched no route, including
-// ones answered with [ErrMethodNotAllowed] or [ErrNotFound], also return "".
-func (me *Context) GetRouteId() string {
-	return me.routeId
+// GetRouteFlags returns the flags of the matched route, as set by [WithFlags],
+// in the order they were added. It returns nil when the route has no flags and
+// for requests that matched no route, including ones answered with
+// [ErrMethodNotAllowed] or [ErrNotFound].
+//
+// The returned slice belongs to the request. Modifying it does not change the
+// route or other requests.
+func (me *Context) GetRouteFlags() []string {
+	return me.routeFlags
+}
+
+// IsRouteFlag reports whether the matched route has flag. Surrounding whitespace
+// in flag is trimmed, and an empty flag always returns false.
+func (me *Context) IsRouteFlag(flag string) bool {
+	flag = strings.TrimSpace(flag)
+	return flag != "" && slices.Contains(me.routeFlags, flag)
 }
 
 // GetUrl returns the full request URL, including path and query.
