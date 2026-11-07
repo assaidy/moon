@@ -98,3 +98,67 @@ func TestGenerateSecureToken(t *testing.T) {
 		})
 	}
 }
+
+func TestGetEnv(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		t.Setenv("MOON_TEST_ENV", "value")
+
+		value, ok := GetEnv("MOON_TEST_ENV")
+		require.True(t, ok)
+		require.Equal(t, "value", value)
+	})
+
+	t.Run("set to empty", func(t *testing.T) {
+		t.Setenv("MOON_TEST_ENV", "")
+
+		value, ok := GetEnv("MOON_TEST_ENV")
+		require.True(t, ok)
+		require.Empty(t, value)
+	})
+
+	t.Run("set ignores fallback", func(t *testing.T) {
+		t.Setenv("MOON_TEST_ENV", "value")
+
+		value, ok := GetEnv("MOON_TEST_ENV", "fallback")
+		require.True(t, ok)
+		require.Equal(t, "value", value)
+	})
+
+	t.Run("missing without fallback", func(t *testing.T) {
+		value, ok := GetEnv("MOON_TEST_ENV_MISSING")
+		require.False(t, ok)
+		require.Empty(t, value)
+	})
+
+	t.Run("missing with fallback", func(t *testing.T) {
+		value, ok := GetEnv("MOON_TEST_ENV_MISSING", "fallback")
+		require.False(t, ok)
+		require.Equal(t, "fallback", value)
+	})
+
+	t.Run("multiple fallbacks panic", func(t *testing.T) {
+		require.PanicsWithValue(t, "at most one default may be given", func() {
+			GetEnv("MOON_TEST_ENV_MISSING", "a", "b")
+		})
+	})
+}
+
+func TestMustGetEnv(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		t.Setenv("MOON_TEST_ENV", "value")
+
+		require.Equal(t, "value", MustGetEnv("MOON_TEST_ENV"))
+	})
+
+	t.Run("set to empty", func(t *testing.T) {
+		t.Setenv("MOON_TEST_ENV", "")
+
+		require.Empty(t, MustGetEnv("MOON_TEST_ENV"))
+	})
+
+	t.Run("missing panics", func(t *testing.T) {
+		require.PanicsWithValue(t, "missing env var: MOON_TEST_ENV_MISSING", func() {
+			MustGetEnv("MOON_TEST_ENV_MISSING")
+		})
+	})
+}

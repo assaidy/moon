@@ -3,6 +3,8 @@ package moon
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
+	"os"
 	"reflect"
 )
 
@@ -79,4 +81,26 @@ func GenerateSecureToken(length ...int) string {
 	buffer := make([]byte, n)
 	rand.Read(buffer)
 	return base64.RawURLEncoding.EncodeToString(buffer)
+}
+
+// GetEnv retrieves the value of the environment variable named by key.
+// If the variable is missing, it returns the optional fallback value and false.
+func GetEnv(key string, alt ...string) (string, bool) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		if len(alt) > 0 {
+			Assert(len(alt) == 1, "at most one default may be given")
+			return alt[0], false
+		}
+		return "", false
+	}
+	return value, true
+}
+
+// MustGetEnv retrieves the value of the environment variable named by key.
+// It panics if the variable is not set.
+func MustGetEnv(key string) string {
+	value, ok := os.LookupEnv(key)
+	Assert(ok, fmt.Sprintf("missing env var: %s", key))
+	return value
 }
