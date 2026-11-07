@@ -107,6 +107,7 @@ func (me *App) StartServices() error {
 				return fmt.Errorf("failed to start %q service: %w", service.Name(), err)
 			}
 			me.services[i].started = true
+			me.options.logger.Info("service started", "name", service.Name())
 		}
 	}
 
@@ -134,8 +135,8 @@ func (me *App) StopServices() {
 				me.options.logger.Error("failed to stop service", "name", service.Name(), "error", err)
 				continue
 			}
-			me.options.logger.Info("service stopped", "name", service.Name())
 			me.services[i].started = false
+			me.options.logger.Info("service stopped", "name", service.Name())
 		}
 	}
 
