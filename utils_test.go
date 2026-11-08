@@ -137,7 +137,7 @@ func TestGetEnv(t *testing.T) {
 	})
 
 	t.Run("multiple fallbacks panic", func(t *testing.T) {
-		require.PanicsWithValue(t, "at most one default may be given", func() {
+		require.PanicsWithValue(t, "at most one fallback may be given", func() {
 			GetEnv("MOON_TEST_ENV_MISSING", "a", "b")
 		})
 	})

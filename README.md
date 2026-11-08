@@ -1370,6 +1370,9 @@ moon.Assert(condition, "message")  // panic when false
 moon.IsNilValue(value)             // nil check including typed nils
 moon.GenerateSecureToken()         // 32 random bytes, URL-safe base64
 moon.GenerateSecureToken(64)       // custom byte count
+moon.GetEnv("KEY")                 // value, ok
+moon.GetEnv("KEY", "fallback")     // fallback, false when missing
+moon.MustGetEnv("KEY")             // panic when missing
 ```
 
 `GenerateSecureToken` uses `crypto/rand` and `base64.RawURLEncoding`. The default

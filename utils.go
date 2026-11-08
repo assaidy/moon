@@ -85,12 +85,12 @@ func GenerateSecureToken(length ...int) string {
 
 // GetEnv retrieves the value of the environment variable named by key.
 // If the variable is missing, it returns the optional fallback value and false.
-func GetEnv(key string, alt ...string) (string, bool) {
+func GetEnv(key string, fallback ...string) (string, bool) {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		if len(alt) > 0 {
-			Assert(len(alt) == 1, "at most one default may be given")
-			return alt[0], false
+		if len(fallback) > 0 {
+			Assert(len(fallback) == 1, "at most one fallback may be given")
+			return fallback[0], false
 		}
 		return "", false
 	}
