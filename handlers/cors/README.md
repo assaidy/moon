@@ -6,7 +6,7 @@ preflight requests, and adds the response headers browsers need before a
 cross-origin script can use a response.
 
 ```go
-app.UseAll(cors.New().Handle)
+app.UseAll(cors.New())
 ```
 
 CORS is enforced by browsers. It is not an authentication or authorization
@@ -24,7 +24,7 @@ import "github.com/assaidy/moon/handlers/cors"
 Allow every origin with the defaults:
 
 ```go
-app.UseAll(cors.New().Handle)
+app.UseAll(cors.New())
 ```
 
 Restrict origins and allow credentials:
@@ -37,7 +37,7 @@ app.UseAll(cors.New(
     }),
     cors.WithAllowedHeaders([]string{"Content-Type", "Authorization"}),
     cors.WithAllowCredentials(true),
-).Handle)
+))
 ```
 
 Allow every subdomain of a domain:
@@ -45,7 +45,7 @@ Allow every subdomain of a domain:
 ```go
 app.UseAll(cors.New(
     cors.WithAllowedOrigins([]string{"https://*.example.com"}),
-).Handle)
+))
 ```
 
 The wildcard matches `https://app.example.com` and
@@ -168,7 +168,7 @@ app.UseAll(cors.New(
     cors.WithAllowedOriginsFunc(func(ctx *moon.Context, origin string) (bool, error) {
         return strings.HasSuffix(origin, ".internal.example.com"), nil
     }),
-).Handle)
+))
 ```
 
 Returning an error means the decision could not be made, for example because
@@ -253,7 +253,7 @@ app.UseAll(cors.New(
     cors.WithSkip(func(ctx *moon.Context) bool {
         return ctx.GetPath() == "/internal"
     }),
-).Handle)
+))
 ```
 
 A skipped request runs the chain with no CORS headers and no preflight handling.
@@ -280,7 +280,7 @@ that ignores `Vary` can serve one origin's response to another origin.
 ```go
 app.UseAll(cors.New(
     cors.WithAllowedMethods([]string{moon.MethodGet, moon.MethodHead}),
-).Handle)
+))
 ```
 
 This answers preflights for `GET` and `HEAD` and allows every origin. It does not
@@ -310,7 +310,7 @@ app.UseAll(cors.New(
     cors.WithExposedHeaders([]string{"X-Request-ID"}),
     cors.WithAllowCredentials(true),
     cors.WithMaxAge(600),
-).Handle)
+))
 ```
 
 ### API-only CORS on a prefix
@@ -318,7 +318,7 @@ app.UseAll(cors.New(
 ```go
 app.Use("/api", cors.New(
     cors.WithAllowedOrigins([]string{"https://app.example.com"}),
-).Handle)
+))
 ```
 
 ### Combining with request IDs
@@ -326,9 +326,9 @@ app.Use("/api", cors.New(
 ```go
 app.UseAll(cors.New(
     cors.WithExposedHeaders([]string{"X-Request-ID"}),
-).Handle)
+))
 
-app.UseAll(request_id.New().Handle)
+app.UseAll(request_id.New())
 ```
 
 Order matters for preflight requests: CORS answers them without calling `Next`, so
@@ -352,10 +352,8 @@ preflights too, register the request ID middleware first.
 ## API reference
 
 ```go
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 

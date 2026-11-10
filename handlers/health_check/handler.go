@@ -10,9 +10,9 @@
 //
 // The most common usage is registering the built-in endpoints:
 //
-//	app.MapGet(health_check.LivenessEndpoint, health_check.New().Handle)
-//	app.MapGet(health_check.ReadinessEndpoint, health_check.New().Handle)
-//	app.MapGet(health_check.StartupEndpoint, health_check.New().Handle)
+//	app.MapGet(health_check.LivenessEndpoint, health_check.New())
+//	app.MapGet(health_check.ReadinessEndpoint, health_check.New())
+//	app.MapGet(health_check.StartupEndpoint, health_check.New())
 //
 // with a probe config deciding when the endpoint reports unhealthy:
 //
@@ -23,7 +23,7 @@
 //				return err == nil
 //			},
 //		),
-//	).Handle)
+//	))
 package health_check
 
 import (
@@ -32,15 +32,8 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler runs a probe and renders its result. Use [New] to construct it,
-// passing [WithProbe] and [WithResponse] to configure it,
-// then register [Handler.Handle] as a terminal endpoint.
-type Handler struct {
-	options options
-}
-
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	probe    func(ctx *moon.Context) bool
 	response func(ctx *moon.Context, ok bool) error
@@ -48,16 +41,16 @@ type options struct {
 
 // New returns a handler built from sensible defaults, customized by the given
 // options. Pass [WithProbe] and [WithResponse] to
-// configure it, then register [Handler.Handle] as a terminal endpoint:
+// configure it, then register the returned handler as a terminal endpoint:
 //
-//	app.Map(http.MethodGet, "/healthz", health_check.New().Handle)
+//	app.Map(http.MethodGet, "/healthz", health_check.New())
 //
 // It runs the probe (see [WithProbe]) and passes the outcome to
 // the response func (see [WithResponse]).
 //
 // Default behavior: the probe reports ok, and the response writes
 // 200 OK when it succeeds or 503 Service Unavailable when it fails.
-func New(opts ...Option) *Handler {
+func New(opts ...Option) moon.Handler {
 	options := options{
 		probe:    defaultProbe,
 		response: defaultResponse,
@@ -65,10 +58,12 @@ func New(opts ...Option) *Handler {
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return &Handler{options: options}
+	return func(ctx *moon.Context) error {
+		return options.response(ctx, options.probe(ctx))
+	}
 }
 
-// Option configures a [Handler]. Pass them to [New].
+// Option configures the handler returned by [New]. Pass them to [New].
 type Option func(*options)
 
 // WithProbe sets the probe deciding whether the endpoint reports healthy:
@@ -108,11 +103,6 @@ func defaultResponse(ctx *moon.Context, ok bool) error {
 		ctx.SetStatusCode(http.StatusServiceUnavailable)
 	}
 	return nil
-}
-
-// Handle runs the probe and renders its result with the response func.
-func (me *Handler) Handle(ctx *moon.Context) error {
-	return me.options.response(ctx, me.options.probe(ctx))
 }
 
 // Built-in endpoint paths for the common probe registrations.

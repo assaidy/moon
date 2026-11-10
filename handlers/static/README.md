@@ -8,7 +8,7 @@ dispositions, content-type detection and HTTP byte ranges.
 app.MapGet("/static/*", static.New(
     static.WithRoot("./public"),
     static.WithStripPathPrefix("/static"),
-).Handle)
+))
 ```
 
 The handler maps a request path to a file, serves it with useful headers, and
@@ -28,7 +28,7 @@ Serve `./public` at `/static`:
 app.MapGet("/static/*", static.New(
     static.WithRoot("./public"),
     static.WithStripPathPrefix("/static"),
-).Handle)
+))
 ```
 
 A request for `/static/css/app.css` serves `<root>/css/app.css`.
@@ -39,7 +39,7 @@ Serve a custom filesystem:
 app.MapGet("/assets/*", static.New(
     static.WithFileSystem(embeddedFiles),
     static.WithStripPathPrefix("/assets"),
-).Handle)
+))
 ```
 
 ## How the request is resolved
@@ -183,7 +183,7 @@ app.MapGet("/static/*", static.New(
     static.WithFileSystem(embedded),
     static.WithRoot("public"),
     static.WithStripPathPrefix("/static"),
-).Handle)
+))
 ```
 
 Default: `nil` (operating system filesystem).
@@ -345,7 +345,7 @@ app.MapGet("/static/*", static.New(
     static.WithRoot("./public"),
     static.WithStripPathPrefix("/static"),
     static.WithMaxAge(3600),
-).Handle)
+))
 ```
 
 ### Embedded assets
@@ -358,7 +358,7 @@ app.MapGet("/assets/*", static.New(
     static.WithFileSystem(assets),
     static.WithRoot("assets"),
     static.WithStripPathPrefix("/assets"),
-).Handle)
+))
 ```
 
 ### Downloads
@@ -368,7 +368,7 @@ app.MapGet("/download/*", static.New(
     static.WithRoot("./files"),
     static.WithStripPathPrefix("/download"),
     static.WithDownload(true),
-).Handle)
+))
 ```
 
 ### Directory browsing
@@ -378,7 +378,7 @@ app.MapGet("/browse/*", static.New(
     static.WithRoot("./shared"),
     static.WithStripPathPrefix("/browse"),
     static.WithDirectoryBrowsing(true),
-).Handle)
+))
 ```
 
 ### Route-specific middleware
@@ -387,7 +387,7 @@ app.MapGet("/browse/*", static.New(
 app.MapGet("/static/*", static.New(
     static.WithRoot("./public"),
     static.WithStripPathPrefix("/static"),
-).Handle,
+),
     moon.WithMiddlewares(authMiddleware),
 )
 ```
@@ -412,10 +412,8 @@ is served.
 ## API reference
 
 ```go
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 

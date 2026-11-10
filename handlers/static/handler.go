@@ -1,11 +1,11 @@
 // Package static provides a handler that serves files from the operating
-// system filesystem or a custom [fs.FS]. Register [Handler.Handle] in the
-// chain:
+// system filesystem or a custom [fs.FS]. Register the handler returned by [New]
+// in the chain:
 //
 //	app.MapGet("/static/*", static.New(
 //		static.WithStripPathPrefix("/static"),
 //		static.WithRoot("./public"),
-//	).Handle)
+//	))
 //
 // The request path is joined with the configured root and opened, and a
 // directory is replaced by the first of [WithIndexNames] that exists in it,
@@ -43,24 +43,17 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler serves files from a filesystem. Use [New] to construct it,
-// passing [Option]s to configure it, then register [Handler.Handle] in the
-// chain.
-type Handler struct {
-	options options
-}
-
 // New returns a handler built from sensible defaults, customized by the
-// given options, then register [Handler.Handle] in the chain:
+// given options, then register the returned handler in the chain:
 //
 //	app.MapGet("/static/*", static.New(
 //		static.WithStripPathPrefix("/static"),
 //		static.WithRoot("./public"),
-//	).Handle)
+//	))
 //
 // It panics when a custom filesystem is given via [WithFileSystem] and the
 // root is not a valid [fs.ValidPath] path.
-func New(opts ...Option) *Handler {
+func New(opts ...Option) moon.Handler {
 	options := options{
 		root:                      ".",
 		indexNames:                []string{"index.html"},
@@ -78,11 +71,27 @@ func New(opts ...Option) *Handler {
 		"root must be a valid io/fs path when a custom filesystem is provided",
 	)
 
-	return &Handler{options: options}
+	return func(ctx *moon.Context) error {
+		if options.skip != nil && options.skip(ctx) {
+			return ctx.Next()
+		}
+
+		if m := ctx.GetMethod(); m != moon.MethodHead && m != moon.MethodGet {
+			return ctx.Next()
+		}
+
+		r, err := resolve(ctx, options)
+		if err != nil {
+			return notFound(ctx, options)
+		}
+		defer r.file.Close()
+
+		return serve(ctx, r, options)
+	}
 }
 
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	skip                      func(*moon.Context) bool
 	root                      string
@@ -99,7 +108,7 @@ type options struct {
 	notFoundHandler           moon.Handler
 }
 
-// Option configures a [Handler]. Pass them to [New].
+// Option configures the handler returned by [New]. Pass them to [New].
 type Option func(*options)
 
 // WithSkip sets a predicate deciding which requests bypass the handler:
@@ -321,23 +330,6 @@ func WithNotFoundHandler(h moon.Handler) Option {
 // Errors are returned to the caller: the error of writing the body, or
 // [moon.ErrRequestedRangeNotSatisfiable] when a Range request asks for
 // ranges that cannot be satisfied.
-func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.options.skip != nil && me.options.skip(ctx) {
-		return ctx.Next()
-	}
-
-	if m := ctx.GetMethod(); m != moon.MethodHead && m != moon.MethodGet {
-		return ctx.Next()
-	}
-
-	r, err := me.resolve(ctx)
-	if err != nil {
-		return me.notFound(ctx)
-	}
-	defer r.file.Close()
-
-	return me.serve(ctx, r)
-}
 
 // resolved is the file a request is served from, or the directory it lists
 // when directory browsing is enabled, along with the metadata needed to
@@ -363,19 +355,19 @@ type resolved struct {
 // resolved again by matching each segment case-insensitively. The returned
 // error is never exposed to the client, only used to fall back to the
 // not-found path.
-func (me *Handler) resolve(ctx *moon.Context) (resolved, error) {
+func resolve(ctx *moon.Context, options options) (resolved, error) {
 	p := ctx.GetPath()
-	if me.options.stripPathPrefix != "" {
-		p = me.stripPrefix(p)
+	if options.stripPathPrefix != "" {
+		p = stripPrefix(p, options)
 	}
 
-	name := path.Join(me.options.root, p)
-	file, info, err := me.openAndStat(name)
-	if err != nil && me.options.caseInsensitiveFallback {
-		resolvedName, resolveErr := me.resolveCaseInsensitive(p)
+	name := path.Join(options.root, p)
+	file, info, err := openAndStat(name, options)
+	if err != nil && options.caseInsensitiveFallback {
+		resolvedName, resolveErr := resolveCaseInsensitive(p, options)
 		if resolveErr == nil {
 			name = resolvedName
-			file, info, err = me.openAndStat(name)
+			file, info, err = openAndStat(name, options)
 		}
 	}
 	if err != nil {
@@ -383,12 +375,12 @@ func (me *Handler) resolve(ctx *moon.Context) (resolved, error) {
 	}
 
 	if info.IsDir() {
-		r, err := me.resolveIndex(name)
+		r, err := resolveIndex(name, options)
 		if err == nil {
 			file.Close()
 			return r, nil
 		}
-		if !me.options.directoryBrowsing {
+		if !options.directoryBrowsing {
 			file.Close()
 			return resolved{}, err
 		}
@@ -402,8 +394,8 @@ func (me *Handler) resolve(ctx *moon.Context) (resolved, error) {
 
 // openAndStat opens name and stats it, closing the file again when stat
 // fails, so callers own the returned file on success.
-func (me *Handler) openAndStat(name string) (fs.File, fs.FileInfo, error) {
-	file, err := me.open(name)
+func openAndStat(name string, options options) (fs.File, fs.FileInfo, error) {
+	file, err := open(name, options.fs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -415,24 +407,33 @@ func (me *Handler) openAndStat(name string) (fs.File, fs.FileInfo, error) {
 	return file, info, nil
 }
 
+// open opens name from the configured filesystem, or from the operating
+// system filesystem when none is configured.
+func open(name string, fsys fs.FS) (fs.File, error) {
+	if fsys != nil {
+		return fsys.Open(name)
+	}
+	return os.Open(name)
+}
+
 // resolveCaseInsensitive finds the actual path for p below the root by
 // matching each segment against directory entries ignoring letter case. An
 // exact entry name is preferred at each segment; the remaining matches are
 // tried in lexical order, backtracking when a candidate leads to no match
 // further down. It returns the path with the entries' actual letter case.
-func (me *Handler) resolveCaseInsensitive(p string) (string, error) {
-	return me.walkCaseInsensitive(me.options.root, pathSegments(p))
+func resolveCaseInsensitive(p string, options options) (string, error) {
+	return walkCaseInsensitive(options.root, pathSegments(p), options)
 }
 
 // walkCaseInsensitive resolves segs below dir, as described by
-// [Handler.resolveCaseInsensitive]. Intermediate segments must be
+// [resolveCaseInsensitive]. Intermediate segments must be
 // directories; the final match may be a file or a directory.
-func (me *Handler) walkCaseInsensitive(dir string, segs []string) (string, error) {
+func walkCaseInsensitive(dir string, segs []string, options options) (string, error) {
 	if len(segs) == 0 {
 		return dir, nil
 	}
 
-	entries, err := me.readDir(dir)
+	entries, err := readDir(dir, options.fs)
 	if err != nil {
 		return "", err
 	}
@@ -440,14 +441,14 @@ func (me *Handler) walkCaseInsensitive(dir string, segs []string) (string, error
 	for _, name := range matchEntryNames(entries, segs[0]) {
 		next := path.Join(dir, name)
 		if len(segs) == 1 {
-			file, _, err := me.openAndStat(next)
+			file, _, err := openAndStat(next, options)
 			if err != nil {
 				continue
 			}
 			file.Close()
 			return next, nil
 		}
-		if resolved, err := me.walkCaseInsensitive(next, segs[1:]); err == nil {
+		if resolved, err := walkCaseInsensitive(next, segs[1:], options); err == nil {
 			return resolved, nil
 		}
 	}
@@ -489,9 +490,9 @@ func matchEntryNames(entries []fs.DirEntry, name string) []string {
 
 // readDir lists dir from the configured filesystem. Both fs.ReadDir and
 // os.ReadDir return entries sorted by name.
-func (me *Handler) readDir(dir string) ([]fs.DirEntry, error) {
-	if me.options.fs != nil {
-		return fs.ReadDir(me.options.fs, dir)
+func readDir(dir string, fsys fs.FS) ([]fs.DirEntry, error) {
+	if fsys != nil {
+		return fs.ReadDir(fsys, dir)
 	}
 	return os.ReadDir(dir)
 }
@@ -500,20 +501,20 @@ func (me *Handler) readDir(dir string) ([]fs.DirEntry, error) {
 // the directory dir, or reports an error when none does. The exact name is
 // tried first; when [WithCaseInsensitiveFallback] is enabled, a name that does
 // not exist exactly is matched against the directory entries ignoring case.
-func (me *Handler) resolveIndex(dir string) (resolved, error) {
-	for _, index := range me.options.indexNames {
-		if r, ok := me.openIndex(path.Join(dir, index)); ok {
+func resolveIndex(dir string, options options) (resolved, error) {
+	for _, index := range options.indexNames {
+		if r, ok := openIndex(path.Join(dir, index), options); ok {
 			return r, nil
 		}
-		if !me.options.caseInsensitiveFallback {
+		if !options.caseInsensitiveFallback {
 			continue
 		}
-		entries, err := me.readDir(dir)
+		entries, err := readDir(dir, options.fs)
 		if err != nil {
 			continue
 		}
 		for _, name := range matchEntryNames(entries, index) {
-			if r, ok := me.openIndex(path.Join(dir, name)); ok {
+			if r, ok := openIndex(path.Join(dir, name), options); ok {
 				return r, nil
 			}
 		}
@@ -523,8 +524,8 @@ func (me *Handler) resolveIndex(dir string) (resolved, error) {
 
 // openIndex opens name when it is a servable file, closing it and reporting
 // false when it cannot be opened or is a directory.
-func (me *Handler) openIndex(name string) (resolved, bool) {
-	file, info, err := me.openAndStat(name)
+func openIndex(name string, options options) (resolved, bool) {
+	file, info, err := openAndStat(name, options)
 	if err != nil {
 		return resolved{}, false
 	}
@@ -541,20 +542,20 @@ func (me *Handler) openIndex(name string) (resolved, bool) {
 // returns the error of writing the body, or
 // [moon.ErrRequestedRangeNotSatisfiable] when the requested ranges cannot
 // be satisfied.
-func (me *Handler) serve(ctx *moon.Context, r resolved) error {
+func serve(ctx *moon.Context, r resolved, options options) error {
 	if r.info.IsDir() {
-		return me.serveDirectory(ctx, r)
+		return serveDirectory(ctx, r, options)
 	}
 
-	me.setResponseHeaders(ctx, r)
+	setResponseHeaders(ctx, r, options)
 
 	if ctx.GetMethod() == moon.MethodHead {
 		return nil
 	}
 
-	if me.options.byteRanges {
+	if options.byteRanges {
 		if seeker, ok := r.file.(io.Seeker); ok {
-			result := me.parseRanges(ctx, r)
+			result := parseRanges(ctx, r, options)
 			if result.isValid {
 				if !result.isSatisfiable {
 					// A 416 response describes the representation length, and
@@ -565,9 +566,9 @@ func (me *Handler) serve(ctx *moon.Context, r resolved) error {
 					return moon.ErrRequestedRangeNotSatisfiable
 				}
 				if len(result.ranges) == 1 {
-					return me.serveSingleRange(ctx, r, seeker, result.ranges[0])
+					return serveSingleRange(ctx, r, seeker, result.ranges[0])
 				}
-				return me.serveMultipartRanges(ctx, r, seeker, result.ranges)
+				return serveMultipartRanges(ctx, r, seeker, result.ranges)
 			}
 		}
 	}
@@ -581,12 +582,12 @@ func (me *Handler) serve(ctx *moon.Context, r resolved) error {
 // and a failure to read the entries leaves the response untouched. The
 // listing always renders inline: Range headers are ignored and the download
 // disposition does not apply.
-func (me *Handler) serveDirectory(ctx *moon.Context, r resolved) error {
+func serveDirectory(ctx *moon.Context, r resolved, options options) error {
 	dir, ok := r.file.(fs.ReadDirFile)
 	if !ok {
 		// Nothing can be listed from here, so the request is answered as
 		// though browsing were disabled.
-		return me.notFound(ctx)
+		return notFound(ctx, options)
 	}
 	entries, err := dir.ReadDir(-1)
 	if err != nil {
@@ -595,12 +596,12 @@ func (me *Handler) serveDirectory(ctx *moon.Context, r resolved) error {
 
 	requestPath := ctx.GetPath()
 	parent := ""
-	if r.name != me.options.root {
+	if r.name != options.root {
 		parent = path.Dir(requestPath)
 	}
 	body := directoryListing(requestPath, parent, entries)
 
-	me.setCacheControlHeader(ctx)
+	setCacheControlHeader(ctx, options.maxAge)
 	ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
 	ctx.SetHeader("Content-Length", strconv.Itoa(len(body)))
 
@@ -674,7 +675,7 @@ func compareDirectoryEntries(a, b fs.DirEntry) int {
 
 // serveSingleRange writes one range as a 206 response carrying a
 // Content-Range header.
-func (me *Handler) serveSingleRange(ctx *moon.Context, r resolved, seeker io.Seeker, rng fileRange) error {
+func serveSingleRange(ctx *moon.Context, r resolved, seeker io.Seeker, rng fileRange) error {
 	ctx.SetStatusCode(http.StatusPartialContent)
 	ctx.SetHeader("Content-Range", rng.contentRange(r.info.Size()))
 	ctx.SetHeader("Content-Length", strconv.Itoa(rng.length))
@@ -688,7 +689,7 @@ func (me *Handler) serveSingleRange(ctx *moon.Context, r resolved, seeker io.See
 
 // serveMultipartRanges writes several ranges as a 206 multipart/byteranges
 // response, one body part per range.
-func (me *Handler) serveMultipartRanges(ctx *moon.Context, r resolved, seeker io.Seeker, ranges []fileRange) error {
+func serveMultipartRanges(ctx *moon.Context, r resolved, seeker io.Seeker, ranges []fileRange) error {
 	size := r.info.Size()
 	ctype := contentType(r.name, r.file)
 	boundary := multipart.NewWriter(io.Discard).Boundary()
@@ -751,9 +752,9 @@ func (me *countWriter) Write(p []byte) (int, error) {
 
 // setCacheControlHeader sets the cache lifetime of the response when one is
 // configured, shared by file responses and directory listings.
-func (me *Handler) setCacheControlHeader(ctx *moon.Context) {
-	if me.options.maxAge >= 0 {
-		ctx.SetHeader("Cache-Control", "max-age="+strconv.Itoa(me.options.maxAge))
+func setCacheControlHeader(ctx *moon.Context, maxAge int) {
+	if maxAge >= 0 {
+		ctx.SetHeader("Cache-Control", "max-age="+strconv.Itoa(maxAge))
 	}
 }
 
@@ -763,17 +764,17 @@ func (me *Handler) setCacheControlHeader(ctx *moon.Context) {
 // ranges are enabled and the file can be served partially. Content-Length
 // is always set, so it is correct for HEAD responses too, which carry no
 // body.
-func (me *Handler) setResponseHeaders(ctx *moon.Context, r resolved) {
-	me.setCacheControlHeader(ctx)
+func setResponseHeaders(ctx *moon.Context, r resolved, options options) {
+	setCacheControlHeader(ctx, options.maxAge)
 	ctx.SetHeader("Content-Type", contentType(r.name, r.file))
 	ctx.SetHeader("Content-Length", strconv.FormatInt(r.info.Size(), 10))
 	if modTime := r.info.ModTime(); !isZeroTime(modTime) {
 		ctx.SetHeader("Last-Modified", modTime.UTC().Format(http.TimeFormat))
 	}
-	if me.options.download {
+	if options.download {
 		setDownloadHeader(ctx, r.name)
 	}
-	if me.options.byteRanges {
+	if options.byteRanges {
 		if _, ok := r.file.(io.Seeker); ok {
 			ctx.SetHeader("Accept-Ranges", "bytes")
 		}
@@ -847,32 +848,23 @@ func setDownloadHeader(ctx *moon.Context, name string) {
 // request when this handler runs as middleware, and resolves to
 // [moon.ErrNotFound] when it is the last handler, so a custom error handler
 // still sees it.
-func (me *Handler) notFound(ctx *moon.Context) error {
-	if me.options.notFoundHandler != nil {
-		return me.options.notFoundHandler(ctx)
+func notFound(ctx *moon.Context, options options) error {
+	if options.notFoundHandler != nil {
+		return options.notFoundHandler(ctx)
 	}
 	return ctx.Next()
-}
-
-// open opens name from the configured filesystem, or from the operating
-// system filesystem when none is configured.
-func (me *Handler) open(name string) (fs.File, error) {
-	if me.options.fs != nil {
-		return me.options.fs.Open(name)
-	}
-	return os.Open(name)
 }
 
 // stripPrefix removes the configured path prefix from name. The exact prefix
 // is tried first; when [WithCaseInsensitiveFallback] is enabled, it is retried
 // ignoring letter case so a case-variant mount path can still resolve its
 // files.
-func (me *Handler) stripPrefix(name string) string {
-	if stripped, ok := cutPathPrefix(name, me.options.stripPathPrefix, true); ok {
+func stripPrefix(name string, options options) string {
+	if stripped, ok := cutPathPrefix(name, options.stripPathPrefix, true); ok {
 		return stripped
 	}
-	if me.options.caseInsensitiveFallback {
-		if stripped, ok := cutPathPrefix(name, me.options.stripPathPrefix, false); ok {
+	if options.caseInsensitiveFallback {
+		if stripped, ok := cutPathPrefix(name, options.stripPathPrefix, false); ok {
 			return stripped
 		}
 	}
@@ -939,7 +931,7 @@ func (me fileRange) mimeHeader(ctype string, size int64) textproto.MIMEHeader {
 // when nothing can be, either because every range lies outside the file (an
 // empty file has nothing to serve) or because the count stays over
 // [WithMaxDistinctRanges] after coalescing.
-func (me *Handler) parseRanges(ctx *moon.Context, r resolved) parseRangesResult {
+func parseRanges(ctx *moon.Context, r resolved, options options) parseRangesResult {
 	header := ctx.GetHeader("Range")
 	if header == "" {
 		return parseRangesResult{}
@@ -1014,10 +1006,10 @@ func (me *Handler) parseRanges(ctx *moon.Context, r resolved) parseRangesResult 
 	}
 
 	slices.SortFunc(ranges, func(a, b fileRange) int { return a.offset - b.offset })
-	if me.options.coalesceOverlappingRanges {
+	if options.coalesceOverlappingRanges {
 		ranges = coalesceRanges(ranges)
 	}
-	if limit := me.options.maxDistinctRanges; limit > 0 && len(ranges) > limit {
+	if limit := options.maxDistinctRanges; limit > 0 && len(ranges) > limit {
 		return parseRangesResult{isValid: true}
 	}
 	return parseRangesResult{ranges: ranges, isValid: true, isSatisfiable: true}

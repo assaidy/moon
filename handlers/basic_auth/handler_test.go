@@ -36,7 +36,7 @@ func TestHandle(t *testing.T) {
 
 	testCases := []struct {
 		name         string
-		handler      *Handler
+		handler      moon.Handler
 		headers      []string
 		probe        string
 		routeErr     error
@@ -313,7 +313,7 @@ func TestHandle(t *testing.T) {
 			)
 
 			app := moon.New()
-			app.Use("/*", h.Handle)
+			app.Use("/*", h)
 			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				nextRan = true
 				local, localSet = ctx.GetLocal[string](key)
@@ -366,15 +366,31 @@ func TestOptionValidation(t *testing.T) {
 func TestDefaults(t *testing.T) {
 	h := New(WithAuthorizer(allowAll))
 
-	require.Equal(t, "Restricted", h.options.realm)
-	require.Equal(t, DefaultLocalKey, h.options.localKey)
-	require.Nil(t, h.options.skip)
-	require.Equal(t, -1, h.options.headerLimit, "no limit by default")
+	app := moon.New()
+	app.UseAll(h)
+	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+		user, ok := ctx.GetLocal[string](DefaultLocalKey)
+		require.True(t, ok)
+		require.Equal(t, "alice", user)
+		return ctx.Write(http.StatusOK, "ok")
+	})
+
+	// No header limit by default: a long Authorization value is accepted.
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req.Header.Set("Authorization", basicAuthorization("alice", strings.Repeat("x", 2048)))
+	resp := app.Test(req)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestWithRealmTrims(t *testing.T) {
-	h := New(WithAuthorizer(allowAll), WithRealm("  My Realm  "))
-	require.Equal(t, "My Realm", h.options.realm)
+	app := moon.New()
+	app.UseAll(New(WithAuthorizer(allowAll), WithRealm("  My Realm  ")))
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.Equal(t, `Basic realm="My Realm", charset="UTF-8"`, resp.Header.Get("WWW-Authenticate"))
 }
 
 func TestQuoteString(t *testing.T) {

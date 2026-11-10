@@ -1,14 +1,14 @@
 // Package request_id provides a handler that assigns every request a
 // request ID, echoes it in a response header, and stores it in a context local.
 // Read it with [moon.Context.GetLocal] using [DefaultLocalKey] or the key
-// passed to [WithLocalKey]. Register [Handler.Handle] as a middleware or a
-// route handler:
+// passed to [WithLocalKey]. Register the handler returned by [New] as a
+// middleware or a route handler:
 //
-//	app.UseAll(request_id.New().Handle)
+//	app.UseAll(request_id.New())
 //
 // Customize the header, generator, or local key:
 //
-//	app.UseAll(request_id.New(request_id.WithHeader("X-Correlation-ID")).Handle)
+//	app.UseAll(request_id.New(request_id.WithHeader("X-Correlation-ID")))
 //
 // As a middleware it runs before the route is resolved, so every matching
 // request gets an ID — including requests with no route
@@ -27,29 +27,20 @@ import (
 // given. Read the ID with [moon.Context.GetLocal] using this key.
 const DefaultLocalKey = "moon.handlers.request_id.local_key"
 
-// Handler ensures every request has a request ID. Use [New] to construct
-// it, passing [Option]s to configure it,
-// then register [Handler.Handle] in the chain.
-type Handler struct {
-	options options
-}
-
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	skip      func(*moon.Context) bool
 	header    string
 	generator func() string
 	localKey  string
-	rleKey    string
-	rleValue  moon.RequestLoggingEntryValue
 }
 
 // New returns a handler built from sensible defaults, customized by the given
-// options, then register [Handler.Handle] in the chain:
+// options, then register the returned handler in the chain:
 //
-//	app.UseAll(request_id.New().Handle)
-//	app.UseAll(request_id.New(request_id.WithHeader("X-Correlation-ID")).Handle)
+//	app.UseAll(request_id.New())
+//	app.UseAll(request_id.New(request_id.WithHeader("X-Correlation-ID")))
 //
 // The incoming request header is reused when it is a valid ID: non-empty
 // printable ASCII (0x20-0x7E, inside spaces allowed). It arrives pre-trimmed
@@ -57,41 +48,49 @@ type options struct {
 // an ID is generated (see [WithGenerator]). The ID is echoed in
 // the response header and stored in a context local, then the chain runs.
 //
-// To include the ID in request logs, add
-// [Handler.GetRequestLoggingEntry] to the app:
+// To include the ID in request logs, add a custom
+// [moon.RequestLoggingEntry] when request logging is enabled:
 //
 //	h := request_id.New()
-//	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-//	app.UseAll(h.Handle)
+//	app.AddRequestLoggingEntry(moon.RequestLoggingEntry{
+//		Key: "request_id",
+//		Value: func(ctx *moon.Context, err error) any {
+//			id, _ := ctx.GetLocal[string](request_id.DefaultLocalKey)
+//			return id
+//		},
+//	})
+//	app.UseAll(h)
 //
 // Default header: "X-Request-ID" (see [WithHeader]).
 // Default local key: [DefaultLocalKey] (see [WithLocalKey]).
 // Requests for which the [WithSkip] predicate returns true run the
 // chain untouched: no header is set and nothing is stored.
-func New(opts ...Option) *Handler {
+func New(opts ...Option) moon.Handler {
 	options := options{
 		header:    "X-Request-ID",
 		generator: func() string { return moon.GenerateSecureToken() },
 		localKey:  DefaultLocalKey,
-		rleKey:    "request_id",
 	}
 	for _, opt := range opts {
 		opt(&options)
 	}
 
-	h := &Handler{options: options}
-	if h.options.rleValue == nil {
-		h.options.rleValue = func(ctx *moon.Context, err error) any {
-			v, _ := ctx.GetLocal[string](h.options.localKey)
-			return v
+	return func(ctx *moon.Context) error {
+		if options.skip != nil && options.skip(ctx) {
+			return ctx.Next()
 		}
+
+		requestId := sanitizeRequestId(ctx.GetHeader(options.header), options.generator)
+		ctx.SetHeader(options.header, requestId)
+		ctx.SetLocal(options.localKey, requestId)
+
+		return ctx.Next()
 	}
-	return h
 }
 
-// Option configures a [Handler]. Pass them to [New]:
+// Option configures the handler returned by [New]. Pass them to [New]:
 //
-//	app.UseAll(request_id.New(request_id.WithHeader("X-Correlation-ID")).Handle)
+//	app.UseAll(request_id.New(request_id.WithHeader("X-Correlation-ID")))
 type Option func(*options)
 
 // WithSkip skips ID assignment for requests where f returns true.
@@ -143,68 +142,6 @@ func WithLocalKey(s string) Option {
 	return func(o *options) {
 		o.localKey = s
 	}
-}
-
-// WithRequestLoggingEntryKey sets the request logging entry key returned by
-// [Handler.GetRequestLoggingEntry].
-// Surrounding whitespace is trimmed. It panics on an empty key, and
-// adding the same key twice to one app panics (see
-// [moon.App.AddRequestLoggingEntry]): multiple instances on the same app
-// need distinct keys. Pass it to [New].
-//
-// Default: "request_id".
-func WithRequestLoggingEntryKey(s string) Option {
-	s = strings.TrimSpace(s)
-	moon.Assert(s != "", "key cannot be empty or whitespace")
-	return func(o *options) {
-		o.rleKey = s
-	}
-}
-
-// WithRequestLoggingEntryValue sets the func rendering the request
-// logging entry value returned by [Handler.GetRequestLoggingEntry]. It runs
-// after the handler chain with the chain's error as err, nil when the chain
-// succeeded.
-// It panics on a nil func. Pass it to [New].
-//
-// Default: the request ID stored under the handler's local key.
-func WithRequestLoggingEntryValue(f moon.RequestLoggingEntryValue) Option {
-	moon.Assert(f != nil, "value func cannot be nil")
-	return func(o *options) {
-		o.rleValue = f
-	}
-}
-
-// GetRequestLoggingEntry returns the request logging entry carrying the ID.
-// Add it to the app to include the ID in request logs:
-//
-//	h := request_id.New()
-//	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-//	app.UseAll(h.Handle)
-//
-// Customize the key and value with [WithRequestLoggingEntryKey]
-// and [WithRequestLoggingEntryValue].
-func (me *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry {
-	return moon.RequestLoggingEntry{
-		Key:   me.options.rleKey,
-		Value: me.options.rleValue,
-	}
-}
-
-// Handle ensures every request has a request ID. The incoming request header
-// is reused when valid, otherwise an ID is generated (see
-// [WithGenerator]). The ID is echoed in the response header and
-// stored in a context local, then the chain runs.
-func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.options.skip != nil && me.options.skip(ctx) {
-		return ctx.Next()
-	}
-
-	requestId := sanitizeRequestId(ctx.GetHeader(me.options.header), me.options.generator)
-	ctx.SetHeader(me.options.header, requestId)
-	ctx.SetLocal(me.options.localKey, requestId)
-
-	return ctx.Next()
 }
 
 // sanitizeRequestId returns requestId when valid; otherwise it trims and

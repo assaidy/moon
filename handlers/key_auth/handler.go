@@ -1,11 +1,11 @@
 // Package key_auth provides a handler that authenticates requests with an API
-// key. Register [Handler.Handle] as a middleware:
+// key. Register the handler returned by [New] as a middleware:
 //
 //	app.UseAll(key_auth.New(
 //		key_auth.WithValidator(func(ctx *moon.Context, key string) (bool, error) {
 //			return key == "secret", nil
 //		}),
-//	).Handle)
+//	))
 package key_auth
 
 import (
@@ -15,21 +15,16 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler authenticates requests with an API key. Use [New] to construct it,
-// passing [Option]s to configure it, then register [Handler.Handle] in the
-// chain.
-type Handler struct {
-	options options
-}
-
 // New returns a handler built from sensible defaults, customized by the given
-// options, then register [Handler.Handle] in the chain:
+// options, then register the returned handler in the chain:
 //
-//	app.UseAll(key_auth.New(key_auth.WithValidator(validate)).Handle)
+//	app.UseAll(key_auth.New(key_auth.WithValidator(validate)))
 //
 // The validator is required and cannot be nil; New panics without it.
 // Default source: [SourceAuthorizationHeader]("Bearer") (see [WithKeySource]).
-func New(opts ...Option) *Handler {
+// Requests skipped by [WithSkip] run the chain untouched. A missing or
+// rejected key gets a 401 challenge; a validator error is reported as 500.
+func New(opts ...Option) moon.Handler {
 	options := options{
 		source: SourceAuthorizationHeader("Bearer"),
 	}
@@ -39,23 +34,40 @@ func New(opts ...Option) *Handler {
 
 	moon.Assert(options.validator != nil, "validator must be set; set it using WithValidator option")
 
-	return &Handler{options: options}
+	return func(ctx *moon.Context) error {
+		if options.skip != nil && options.skip(ctx) {
+			return ctx.Next()
+		}
+
+		key := options.source.Extractor(ctx)
+		if key == "" {
+			return unauthorized(ctx, options.source.Challenge)
+		}
+
+		if ok, err := options.validator(ctx, key); err != nil {
+			return moon.ErrInternalServerError.WithDetails(err)
+		} else if !ok {
+			return unauthorized(ctx, options.source.Challenge)
+		}
+
+		return ctx.Next()
+	}
 }
 
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	skip      func(*moon.Context) bool
 	source    KeySource
 	validator func(*moon.Context, string) (bool, error)
 }
 
-// Option configures a [Handler]. Pass them to [New]:
+// Option configures the handler returned by [New]. Pass them to [New]:
 //
 //	app.UseAll(key_auth.New(
 //		key_auth.WithKeySource(key_auth.SourceXApiKeyHeader()),
 //		key_auth.WithValidator(validate),
-//	).Handle)
+//	))
 type Option func(*options)
 
 // WithSkip bypasses authentication for requests where f returns true. The
@@ -171,28 +183,6 @@ func SourceCookie(name string) KeySource {
 		},
 		Challenge: normalizeChallenge(Challenge{Scheme: "ApiKey"}),
 	}
-}
-
-// Handle extracts and validates the API key. Requests skipped by [WithSkip]
-// run the chain untouched. A missing or rejected key gets a 401 challenge; a
-// validator error is reported as 500.
-func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.options.skip != nil && me.options.skip(ctx) {
-		return ctx.Next()
-	}
-
-	key := me.options.source.Extractor(ctx)
-	if key == "" {
-		return unauthorized(ctx, me.options.source.Challenge)
-	}
-
-	if ok, err := me.options.validator(ctx, key); err != nil {
-		return moon.ErrInternalServerError.WithDetails(err)
-	} else if !ok {
-		return unauthorized(ctx, me.options.source.Challenge)
-	}
-
-	return ctx.Next()
 }
 
 // unauthorized writes the configured challenge and returns 401.

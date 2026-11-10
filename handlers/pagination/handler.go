@@ -1,8 +1,8 @@
 // Package pagination provides a handler that parses pagination, sorting and
 // cursor query parameters into a request-scoped [Info] stored in a context
-// local. Register [Handler.Handle] as a middleware:
+// local. Register the handler returned by [New] as a middleware:
 //
-//	app.UseAll(pagination.New().Handle)
+//	app.UseAll(pagination.New())
 //
 // Read the parsed values downstream with [moon.Context.GetLocal]:
 //
@@ -43,21 +43,14 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler parses pagination, sorting and cursor query parameters. Use [New] to
-// construct it, passing [Option]s to configure it, then register
-// [Handler.Handle] in the chain.
-type Handler struct {
-	options options
-}
-
 // New returns a handler built from sensible defaults, customized by the given
-// options, then register [Handler.Handle] in the chain:
+// options, then register the returned handler in the chain:
 //
-//	app.UseAll(pagination.New().Handle)
+//	app.UseAll(pagination.New())
 //	app.UseAll(pagination.New(
 //		pagination.WithDefaultLimit(20),
 //		pagination.WithMaxLimit(200),
-//	).Handle)
+//	))
 //
 // Defaults: page 1, limit 10 (between 1 and 100), offset 0, query keys "page",
 // "limit", "offset" and "cursor", sorting disabled, no default sort, limit
@@ -69,7 +62,11 @@ type Handler struct {
 //
 // It panics when the default limit is outside the min/max range, or when a
 // key in the default sort is not listed in [WithAllowedSortKeys].
-func New(opts ...Option) *Handler {
+//
+// The handler parses the request query parameters and stores the resulting
+// [Info] in the configured context local, then runs the chain. Requests skipped
+// by [WithSkip] run the chain without parsing or storing anything.
+func New(opts ...Option) moon.Handler {
 	options := options{
 		pageQueryKey:   "page",
 		defaultPage:    1,
@@ -97,11 +94,24 @@ func New(opts ...Option) *Handler {
 		)
 	}
 
-	return &Handler{options: options}
+	return func(ctx *moon.Context) error {
+		if options.skip != nil && options.skip(ctx) {
+			return ctx.Next()
+		}
+
+		info, err := getInfo(ctx, options)
+		if err != nil {
+			return err
+		}
+
+		ctx.SetLocal(options.localKey, info)
+
+		return ctx.Next()
+	}
 }
 
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	skip            func(*moon.Context) bool
 	pageQueryKey    string
@@ -139,13 +149,13 @@ const (
 // given. Read the parsed values with [moon.Context.GetLocal] using this key.
 const DefaultLocalKey = "moon.handlers.pagination.local_key"
 
-// Option configures a [Handler]. Pass them to [New]:
+// Option configures the handler returned by [New]. Pass them to [New]:
 //
 //	app.UseAll(pagination.New(
 //		pagination.WithDefaultLimit(20),
 //		pagination.WithSortQueryKey("sort"),
 //		pagination.WithAllowedSortKeys([]string{"created_at", "name"}),
-//	).Handle)
+//	))
 type Option func(*options)
 
 // WithSkip bypasses parsing for requests where f returns true. The chain still
@@ -359,38 +369,20 @@ func WithLocalKey(s string) Option {
 	}
 }
 
-// Handle parses the request query parameters and stores the resulting [Info]
-// in the configured context local, then runs the chain. Requests skipped by
-// [WithSkip] run the chain without parsing or storing anything.
-func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.options.skip != nil && me.options.skip(ctx) {
-		return ctx.Next()
-	}
-
-	info, err := me.getInfo(ctx)
-	if err != nil {
-		return err
-	}
-
-	ctx.SetLocal(me.options.localKey, info)
-
-	return ctx.Next()
-}
-
 // getInfo parses the request query parameters into an [Info] seeded with the
 // configured defaults. All pagination styles are parsed independently: page,
 // offset and cursor may be present together, and the application chooses which
 // values to use.
-func (me *Handler) getInfo(ctx *moon.Context) (*Info, error) {
+func getInfo(ctx *moon.Context, options options) (*Info, error) {
 	info := &Info{
-		page:   me.options.defaultPage,
-		limit:  me.options.defaultLimit,
-		offset: me.options.defaultOffset,
-		sort:   slices.Clone(me.options.defaultSort),
+		page:   options.defaultPage,
+		limit:  options.defaultLimit,
+		offset: options.defaultOffset,
+		sort:   slices.Clone(options.defaultSort),
 	}
 
-	if me.options.cursorQueryKey != "" {
-		if cursorQuery := ctx.GetQuery(me.options.cursorQueryKey); cursorQuery != "" {
+	if options.cursorQueryKey != "" {
+		if cursorQuery := ctx.GetQuery(options.cursorQueryKey); cursorQuery != "" {
 			var value any
 			if err := DecodeCursor([]byte(cursorQuery), &value); err != nil {
 				return nil, moon.ErrBadRequest.WithDetails("cursor must be a valid base64-encoded JSON value")
@@ -398,8 +390,8 @@ func (me *Handler) getInfo(ctx *moon.Context) (*Info, error) {
 			info.cursor = cursorQuery
 		}
 	}
-	if me.options.pageQueryKey != "" {
-		if pageQuery := ctx.GetQuery(me.options.pageQueryKey); pageQuery != "" {
+	if options.pageQueryKey != "" {
+		if pageQuery := ctx.GetQuery(options.pageQueryKey); pageQuery != "" {
 			if i, err := strconv.Atoi(pageQuery); err != nil || i < 1 {
 				return nil, moon.ErrBadRequest.WithDetails("page must be a valid positive integer")
 			} else {
@@ -407,27 +399,27 @@ func (me *Handler) getInfo(ctx *moon.Context) (*Info, error) {
 			}
 		}
 	}
-	if me.options.limitQueryKey != "" {
-		if limitQuery := ctx.GetQuery(me.options.limitQueryKey); limitQuery != "" {
+	if options.limitQueryKey != "" {
+		if limitQuery := ctx.GetQuery(options.limitQueryKey); limitQuery != "" {
 			i, err := strconv.Atoi(limitQuery)
 			if err != nil {
 				return nil, moon.ErrBadRequest.WithDetails(
-					fmt.Sprintf("limit must be a valid integer between %d and %d", me.options.minLimit, me.options.maxLimit),
+					fmt.Sprintf("limit must be a valid integer between %d and %d", options.minLimit, options.maxLimit),
 				)
 			}
-			if me.options.clampLimit {
-				info.limit = max(me.options.minLimit, min(i, me.options.maxLimit))
-			} else if i < me.options.minLimit || i > me.options.maxLimit {
+			if options.clampLimit {
+				info.limit = max(options.minLimit, min(i, options.maxLimit))
+			} else if i < options.minLimit || i > options.maxLimit {
 				return nil, moon.ErrBadRequest.WithDetails(
-					fmt.Sprintf("limit must be a valid integer between %d and %d", me.options.minLimit, me.options.maxLimit),
+					fmt.Sprintf("limit must be a valid integer between %d and %d", options.minLimit, options.maxLimit),
 				)
 			} else {
 				info.limit = i
 			}
 		}
 	}
-	if me.options.offsetQueryKey != "" {
-		if offsetQuery := ctx.GetQuery(me.options.offsetQueryKey); offsetQuery != "" {
+	if options.offsetQueryKey != "" {
+		if offsetQuery := ctx.GetQuery(options.offsetQueryKey); offsetQuery != "" {
 			if i, err := strconv.Atoi(offsetQuery); err != nil || i < 0 {
 				return nil, moon.ErrBadRequest.WithDetails("offset must be a valid non-negative integer")
 			} else {
@@ -435,8 +427,8 @@ func (me *Handler) getInfo(ctx *moon.Context) (*Info, error) {
 			}
 		}
 	}
-	if me.options.sortQueryKey != "" {
-		if sortQueries := ctx.GetUrl().Query()[me.options.sortQueryKey]; len(sortQueries) > 0 {
+	if options.sortQueryKey != "" {
+		if sortQueries := ctx.GetUrl().Query()[options.sortQueryKey]; len(sortQueries) > 0 {
 			info.sort = nil // reset it as query must have at least one valid key.
 			for _, query := range sortQueries {
 				for rawKey := range strings.SplitSeq(query, ",") {
@@ -455,7 +447,7 @@ func (me *Handler) getInfo(ctx *moon.Context) (*Info, error) {
 					if key == "" {
 						return nil, moon.ErrBadRequest.WithDetails("sort key cannot be empty")
 					}
-					if !slices.Contains(me.options.allowedSortKeys, key) {
+					if !slices.Contains(options.allowedSortKeys, key) {
 						return nil, moon.ErrBadRequest.WithDetails(fmt.Sprintf("sort key %q is not allowed", key))
 					}
 					info.sort = append(info.sort, Sort{Key: key, Order: order})

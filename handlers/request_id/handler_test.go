@@ -2,8 +2,6 @@ package request_id
 
 import (
 	"bufio"
-	"context"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,7 +14,7 @@ import (
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name         string
-		handler      *Handler
+		handler      moon.Handler
 		incoming     string
 		sendHeader   bool
 		header       string
@@ -107,7 +105,7 @@ func TestHandle(t *testing.T) {
 			}
 
 			app := moon.New()
-			app.Use("/*", h.Handle)
+			app.Use("/*", h)
 			app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 				fromCtx, _ = ctx.GetLocal[string](DefaultLocalKey)
 				return ctx.Write(http.StatusOK, "hello")
@@ -144,12 +142,21 @@ func TestOptionValidation(t *testing.T) {
 	require.Panics(t, func() { WithHeader(" ") })
 	require.Panics(t, func() { WithGenerator(nil) })
 	require.Panics(t, func() { WithLocalKey("") })
-	require.Panics(t, func() { WithRequestLoggingEntryKey(" ") })
-	require.Panics(t, func() { WithRequestLoggingEntryValue(nil) })
 }
 
 func TestWithHeaderCanonicalizes(t *testing.T) {
-	require.Equal(t, "X-Correlation-Id", New(WithHeader(" x-correlation-id ")).options.header)
+	app := moon.New()
+	app.Use("/*", New(WithHeader(" x-correlation-id ")))
+	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
+		return ctx.WriteStatus(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
+	req.Header.Set("x-correlation-id", "abc")
+	resp := app.Test(req)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "abc", resp.Header.Get("X-Correlation-Id"))
 }
 
 func TestWithLocalKey(t *testing.T) {
@@ -157,7 +164,7 @@ func TestWithLocalKey(t *testing.T) {
 
 	app := moon.New()
 	h := New(WithLocalKey("  custom.request_id  "))
-	app.Use("/*", h.Handle)
+	app.Use("/*", h)
 	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		id, ok := ctx.GetLocal[string]("  custom.request_id  ")
 		require.True(t, ok)
@@ -181,111 +188,4 @@ func TestIncomingHeaderArrivesTrimmed(t *testing.T) {
 	req, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
 	require.NoError(t, err)
 	require.Equal(t, "abc", req.Header.Get("X-Request-ID"))
-}
-
-type captureLogHandler struct {
-	records []slog.Record
-}
-
-func (h *captureLogHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *captureLogHandler) Handle(_ context.Context, r slog.Record) error {
-	h.records = append(h.records, r)
-	return nil
-}
-
-func (h *captureLogHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *captureLogHandler) WithGroup(string) slog.Handler      { return h }
-
-func TestGetRequestLoggingEntry(t *testing.T) {
-	entry := New().GetRequestLoggingEntry()
-	require.Equal(t, "request_id", entry.Key)
-	require.NotNil(t, entry.Value)
-
-	custom := New(WithRequestLoggingEntryKey("correlation_id"),
-		WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any { return "v" })).
-		GetRequestLoggingEntry()
-	require.Equal(t, "correlation_id", custom.Key)
-	require.NotNil(t, custom.Value)
-}
-
-func TestGetRequestLoggingEntryUsesLocalKey(t *testing.T) {
-	app := moon.New()
-	h := New(WithLocalKey("custom.request_id"))
-	app.Use("/*", h.Handle)
-	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
-		entry := h.GetRequestLoggingEntry()
-		require.Equal(t, "client-id", entry.Value(ctx, nil))
-		return nil
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/resource", nil)
-	req.Header.Set("X-Request-ID", "client-id")
-	resp := app.Test(req)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-}
-
-func TestLogsRequestIdEntry(t *testing.T) {
-	logs := &captureLogHandler{}
-	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
-	h := New()
-	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-	app.Use("/*", h.Handle)
-	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
-		return ctx.Write(http.StatusOK, "hello")
-	})
-
-	resp := app.Test(httptest.NewRequest(http.MethodGet, "/resource", nil))
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	id := resp.Header.Get("X-Request-ID")
-	require.NotEmpty(t, id)
-
-	require.Len(t, logs.records, 1)
-	var logged string
-	found := false
-	logs.records[0].Attrs(func(a slog.Attr) bool {
-		if a.Key == "request_id" {
-			logged, found = a.Value.Any().(string), true
-			return false
-		}
-		return true
-	})
-	require.True(t, found, "expected request id log entry")
-	require.Equal(t, id, logged)
-}
-
-func TestLogsCustomRequestIdEntry(t *testing.T) {
-	logs := &captureLogHandler{}
-	app := moon.New(moon.WithLogger(slog.New(logs)), moon.WithRequestLogging(true))
-	h := New(
-		WithRequestLoggingEntryKey("correlation_id"),
-		WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any {
-			id, _ := ctx.GetLocal[string](DefaultLocalKey)
-			return "custom-" + id
-		}))
-	app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-	app.Use("/*", h.Handle)
-	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
-		return ctx.Write(http.StatusOK, "hello")
-	})
-
-	resp := app.Test(httptest.NewRequest(http.MethodGet, "/resource", nil))
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	id := resp.Header.Get("X-Request-ID")
-	require.NotEmpty(t, id)
-
-	require.Len(t, logs.records, 1)
-	var logged any
-	found := false
-	logs.records[0].Attrs(func(a slog.Attr) bool {
-		if a.Key == "correlation_id" {
-			logged, found = a.Value.Any(), true
-			return false
-		}
-		return true
-	})
-	require.True(t, found, "expected correlation id log entry")
-	require.Equal(t, "custom-"+id, logged)
 }

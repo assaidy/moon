@@ -50,7 +50,7 @@ func newTestFileSystem() fstest.MapFS {
 
 // newTestHandler returns a handler serving the test filesystem under the
 // "/files" path prefix.
-func newTestHandler(opts ...Option) *Handler {
+func newTestHandler(opts ...Option) moon.Handler {
 	opts = append([]Option{
 		WithFileSystem(newTestFileSystem()),
 		WithStripPathPrefix("/files"),
@@ -64,8 +64,8 @@ func newTestApp(t *testing.T, opts ...Option) *moon.App {
 	t.Helper()
 	app := moon.New()
 	h := newTestHandler(opts...)
-	app.Map(http.MethodGet, "/files/*", h.Handle)
-	app.Map(http.MethodHead, "/files/*", h.Handle)
+	app.Map(http.MethodGet, "/files/*", h)
+	app.Map(http.MethodHead, "/files/*", h)
 	return app
 }
 
@@ -129,7 +129,7 @@ func TestHandle_CaseInsensitiveFallback(t *testing.T) {
 			WithStripPathPrefix("/files"),
 		}, opts...)
 		app := moon.New()
-		app.Map(http.MethodGet, "/files/*", New(opts...).Handle)
+		app.Map(http.MethodGet, "/files/*", New(opts...))
 		return app
 	}
 
@@ -204,7 +204,7 @@ func TestHandle_CaseInsensitiveFallbackOS(t *testing.T) {
 		WithRoot(root),
 		WithStripPathPrefix("/files"),
 	)
-	app.MapGet("/files/*", h.Handle)
+	app.MapGet("/files/*", h)
 
 	for path, want := range map[string]string{
 		"/files/logo.png": "logo",
@@ -370,7 +370,7 @@ func TestHandle_SetsContentDisposition(t *testing.T) {
 func TestHandle_OtherMethodsContinueChain(t *testing.T) {
 	app := moon.New()
 	h := newTestHandler()
-	app.Use("/files", h.Handle)
+	app.Use("/files", h)
 	app.Map(http.MethodPost, "/files/*", func(ctx *moon.Context) error {
 		return ctx.WriteStatus(http.StatusAccepted)
 	})
@@ -698,8 +698,10 @@ func TestWithIndexNames_TrimsAndRejectsNonBaseNames(t *testing.T) {
 
 	require.NotPanics(t, func() { WithIndexNames(nil) })
 
-	h := New(WithIndexNames([]string{" index.html ", " index.htm "}))
-	require.Equal(t, []string{"index.html", "index.htm"}, h.options.indexNames)
+	app := newTestApp(t, WithIndexNames([]string{" default.htm "}))
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/files/custom", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "<h1>custom</h1>", readBody(t, resp))
 }
 
 // unlistableFS hides the [fs.ReadDirFile] implementation of the directories

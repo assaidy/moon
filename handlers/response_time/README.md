@@ -5,7 +5,7 @@ reports the duration in a response header. It is a simple way to expose latency
 without changing route handlers.
 
 ```go
-app.UseAll(response_time.New().Handle)
+app.UseAll(response_time.New())
 ```
 
 The default header is `X-Response-Time`, and the value is a Go duration string
@@ -20,7 +20,7 @@ import "github.com/assaidy/moon/handlers/response_time"
 ## Quick start
 
 ```go
-app.UseAll(response_time.New().Handle)
+app.UseAll(response_time.New())
 ```
 
 A response then carries:
@@ -34,7 +34,7 @@ Customize the header:
 ```go
 app.UseAll(response_time.New(
     response_time.WithHeader("X-Took"),
-).Handle)
+))
 ```
 
 Skip selected requests:
@@ -44,7 +44,7 @@ app.UseAll(response_time.New(
     response_time.WithSkip(func(ctx *moon.Context) bool {
         return ctx.GetPath() == "/healthz"
     }),
-).Handle)
+))
 ```
 
 ## How it works
@@ -114,7 +114,7 @@ Default: `nil`.
 ### Global timing
 
 ```go
-app.UseAll(response_time.New().Handle)
+app.UseAll(response_time.New())
 ```
 
 ### Custom header
@@ -122,7 +122,7 @@ app.UseAll(response_time.New().Handle)
 ```go
 app.UseAll(response_time.New(
     response_time.WithHeader("Server-Timing"),
-).Handle)
+))
 ```
 
 Note that the `Server-Timing` header has a specific syntax for browser developer
@@ -134,7 +134,7 @@ you need the structured format, write the header yourself with
 
 ```go
 app.MapGet("/search", search,
-    moon.WithMiddlewares(response_time.New().Handle),
+    moon.WithMiddlewares(response_time.New()),
 )
 ```
 
@@ -152,14 +152,14 @@ app.UseAll(response_time.New(
             return false
         }
     }),
-).Handle)
+))
 ```
 
 ### Combining with request IDs
 
 ```go
-app.UseAll(request_id.New().Handle)
-app.UseAll(response_time.New().Handle)
+app.UseAll(request_id.New())
+app.UseAll(response_time.New())
 ```
 
 The request ID is available during the measured chain, and both headers appear on
@@ -174,7 +174,7 @@ timing handler:
 
 ```go
 app := moon.New(moon.WithErrorHandler(nil))
-app.UseAll(response_time.New().Handle)
+app.UseAll(response_time.New())
 app.UseAll(moon.DefaultErrorHandler)
 ```
 
@@ -193,10 +193,8 @@ response.
 ## API reference
 
 ```go
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 

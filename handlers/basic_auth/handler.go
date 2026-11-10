@@ -1,12 +1,12 @@
 // Package basic_auth provides a handler that implements HTTP Basic
 // authentication (RFC 7617) on top of the HTTP authentication framework
-// (RFC 9110). Register [Handler.Handle] as a middleware:
+// (RFC 9110). Register the handler returned by [New] as a middleware:
 //
 //	app.UseAll(basic_auth.New(
 //		basic_auth.WithAuthorizer(func(ctx *moon.Context, user, password string) (bool, error) {
 //			return user == "admin" && password == "secret", nil
 //		}),
-//	).Handle)
+//	))
 //
 // The authorizer receives the request context, the decoded user-id and
 // password, and reports whether they are valid. An error means the decision
@@ -33,17 +33,10 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler authenticates requests with HTTP Basic credentials. Use [New] to
-// construct it, passing [Option]s to configure it, then register
-// [Handler.Handle] in the chain.
-type Handler struct {
-	options options
-}
-
 // New returns a handler built from sensible defaults, customized by the given
-// options, then register [Handler.Handle] in the chain:
+// options, to register in the chain:
 //
-//	app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)).Handle)
+//	app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)))
 //
 // The authorizer is required and cannot be nil; New panics without it.
 // Default realm: "Restricted" (see [WithRealm]).
@@ -51,7 +44,14 @@ type Handler struct {
 // Default header limit: -1 (no limit, see [WithHeaderLimit]).
 // Requests for which the [WithSkip] predicate returns true run the chain
 // untouched.
-func New(opts ...Option) *Handler {
+//
+// Status codes follow RFC 9110. A malformed Authorization field is a client
+// error (400), while credentials that are well-formed but cannot be accepted
+// (wrong scheme, undecodable token, invalid UTF-8 or control characters,
+// unknown user, wrong password) get a 401 challenge so the user agent can
+// supply credentials again. An authorizer failure is reported as 500, because
+// it says nothing about the credentials themselves.
+func New(opts ...Option) moon.Handler {
 	options := options{
 		headerLimit: -1,
 		realm:       "Restricted",
@@ -63,11 +63,119 @@ func New(opts ...Option) *Handler {
 
 	moon.Assert(options.authorizer != nil, "authorizer must be set; set it using WithAuthorizer option")
 
-	return &Handler{options: options}
+	return func(ctx *moon.Context) error {
+		if options.skip != nil && options.skip(ctx) {
+			return ctx.Next()
+		}
+
+		// Authorization is a singleton field (RFC 9110 §11.6.2).
+		// Reject it instead of silently picking the first value.
+		values := ctx.GetHttpRequest().Header.Values("Authorization")
+		if len(values) > 1 {
+			return moon.ErrBadRequest
+		}
+
+		var header string
+		if len(values) == 1 {
+			header = values[0]
+		}
+		if header == "" {
+			return unauthorized(ctx, options)
+		}
+
+		if options.headerLimit > 0 && len(header) > options.headerLimit {
+			return moon.ErrRequestHeaderFieldsTooLarge
+		}
+
+		// credentials = auth-scheme [ 1*SP ( token68 / #auth-param ) ]
+		kind, rest, hasRest := strings.Cut(header, " ")
+
+		// auth-scheme is a token, which is ASCII-only. Checking it before the
+		// case-insensitive comparison also prevents Unicode case folding from
+		// accepting lookalikes such as "Baſic".
+		if !isToken(kind) {
+			return moon.ErrBadRequest
+		}
+		if !strings.EqualFold(kind, "basic") {
+			// The field is well-formed but carries credentials for a scheme this
+			// handler does not implement. Challenge with Basic so the client can
+			// authenticate for this protection space.
+			return unauthorized(ctx, options)
+		}
+
+		// A bare "Basic" (or "Basic" followed only by spaces) carries no
+		// credentials at all. RFC 9110 §11.4 recommends a 401 challenge for
+		// partial credentials.
+		var token string
+		if hasRest {
+			token = strings.TrimLeft(rest, " ")
+		}
+		if token == "" {
+			return unauthorized(ctx, options)
+		}
+
+		// token68 is a superset of base64 (RFC 9110 §11.2). Checking it first
+		// separates malformed field syntax (400) from credentials that are
+		// syntactically valid but cannot be decoded (401).
+		if !isToken68(token) {
+			return moon.ErrBadRequest
+		}
+
+		decoded, err := base64.StdEncoding.DecodeString(token)
+		if err != nil {
+			// token68 allows base64 with or without padding (RFC 9110 §11.2), and
+			// some clients omit the trailing "=". Accept the unpadded form too.
+			decoded, err = base64.RawStdEncoding.DecodeString(token)
+		}
+		if err != nil {
+			return unauthorized(ctx, options)
+		}
+
+		// RFC 7617 §2: user-pass is "user-id ':' password". Only the first colon
+		// separates the two, so passwords may contain colons; text after the first
+		// colon always belongs to the password.
+		pair := strings.SplitN(string(decoded), ":", 2)
+		if len(pair) != 2 {
+			return unauthorized(ctx, options)
+		}
+		user, password := pair[0], pair[1]
+
+		// The challenge advertises charset="UTF-8" (RFC 7617 §2.1), so reject
+		// anything that is not valid UTF-8 rather than passing undecodable bytes to
+		// the authorizer. Normalization is deliberately left to the authorizer:
+		// rewriting credentials here would break comparisons against password
+		// hashes created from the original bytes.
+		if !utf8.ValidString(user) || !utf8.ValidString(password) {
+			return unauthorized(ctx, options)
+		}
+
+		// RFC 7617 §2: user-id and password MUST NOT contain control characters.
+		// "CTL" is the ASCII definition (%x00-1F / %x7F); UTF-8 continuation bytes
+		// are >= 0x80, so a byte scan is safe after the validity check above.
+		if hasControlByte(user) || hasControlByte(password) {
+			return unauthorized(ctx, options)
+		}
+
+		ok, err := options.authorizer(ctx, user, password)
+		if err != nil {
+			// The credentials may be fine; the authorizer itself failed. Report an
+			// internal error so the client is not told to retry its password, and
+			// keep the cause for the logs (the default error handler hides Details
+			// from the response but logs them).
+			return moon.ErrInternalServerError.WithDetails(err)
+		}
+		if !ok {
+			return unauthorized(ctx, options)
+		}
+
+		ctx.SetLocal(options.localKey, user)
+
+		return ctx.Next()
+	}
 }
 
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	skip        func(*moon.Context) bool
 	headerLimit int
@@ -80,12 +188,12 @@ type options struct {
 // given. Read the user-id with [moon.Context.GetLocal] using this key.
 const DefaultLocalKey = "moon.handlers.basic_auth.local_key"
 
-// Option configures a [Handler]. Pass them to [New]:
+// Option configures the handler returned by [New]. Pass them to [New]:
 //
 //	app.UseAll(basic_auth.New(
 //		basic_auth.WithAuthorizer(authorize),
 //		basic_auth.WithRealm("Admin"),
-//	).Handle)
+//	))
 type Option func(*options)
 
 // WithSkip bypasses authentication for requests where f returns true.
@@ -156,134 +264,13 @@ func WithLocalKey(s string) Option {
 	}
 }
 
-// Handle authenticates the request. Register it with [moon.App.Use] or as a
-// route middleware:
-//
-//	app.UseAll(h.Handle)
-//
-// Status codes follow RFC 9110. A malformed Authorization field is a client
-// error (400), while credentials that are well-formed but cannot be accepted
-// (wrong scheme, undecodable token, invalid UTF-8 or control characters,
-// unknown user, wrong password) get a 401 challenge so the user agent can
-// supply credentials again. An authorizer failure is reported as 500, because
-// it says nothing about the credentials themselves.
-func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.options.skip != nil && me.options.skip(ctx) {
-		return ctx.Next()
-	}
-
-	// Authorization is a singleton field (RFC 9110 §11.6.2).
-	// Reject it instead of silently picking the first value.
-	values := ctx.GetHttpRequest().Header.Values("Authorization")
-	if len(values) > 1 {
-		return moon.ErrBadRequest
-	}
-
-	var header string
-	if len(values) == 1 {
-		header = values[0]
-	}
-	if header == "" {
-		return me.unauthorized(ctx)
-	}
-
-	if me.options.headerLimit > 0 && len(header) > me.options.headerLimit {
-		return moon.ErrRequestHeaderFieldsTooLarge
-	}
-
-	// credentials = auth-scheme [ 1*SP ( token68 / #auth-param ) ]
-	kind, rest, hasRest := strings.Cut(header, " ")
-
-	// auth-scheme is a token, which is ASCII-only. Checking it before the
-	// case-insensitive comparison also prevents Unicode case folding from
-	// accepting lookalikes such as "Baſic".
-	if !isToken(kind) {
-		return moon.ErrBadRequest
-	}
-	if !strings.EqualFold(kind, "basic") {
-		// The field is well-formed but carries credentials for a scheme this
-		// handler does not implement. Challenge with Basic so the client can
-		// authenticate for this protection space.
-		return me.unauthorized(ctx)
-	}
-
-	// A bare "Basic" (or "Basic" followed only by spaces) carries no
-	// credentials at all. RFC 9110 §11.4 recommends a 401 challenge for
-	// partial credentials.
-	var token string
-	if hasRest {
-		token = strings.TrimLeft(rest, " ")
-	}
-	if token == "" {
-		return me.unauthorized(ctx)
-	}
-
-	// token68 is a superset of base64 (RFC 9110 §11.2). Checking it first
-	// separates malformed field syntax (400) from credentials that are
-	// syntactically valid but cannot be decoded (401).
-	if !isToken68(token) {
-		return moon.ErrBadRequest
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(token)
-	if err != nil {
-		// token68 allows base64 with or without padding (RFC 9110 §11.2), and
-		// some clients omit the trailing "=". Accept the unpadded form too.
-		decoded, err = base64.RawStdEncoding.DecodeString(token)
-	}
-	if err != nil {
-		return me.unauthorized(ctx)
-	}
-
-	// RFC 7617 §2: user-pass is "user-id ':' password". Only the first colon
-	// separates the two, so passwords may contain colons; text after the first
-	// colon always belongs to the password.
-	pair := strings.SplitN(string(decoded), ":", 2)
-	if len(pair) != 2 {
-		return me.unauthorized(ctx)
-	}
-	user, password := pair[0], pair[1]
-
-	// The challenge advertises charset="UTF-8" (RFC 7617 §2.1), so reject
-	// anything that is not valid UTF-8 rather than passing undecodable bytes to
-	// the authorizer. Normalization is deliberately left to the authorizer:
-	// rewriting credentials here would break comparisons against password
-	// hashes created from the original bytes.
-	if !utf8.ValidString(user) || !utf8.ValidString(password) {
-		return me.unauthorized(ctx)
-	}
-
-	// RFC 7617 §2: user-id and password MUST NOT contain control characters.
-	// "CTL" is the ASCII definition (%x00-1F / %x7F); UTF-8 continuation bytes
-	// are >= 0x80, so a byte scan is safe after the validity check above.
-	if hasControlByte(user) || hasControlByte(password) {
-		return me.unauthorized(ctx)
-	}
-
-	ok, err := me.options.authorizer(ctx, user, password)
-	if err != nil {
-		// The credentials may be fine; the authorizer itself failed. Report an
-		// internal error so the client is not told to retry its password, and
-		// keep the cause for the logs (the default error handler hides Details
-		// from the response but logs them).
-		return moon.ErrInternalServerError.WithDetails(err)
-	}
-	if !ok {
-		return me.unauthorized(ctx)
-	}
-
-	ctx.SetLocal(me.options.localKey, user)
-
-	return ctx.Next()
-}
-
 // unauthorized writes the Basic challenge and returns 401.
 //
 // RFC 9110 §11.6.1 requires every 401 to carry at least one challenge. RFC
 // 7617 §2 requires the realm parameter, and §2.1 defines "UTF-8" as the only
 // allowed charset value.
-func (me *Handler) unauthorized(ctx *moon.Context) error {
-	ctx.SetHeader("WWW-Authenticate", fmt.Sprintf(`Basic realm=%s, charset="UTF-8"`, quoteString(me.options.realm)))
+func unauthorized(ctx *moon.Context, options options) error {
+	ctx.SetHeader("WWW-Authenticate", fmt.Sprintf(`Basic realm=%s, charset="UTF-8"`, quoteString(options.realm)))
 	// The challenge is specific to the caller. Keep it out of shared caches,
 	// and make caches key on the header that selects the identity.
 	ctx.SetHeader("Cache-Control", "no-store")

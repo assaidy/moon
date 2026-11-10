@@ -5,7 +5,7 @@ startup probes. A probe is a function that decides whether the application is
 healthy, and a response function renders that decision.
 
 ```go
-app.MapGet(health_check.ReadinessEndpoint, health_check.New().Handle)
+app.MapGet(health_check.ReadinessEndpoint, health_check.New())
 ```
 
 Health endpoints are commonly used by Kubernetes, load balancers, container
@@ -22,9 +22,9 @@ import "github.com/assaidy/moon/handlers/health_check"
 Register the built-in endpoints:
 
 ```go
-app.MapGet(health_check.LivenessEndpoint, health_check.New().Handle)
-app.MapGet(health_check.ReadinessEndpoint, health_check.New().Handle)
-app.MapGet(health_check.StartupEndpoint, health_check.New().Handle)
+app.MapGet(health_check.LivenessEndpoint, health_check.New())
+app.MapGet(health_check.ReadinessEndpoint, health_check.New())
+app.MapGet(health_check.StartupEndpoint, health_check.New())
 ```
 
 With the default configuration:
@@ -46,7 +46,7 @@ The constants are convenience values. You can register the handler on any path.
 
 ## How it works
 
-`Handle` does three things:
+The returned handler does three things:
 
 1. Calls the configured probe with the request context.
 2. Passes the boolean result to the configured response function.
@@ -127,7 +127,7 @@ avoids restarting a process that is merely not ready yet.
 - Default probe is often sufficient.
 
 ```go
-app.MapGet(health_check.LivenessEndpoint, health_check.New().Handle)
+app.MapGet(health_check.LivenessEndpoint, health_check.New())
 ```
 
 ### Readiness
@@ -142,7 +142,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
     health_check.WithProbe(func(ctx *moon.Context) bool {
         return db.IsReady() && cache.IsReady()
     }),
-).Handle)
+))
 ```
 
 Moon services expose `IsReady`, and `moon.CheckServicesReadiness` can combine
@@ -153,7 +153,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
     health_check.WithProbe(func(ctx *moon.Context) bool {
         return app.CheckServicesReadiness()
     }),
-).Handle)
+))
 ```
 
 To check a specific set of services instead, pass them explicitly:
@@ -163,7 +163,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
     health_check.WithProbe(func(ctx *moon.Context) bool {
         return moon.CheckServicesReadiness(db, cache, queue)
     }),
-).Handle)
+))
 ```
 
 ### Startup
@@ -177,7 +177,7 @@ app.MapGet(health_check.StartupEndpoint, health_check.New(
     health_check.WithProbe(func(ctx *moon.Context) bool {
         return appState.Loaded()
     }),
-).Handle)
+))
 ```
 
 ## Examples
@@ -200,7 +200,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
             "status": "healthy",
         })
     }),
-).Handle)
+))
 ```
 
 ### Using dependencies and services
@@ -216,7 +216,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
         }
         return ctx.GetService[*Database]().IsReady()
     }),
-).Handle)
+))
 ```
 
 `GetService` panics if no service of that type was registered or if it was
@@ -250,13 +250,13 @@ Register matching routes, with `readinessProbe` and `startupProbe` defined by yo
 application:
 
 ```go
-app.MapGet("/livez", health_check.New().Handle)
+app.MapGet("/livez", health_check.New())
 app.MapGet("/readyz", health_check.New(
     health_check.WithProbe(readinessProbe),
-).Handle)
+))
 app.MapGet("/startupz", health_check.New(
     health_check.WithProbe(startupProbe),
-).Handle)
+))
 ```
 
 ### HEAD support
@@ -291,10 +291,8 @@ health_check.WithResponse(func(ctx *moon.Context, ok bool) error {
 ## API reference
 
 ```go
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 

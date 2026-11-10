@@ -25,7 +25,7 @@ func TestHandle_Defaults(t *testing.T) {
 			app := moon.New()
 			app.Map(http.MethodGet, "/healthz", New(WithProbe(func(*moon.Context) bool {
 				return tc.probeOk
-			})).Handle)
+			})))
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 			require.Equal(t, tc.wantStatus, resp.StatusCode)
@@ -39,7 +39,7 @@ func TestHandle_Defaults(t *testing.T) {
 
 func TestHandle_DefaultProbeReportsOk(t *testing.T) {
 	app := moon.New()
-	app.Map(http.MethodGet, "/healthz", New().Handle)
+	app.Map(http.MethodGet, "/healthz", New())
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -51,7 +51,7 @@ func TestHandle_ProbeReceivesContext(t *testing.T) {
 	app.Map(http.MethodGet, "/readyz", New(WithProbe(func(ctx *moon.Context) bool {
 		gotPath = ctx.GetPath()
 		return true
-	})).Handle)
+	})))
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -67,7 +67,7 @@ func TestHandle_CustomResponse(t *testing.T) {
 				return ctx.Write(http.StatusOK, "up")
 			}
 			return ctx.Write(http.StatusServiceUnavailable, "down")
-		})).Handle)
+		})))
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
@@ -95,7 +95,7 @@ func TestHandle_ResponseReceivesProbeResult(t *testing.T) {
 				WithProbe(func(*moon.Context) bool { return tc.probeOk }),
 				WithResponse(func(ctx *moon.Context, ok bool) error {
 					return ctx.Write(http.StatusOK, map[bool]string{true: "true", false: "false"}[ok])
-				})).Handle)
+				})))
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))
 			require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -117,7 +117,7 @@ func TestHandle_DoesNotContinueChain(t *testing.T) {
 			downstreamRan = true
 			return ctx.Write(http.StatusOK, "downstream")
 		},
-		moon.WithMiddlewares(New().Handle),
+		moon.WithMiddlewares(New()),
 	)
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/healthz", nil))

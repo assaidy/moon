@@ -16,7 +16,7 @@ func TestHandle_ServesUi(t *testing.T) {
 	app.MapGet("/swagger/*", New(
 		WithTitle("Test API"),
 		WithVersion("2.3.4"),
-	).Handle)
+	))
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/swagger", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -110,7 +110,7 @@ func TestHandle_ServesSpec(t *testing.T) {
 				"bearerAuth": map[string]any{"type": "http", "scheme": "bearer"},
 			},
 		}),
-	).Handle)
+	))
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/swagger/openapi.json", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -187,7 +187,7 @@ func TestHandle_InfersPathParameters(t *testing.T) {
 	app.MapGet("/users/:id/posts/:post_id", func(ctx *moon.Context) error {
 		return nil
 	}, moon.WithApiSpec(moon.NewApiSpec(moon.WithResponse(moon.ApiResponse{Status: 200}))))
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	document := getDocument(t, app)
 	operation := asMap(t, document.Paths["/users/{id}/posts/{post_id}"]["get"])
@@ -210,7 +210,7 @@ func TestHandle_OptionalPathExpansion(t *testing.T) {
 	}, moon.WithApiSpec(moon.NewApiSpec(moon.WithOperationId("getUser"),
 		moon.WithResponse(moon.ApiResponse{Status: 200})),
 	))
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	document := getDocument(t, app)
 
@@ -231,7 +231,7 @@ func TestHandle_OptionalPathExpansionAtCap(t *testing.T) {
 	app.MapGet("/user/:a?/:b?/:c?", func(ctx *moon.Context) error {
 		return nil
 	}, moon.WithApiSpec(moon.NewApiSpec(moon.WithResponse(moon.ApiResponse{Status: 200}))))
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	document := getDocument(t, app)
 
@@ -254,7 +254,7 @@ func TestHandle_OptionalPathExpansionIsCapped(t *testing.T) {
 	app.MapGet("/user/:a?/:b?/:c?/:d?", func(ctx *moon.Context) error {
 		return nil
 	}, moon.WithApiSpec(moon.NewApiSpec(moon.WithResponse(moon.ApiResponse{Status: 200}))))
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	document := getDocument(t, app)
 
@@ -273,7 +273,7 @@ func TestHandle_WildcardAndPlusPaths(t *testing.T) {
 	app.MapGet("/proxy/+", func(ctx *moon.Context) error {
 		return nil
 	}, moon.WithApiSpec(moon.NewApiSpec(moon.WithResponse(moon.ApiResponse{Status: 200}))))
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	document := getDocument(t, app)
 
@@ -305,7 +305,7 @@ func TestHandle_MethodsAndConnect(t *testing.T) {
 	app.MapConnect("/connect", func(ctx *moon.Context) error {
 		return nil
 	}, moon.WithApiSpec(moon.NewApiSpec(moon.WithResponse(moon.ApiResponse{Status: 200}))))
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	document := getDocument(t, app)
 
@@ -325,7 +325,7 @@ func TestHandle_NoSpecUsesDefaultResponse(t *testing.T) {
 	app.MapGet("/plain", func(ctx *moon.Context) error {
 		return nil
 	})
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	document := getDocument(t, app)
 
@@ -336,7 +336,7 @@ func TestHandle_NoSpecUsesDefaultResponse(t *testing.T) {
 
 func TestHandle_UnknownPathNotFound(t *testing.T) {
 	app := moon.New()
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/swagger/nope", nil))
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -358,7 +358,7 @@ func TestHandle_PassesUnknownPathsToNext(t *testing.T) {
 	for _, setup := range setups {
 		t.Run(setup.name, func(t *testing.T) {
 			app := moon.New()
-			setup.use(app, New().Handle)
+			setup.use(app, New())
 			app.MapGet("/other", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "other")
 			})
@@ -386,7 +386,7 @@ func TestHandle_PassesUnknownPathsToNext(t *testing.T) {
 
 func TestHandle_CustomMountPath(t *testing.T) {
 	app := moon.New()
-	app.MapGet("/docs/*", New(WithMountPath("Docs")).Handle)
+	app.MapGet("/docs/*", New(WithMountPath("Docs")))
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/docs", nil))
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -402,7 +402,7 @@ func TestHandle_CustomMountPath(t *testing.T) {
 
 func TestHandle_CaseInsensitiveMountMatching(t *testing.T) {
 	app := moon.New()
-	app.MapGet("/docs/*", New(WithMountPath("/Docs")).Handle)
+	app.MapGet("/docs/*", New(WithMountPath("/Docs")))
 
 	for _, path := range []string{"/docs", "/DOCS/INDEX.HTML", "/docs/OpenAPI.JSON"} {
 		resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
@@ -415,7 +415,7 @@ func TestHandle_CaseSensitiveMountMatching(t *testing.T) {
 	app.MapGet("/Docs/*", New(
 		WithMountPath("/Docs"),
 		WithCaseSensitiveMountMatching(true),
-	).Handle)
+	))
 
 	for _, path := range []string{"/Docs", "/Docs/index.html", "/Docs/openapi.json"} {
 		resp := app.Test(httptest.NewRequest(http.MethodGet, path, nil))
@@ -433,7 +433,7 @@ func TestHandle_CustomUiAssets(t *testing.T) {
 	app.MapGet("/swagger/*", New(WithUiAssets(
 		"https://cdn.example.com/swagger-ui.css",
 		"https://cdn.example.com/swagger-ui-bundle.js",
-	)).Handle)
+	)))
 
 	resp := app.Test(httptest.NewRequest(http.MethodGet, "/swagger", nil))
 	body := readBody(t, resp)
@@ -447,7 +447,7 @@ func TestHandle_CachesDocument(t *testing.T) {
 	app.MapGet("/first", func(ctx *moon.Context) error {
 		return nil
 	})
-	app.MapGet("/swagger/*", New().Handle)
+	app.MapGet("/swagger/*", New())
 
 	before := getDocument(t, app)
 	require.Contains(t, before.Paths, "/first")

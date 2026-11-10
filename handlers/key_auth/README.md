@@ -5,7 +5,7 @@ a configurable source, validated by a callback, and a `401` challenge is sent
 when it is missing or rejected.
 
 ```go
-app.UseAll(key_auth.New(key_auth.WithValidator(validate)).Handle)
+app.UseAll(key_auth.New(key_auth.WithValidator(validate)))
 ```
 
 API keys are bearer secrets: anyone who has the key can use it. Send them over
@@ -24,7 +24,7 @@ func validate(ctx *moon.Context, key string) (bool, error) {
     return subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1, nil
 }
 
-app.UseAll(key_auth.New(key_auth.WithValidator(validate)).Handle)
+app.UseAll(key_auth.New(key_auth.WithValidator(validate)))
 ```
 
 By default the key is read from the `Authorization` header:
@@ -39,7 +39,7 @@ Read the key from `X-API-Key` instead:
 app.UseAll(key_auth.New(
     key_auth.WithKeySource(key_auth.SourceXApiKeyHeader()),
     key_auth.WithValidator(validate),
-).Handle)
+))
 ```
 
 Read it from a cookie:
@@ -48,7 +48,7 @@ Read it from a cookie:
 app.UseAll(key_auth.New(
     key_auth.WithKeySource(key_auth.SourceCookie("session")),
     key_auth.WithValidator(validate),
-).Handle)
+))
 ```
 
 Use a custom source and challenge:
@@ -66,7 +66,7 @@ app.UseAll(key_auth.New(
         },
     }),
     key_auth.WithValidator(validate),
-).Handle)
+))
 ```
 
 ## How it works
@@ -225,7 +225,7 @@ func validate(ctx *moon.Context, key string) (bool, error) {
     return subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1, nil
 }
 
-app.UseAll(key_auth.New(key_auth.WithValidator(validate)).Handle)
+app.UseAll(key_auth.New(key_auth.WithValidator(validate)))
 ```
 
 ### Database lookup with errors
@@ -247,7 +247,7 @@ h := key_auth.New(
     key_auth.WithKeySource(key_auth.SourceXApiKeyHeader()),
     key_auth.WithValidator(validate),
 )
-app.Use("/admin", h.Handle)
+app.Use("/admin", h)
 ```
 
 Requests to `/admin` and paths below it require a key. Other paths are
@@ -269,7 +269,7 @@ app.UseAll(key_auth.New(
             return false
         }
     }),
-).Handle)
+))
 ```
 
 ## Security notes
@@ -296,14 +296,12 @@ app.UseAll(key_auth.New(
 ## API reference
 
 ```go
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
 func SourceAuthorizationHeader(scheme string) KeySource
 func SourceXApiKeyHeader() KeySource
 func SourceCookie(name string) KeySource
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 
 type KeySource struct {

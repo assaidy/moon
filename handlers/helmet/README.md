@@ -5,7 +5,7 @@ middleware that adds headers such as `X-Content-Type-Options`, `X-Frame-Options`
 `Referrer-Policy` and the cross-origin isolation headers to every response.
 
 ```go
-app.UseAll(helmet.New().Handle)
+app.UseAll(helmet.New())
 ```
 
 The handler sets headers only. It does not validate requests, block traffic or
@@ -23,7 +23,7 @@ import "github.com/assaidy/moon/handlers/helmet"
 Use the defaults:
 
 ```go
-app.UseAll(helmet.New().Handle)
+app.UseAll(helmet.New())
 ```
 
 Customize individual headers:
@@ -33,7 +33,7 @@ app.UseAll(helmet.New(
     helmet.WithXFrameOptions("DENY"),
     helmet.WithHstsMaxAge(31536000),
     helmet.WithContentSecurityPolicy("default-src 'self'"),
-).Handle)
+))
 ```
 
 Disable a header by passing an empty value:
@@ -42,7 +42,7 @@ Disable a header by passing an empty value:
 app.UseAll(helmet.New(
     helmet.WithXFrameOptions(""),
     helmet.WithCrossOriginEmbedderPolicy(""),
-).Handle)
+))
 ```
 
 ## Default headers
@@ -306,7 +306,7 @@ app.UseAll(helmet.New(
     ),
     helmet.WithReferrerPolicy("strict-origin-when-cross-origin"),
     helmet.WithPermissionPolicy("camera=(), microphone=(), geolocation=()"),
-).Handle)
+))
 ```
 
 ### API that embeds external resources
@@ -316,7 +316,7 @@ app.UseAll(helmet.New(
     helmet.WithXFrameOptions("SAMEORIGIN"),
     helmet.WithCrossOriginEmbedderPolicy(""),
     helmet.WithCrossOriginResourcePolicy("cross-origin"),
-).Handle)
+))
 ```
 
 ### Gradual CSP rollout
@@ -325,7 +325,7 @@ app.UseAll(helmet.New(
 app.UseAll(helmet.New(
     helmet.WithContentSecurityPolicy("default-src 'self'; report-uri /csp-report"),
     helmet.WithCspReportOnly(true),
-).Handle)
+))
 ```
 
 Report-only mode lets you observe violations before enforcing the policy.
@@ -337,7 +337,7 @@ app.UseAll(helmet.New(
     helmet.WithSkip(func(ctx *moon.Context) bool {
         return ctx.GetPath() == "/webhooks/payments"
     }),
-).Handle)
+))
 ```
 
 ## Security notes
@@ -356,10 +356,8 @@ app.UseAll(helmet.New(
 ## API reference
 
 ```go
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 

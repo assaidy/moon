@@ -21,14 +21,14 @@ type testCursor struct {
 // runHandler dispatches target through a handler registered as middleware and
 // returns the response, the Info stored under localKey, and whether the route
 // after the middleware ran.
-func runHandler(t *testing.T, h *Handler, target, localKey string) (*http.Response, *Info, bool) {
+func runHandler(t *testing.T, h moon.Handler, target, localKey string) (*http.Response, *Info, bool) {
 	t.Helper()
 
 	var info *Info
 	nextRan := false
 
 	app := moon.New()
-	app.Use("/*", h.Handle)
+	app.Use("/*", h)
 	app.Map(http.MethodGet, "/items", func(ctx *moon.Context) error {
 		nextRan = true
 		if v, ok := ctx.GetLocal[*Info](localKey); ok {
@@ -52,23 +52,6 @@ func readError(t *testing.T, resp *http.Response) (string, any) {
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	return body.Kind, body.Details
-}
-
-func TestNewDefaults(t *testing.T) {
-	h := New()
-
-	require.Equal(t, options{
-		pageQueryKey:   "page",
-		defaultPage:    1,
-		limitQueryKey:  "limit",
-		defaultLimit:   10,
-		maxLimit:       100,
-		minLimit:       1,
-		offsetQueryKey: "offset",
-		defaultOffset:  0,
-		cursorQueryKey: "cursor",
-		localKey:       DefaultLocalKey,
-	}, h.options)
 }
 
 func TestNewValidationPanics(t *testing.T) {
@@ -142,33 +125,36 @@ func TestOptionsAreNormalized(t *testing.T) {
 		WithAllowedSortKeys([]string{" name ", "id "}),
 		WithCursorQueryKey(" token "),
 		WithLocalKey(" app.pagination "),
-		WithSkip(func(ctx *moon.Context) bool { return true }),
+		WithSkip(func(ctx *moon.Context) bool { return false }),
 	)
 
-	require.Equal(t, "p", h.options.pageQueryKey)
-	require.Equal(t, 2, h.options.defaultPage)
-	require.Equal(t, "size", h.options.limitQueryKey)
-	require.Equal(t, 20, h.options.defaultLimit)
-	require.Equal(t, 5, h.options.minLimit)
-	require.Equal(t, 50, h.options.maxLimit)
-	require.True(t, h.options.clampLimit)
-	require.Equal(t, "start", h.options.offsetQueryKey)
-	require.Equal(t, 40, h.options.defaultOffset)
-	require.Equal(t, "order", h.options.sortQueryKey)
-	require.Equal(t, []Sort{
-		{Key: "name", Order: OrderAscending},
-		{Key: "id", Order: OrderAscending},
-	}, h.options.defaultSort)
-	require.Equal(t, []string{"name", "id"}, h.options.allowedSortKeys)
-	require.Equal(t, "token", h.options.cursorQueryKey)
-	require.Equal(t, " app.pagination ", h.options.localKey)
-	require.NotNil(t, h.options.skip)
+	resp, info, nextRan := runHandler(t, h, "/items?p=3&size=99&start=10", " app.pagination ")
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.True(t, nextRan)
+	require.Equal(t, &Info{
+		page:   3,
+		limit:  50,
+		offset: 10,
+		sort: []Sort{
+			{Key: "name", Order: OrderAscending},
+			{Key: "id", Order: OrderAscending},
+		},
+	}, info)
+
+	resp, info, nextRan = runHandler(t, h, "/items?order=%20id%20", " app.pagination ")
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.True(t, nextRan)
+	require.Equal(t, []Sort{{Key: "id", Order: OrderAscending}}, info.GetSort())
 }
 
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name      string
-		handler   *Handler
+		handler   moon.Handler
 		target    string
 		localKey  string
 		wantInfo  *Info
@@ -305,7 +291,7 @@ func TestHandleCustomQueryKeys(t *testing.T) {
 func TestDisabledQueryKeys(t *testing.T) {
 	testCases := []struct {
 		name    string
-		handler *Handler
+		handler moon.Handler
 		target  string
 		want    *Info
 	}{
@@ -364,7 +350,7 @@ func TestDisabledQueryKeys(t *testing.T) {
 func TestInvalidPaginationValues(t *testing.T) {
 	testCases := []struct {
 		name       string
-		handler    *Handler
+		handler    moon.Handler
 		target     string
 		wantDetail string
 	}{
@@ -471,7 +457,7 @@ func TestSortParsing(t *testing.T) {
 
 	testCases := []struct {
 		name       string
-		handler    *Handler
+		handler    moon.Handler
 		target     string
 		wantStatus int
 		wantSort   []Sort
@@ -627,7 +613,7 @@ func TestCursorParsing(t *testing.T) {
 
 	testCases := []struct {
 		name       string
-		handler    *Handler
+		handler    moon.Handler
 		target     string
 		wantStatus int
 		wantCursor string
@@ -772,7 +758,7 @@ func TestDefaultSortIsNotSharedAcrossRequests(t *testing.T) {
 	var infos []*Info
 
 	app := moon.New()
-	app.Use("/*", h.Handle)
+	app.Use("/*", h)
 	app.Map(http.MethodGet, "/items", func(ctx *moon.Context) error {
 		info, _ := ctx.GetLocal[*Info](DefaultLocalKey)
 		infos = append(infos, info)

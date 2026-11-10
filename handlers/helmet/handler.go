@@ -1,11 +1,12 @@
 // Package helmet provides a handler that sets security-related response
-// headers. Register [Handler.Handle] as a middleware or a route handler:
+// headers. Register the handler returned by [New] as a middleware or a route
+// handler:
 //
-//	app.UseAll(helmet.New().Handle)
+//	app.UseAll(helmet.New())
 //
 // Customize or disable individual headers:
 //
-//	app.UseAll(helmet.New(helmet.WithXFrameOptions("DENY"), helmet.WithHstsMaxAge(31536000)).Handle)
+//	app.UseAll(helmet.New(helmet.WithXFrameOptions("DENY"), helmet.WithHstsMaxAge(31536000)))
 //
 // As a middleware it runs before the route is resolved, so the headers are
 // set even for unmatched requests ([moon.ErrNotFound],
@@ -19,15 +20,8 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler sets security-related response headers. Use [New] to construct
-// it, passing [Option]s to configure it,
-// then register [Handler.Handle] in the chain.
-type Handler struct {
-	options options
-}
-
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	skip                      func(*moon.Context) bool
 	xssProtection             string
@@ -50,17 +44,21 @@ type options struct {
 }
 
 // New returns a handler built from sensible defaults, customized by the given
-// options, then register [Handler.Handle] in the chain:
+// options, then register the returned handler in the chain:
 //
-//	app.UseAll(helmet.New().Handle)
-//	app.UseAll(helmet.New(helmet.WithXFrameOptions("DENY")).Handle)
+//	app.UseAll(helmet.New())
+//	app.UseAll(helmet.New(helmet.WithXFrameOptions("DENY")))
 //
 // HSTS, Content-Security-Policy and Permissions-Policy are disabled by
 // default (see [WithHstsMaxAge],
 // [WithContentSecurityPolicy] and [WithPermissionPolicy]).
 // Requests for which the [WithSkip] predicate returns true run the
 // chain untouched: no headers are set.
-func New(opts ...Option) *Handler {
+//
+// The handler sets the configured security headers, then runs the chain.
+// Headers with empty values are omitted, and Strict-Transport-Security is only
+// set when a non-negative max-age is configured (see [WithHstsMaxAge]).
+func New(opts ...Option) moon.Handler {
 	options := options{
 		xssProtection:             "0",
 		contentTypeNoSniff:        "nosniff",
@@ -79,12 +77,86 @@ func New(opts ...Option) *Handler {
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return &Handler{options: options}
+
+	return func(ctx *moon.Context) error {
+		if options.skip != nil && options.skip(ctx) {
+			return ctx.Next()
+		}
+
+		if options.xssProtection != "" {
+			ctx.SetHeader("X-XSS-Protection", options.xssProtection)
+		}
+
+		if options.contentTypeNoSniff != "" {
+			ctx.SetHeader("X-Content-Type-Options", options.contentTypeNoSniff)
+		}
+
+		if options.xFrameOptions != "" {
+			ctx.SetHeader("X-Frame-Options", options.xFrameOptions)
+		}
+
+		if options.hstsMaxAge >= 0 {
+			header := "Strict-Transport-Security"
+			ctx.AddHeader(header, fmt.Sprintf("max-age=%d", options.hstsMaxAge))
+			if options.hstsIncludeSubdomains {
+				ctx.AddHeader(header, "includeSubDomains")
+			}
+			if options.hstsPreloadEnabled {
+				ctx.AddHeader(header, "preload")
+			}
+		}
+
+		if options.contentSecurityPolicy != "" {
+			if options.cspReportOnly {
+				ctx.SetHeader("Content-Security-Policy-Report-Only", options.contentSecurityPolicy)
+			} else {
+				ctx.SetHeader("Content-Security-Policy", options.contentSecurityPolicy)
+			}
+		}
+
+		if options.referrerPolicy != "" {
+			ctx.SetHeader("Referrer-Policy", options.referrerPolicy)
+		}
+
+		if options.permissionPolicy != "" {
+			ctx.SetHeader("Permissions-Policy", options.permissionPolicy)
+		}
+
+		if options.crossOriginEmbedderPolicy != "" {
+			ctx.SetHeader("Cross-Origin-Embedder-Policy", options.crossOriginEmbedderPolicy)
+		}
+
+		if options.crossOriginOpenerPolicy != "" {
+			ctx.SetHeader("Cross-Origin-Opener-Policy", options.crossOriginOpenerPolicy)
+		}
+
+		if options.crossOriginResourcePolicy != "" {
+			ctx.SetHeader("Cross-Origin-Resource-Policy", options.crossOriginResourcePolicy)
+		}
+
+		if options.originAgentCluster != "" {
+			ctx.SetHeader("Origin-Agent-Cluster", options.originAgentCluster)
+		}
+
+		if options.xDnsPrefetchControl != "" {
+			ctx.SetHeader("X-DNS-Prefetch-Control", options.xDnsPrefetchControl)
+		}
+
+		if options.xDownloadOptions != "" {
+			ctx.SetHeader("X-Download-Options", options.xDownloadOptions)
+		}
+
+		if options.xPermittedCrossDomain != "" {
+			ctx.SetHeader("X-Permitted-Cross-Domain-Policies", options.xPermittedCrossDomain)
+		}
+
+		return ctx.Next()
+	}
 }
 
-// Option configures a [Handler]. Pass them to [New]:
+// Option configures the handler returned by [New]. Pass them to [New]:
 //
-//	app.UseAll(helmet.New(helmet.WithXFrameOptions("DENY")).Handle)
+//	app.UseAll(helmet.New(helmet.WithXFrameOptions("DENY")))
 type Option func(*options)
 
 // WithSkip skips setting headers for requests where f returns true.
@@ -285,83 +357,4 @@ func WithXPermittedCrossDomainPolicies(s string) Option {
 	return func(o *options) {
 		o.xPermittedCrossDomain = strings.TrimSpace(s)
 	}
-}
-
-// Handle sets the configured security headers, then runs the chain.
-// Headers with empty values are omitted, and Strict-Transport-Security is
-// only set when a non-negative max-age is configured (see
-// [WithHstsMaxAge]).
-func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.options.skip != nil && me.options.skip(ctx) {
-		return ctx.Next()
-	}
-
-	if me.options.xssProtection != "" {
-		ctx.SetHeader("X-XSS-Protection", me.options.xssProtection)
-	}
-
-	if me.options.contentTypeNoSniff != "" {
-		ctx.SetHeader("X-Content-Type-Options", me.options.contentTypeNoSniff)
-	}
-
-	if me.options.xFrameOptions != "" {
-		ctx.SetHeader("X-Frame-Options", me.options.xFrameOptions)
-	}
-
-	if me.options.hstsMaxAge >= 0 {
-		header := "Strict-Transport-Security"
-		ctx.AddHeader(header, fmt.Sprintf("max-age=%d", me.options.hstsMaxAge))
-		if me.options.hstsIncludeSubdomains {
-			ctx.AddHeader(header, "includeSubDomains")
-		}
-		if me.options.hstsPreloadEnabled {
-			ctx.AddHeader(header, "preload")
-		}
-	}
-
-	if me.options.contentSecurityPolicy != "" {
-		if me.options.cspReportOnly {
-			ctx.SetHeader("Content-Security-Policy-Report-Only", me.options.contentSecurityPolicy)
-		} else {
-			ctx.SetHeader("Content-Security-Policy", me.options.contentSecurityPolicy)
-		}
-	}
-
-	if me.options.referrerPolicy != "" {
-		ctx.SetHeader("Referrer-Policy", me.options.referrerPolicy)
-	}
-
-	if me.options.permissionPolicy != "" {
-		ctx.SetHeader("Permissions-Policy", me.options.permissionPolicy)
-	}
-
-	if me.options.crossOriginEmbedderPolicy != "" {
-		ctx.SetHeader("Cross-Origin-Embedder-Policy", me.options.crossOriginEmbedderPolicy)
-	}
-
-	if me.options.crossOriginOpenerPolicy != "" {
-		ctx.SetHeader("Cross-Origin-Opener-Policy", me.options.crossOriginOpenerPolicy)
-	}
-
-	if me.options.crossOriginResourcePolicy != "" {
-		ctx.SetHeader("Cross-Origin-Resource-Policy", me.options.crossOriginResourcePolicy)
-	}
-
-	if me.options.originAgentCluster != "" {
-		ctx.SetHeader("Origin-Agent-Cluster", me.options.originAgentCluster)
-	}
-
-	if me.options.xDnsPrefetchControl != "" {
-		ctx.SetHeader("X-DNS-Prefetch-Control", me.options.xDnsPrefetchControl)
-	}
-
-	if me.options.xDownloadOptions != "" {
-		ctx.SetHeader("X-Download-Options", me.options.xDownloadOptions)
-	}
-
-	if me.options.xPermittedCrossDomain != "" {
-		ctx.SetHeader("X-Permitted-Cross-Domain-Policies", me.options.xPermittedCrossDomain)
-	}
-
-	return ctx.Next()
 }

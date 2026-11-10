@@ -6,7 +6,7 @@ continues. When the predicate returns false, the wrapped handler runs normally.
 
 ```go
 h := skip.New(handler, predicate)
-app.UseAll(h.Handle)
+app.UseAll(h)
 ```
 
 This is useful for applying a handler only to some requests without writing a
@@ -24,7 +24,7 @@ import "github.com/assaidy/moon/handlers/skip"
 h := skip.New(authMiddleware, func(ctx *moon.Context) bool {
     return ctx.GetPath() == "/public"
 })
-app.UseAll(h.Handle)
+app.UseAll(h)
 ```
 
 For `/public`, `authMiddleware` is bypassed and the chain continues. For every
@@ -33,11 +33,13 @@ other path, `authMiddleware` runs as usual.
 ## How it works
 
 ```go
-func (me *Handler) Handle(ctx *moon.Context) error {
-    if me.predicate(ctx) {
-        return ctx.Next()
+func New(handler moon.Handler, predicate func(*moon.Context) bool) moon.Handler {
+    return func(ctx *moon.Context) error {
+        if predicate(ctx) {
+            return ctx.Next()
+        }
+        return handler(ctx)
     }
-    return me.handler(ctx)
 }
 ```
 
@@ -55,7 +57,7 @@ the wrapped handler or to the rest of the chain.
 `skip` has no functional options. Both arguments are required:
 
 ```go
-func New(handler moon.Handler, predicate func(*moon.Context) bool) *Handler
+func New(handler moon.Handler, predicate func(*moon.Context) bool) moon.Handler
 ```
 
 - `handler` must be non-nil; otherwise `New` panics.
@@ -78,7 +80,7 @@ func isPublic(ctx *moon.Context) bool {
     }
 }
 
-app.UseAll(skip.New(authMiddleware, isPublic).Handle)
+app.UseAll(skip.New(authMiddleware, isPublic))
 ```
 
 ### Skip rate limiting for internal requests
@@ -88,7 +90,7 @@ func isInternal(ctx *moon.Context) bool {
     return ctx.GetHeader("X-Internal-Token") == internalToken
 }
 
-app.UseAll(skip.New(rateLimitMiddleware, isInternal).Handle)
+app.UseAll(skip.New(rateLimitMiddleware, isInternal))
 ```
 
 Be careful with trust decisions based on headers; make sure the network path
@@ -106,7 +108,7 @@ func isMutation(ctx *moon.Context) bool {
     }
 }
 
-app.UseAll(skip.New(cacheMiddleware, isMutation).Handle)
+app.UseAll(skip.New(cacheMiddleware, isMutation))
 ```
 
 ### Skip logging for probes
@@ -119,7 +121,7 @@ app.UseAll(skip.New(requestLogger, func(ctx *moon.Context) bool {
     default:
         return false
     }
-}).Handle)
+}))
 ```
 
 ### Invert a built-in skip option
@@ -128,9 +130,9 @@ Some built-in handlers have their own `WithSkip`. Use `skip` when you want the
 same predicate to control a handler that does not offer one:
 
 ```go
-app.UseAll(skip.New(helmet.New().Handle, func(ctx *moon.Context) bool {
+app.UseAll(skip.New(helmet.New(), func(ctx *moon.Context) bool {
     return ctx.GetPath() == "/embed"
-}).Handle)
+}))
 ```
 
 ## Security notes
@@ -146,10 +148,7 @@ app.UseAll(skip.New(helmet.New().Handle, func(ctx *moon.Context) bool {
 ## API reference
 
 ```go
-func New(handler moon.Handler, predicate func(*moon.Context) bool) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
-
-type Handler struct { /* ... */ }
+func New(handler moon.Handler, predicate func(*moon.Context) bool) moon.Handler
 ```
 
 ## Limitations

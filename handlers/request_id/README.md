@@ -1,12 +1,11 @@
 # Request ID handler
 
 Package `request_id` assigns a request ID to every request, echoes it in a
-response header, stores it in the request context and optionally exposes it to
-request logging. Request IDs make it possible to correlate logs, traces and
-client reports for one request.
+response header and stores it in the request context. Request IDs make it
+possible to correlate logs, traces and client reports for one request.
 
 ```go
-app.UseAll(request_id.New().Handle)
+app.UseAll(request_id.New())
 ```
 
 ## Installation
@@ -20,7 +19,7 @@ import "github.com/assaidy/moon/handlers/request_id"
 Use the defaults:
 
 ```go
-app.UseAll(request_id.New().Handle)
+app.UseAll(request_id.New())
 ```
 
 Read the ID in a handler:
@@ -38,7 +37,7 @@ Change the header name:
 ```go
 app.UseAll(request_id.New(
     request_id.WithHeader("X-Correlation-ID"),
-).Handle)
+))
 ```
 
 Change the context local key:
@@ -47,17 +46,9 @@ Change the context local key:
 h := request_id.New(
     request_id.WithLocalKey("app.request_id"),
 )
-app.UseAll(h.Handle)
+app.UseAll(h)
 
 id, _ := ctx.GetLocal[string]("app.request_id")
-```
-
-Include the ID in request logs:
-
-```go
-h := request_id.New()
-app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-app.UseAll(h.Handle)
 ```
 
 ## How it works
@@ -107,8 +98,6 @@ All options are passed to `request_id.New`.
 | `WithGenerator(func() string)` | `moon.GenerateSecureToken` | Generates IDs; a nil func panics. |
 | `WithLocalKey(string)` | `DefaultLocalKey` | Context local key holding the ID, used as-is. |
 | `WithSkip(func(*moon.Context) bool)` | `nil` | Requests for which the predicate returns true skip ID assignment. |
-| `WithRequestLoggingEntryKey(string)` | `"request_id"` | Key of the request logging entry. |
-| `WithRequestLoggingEntryValue(moon.RequestLoggingEntryValue)` | the ID under the local key | Renders the request logging entry value; a nil func panics. |
 
 ### `WithHeader`
 
@@ -172,73 +161,30 @@ When the predicate returns true:
 
 Default: `nil`.
 
-### `WithRequestLoggingEntryKey`
-
-```go
-request_id.WithRequestLoggingEntryKey("correlation_id")
-```
-
-Sets the key used by `GetRequestLoggingEntry`. The key is trimmed; an empty key
-panics.
-
-Default: `"request_id"`.
-
-Keys must be unique within an app's request logging list. If you register multiple
-request ID handlers on the same app, give each one a distinct key, otherwise
-`App.AddRequestLoggingEntry` panics.
-
-### `WithRequestLoggingEntryValue`
-
-```go
-request_id.WithRequestLoggingEntryValue(func(ctx *moon.Context, err error) any {
-    id, _ := ctx.GetLocal[string](request_id.DefaultLocalKey)
-    if id == "" {
-        return "missing"
-    }
-    return id
-})
-```
-
-Sets the value function used by `GetRequestLoggingEntry`. It panics if the
-function is nil.
-
-Default: the value stored under the handler's local key.
-
-The function runs after the handler chain with the error returned by the app's
-error handler, or nil when the chain succeeded.
-
 ## Request logging integration
 
-`GetRequestLoggingEntry` returns a `moon.RequestLoggingEntry`:
+The handler does not register a request logging entry. Add a custom
+`moon.RequestLoggingEntry` yourself when request logging is enabled:
 
 ```go
 h := request_id.New()
-app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-app.UseAll(h.Handle)
+
+app.AddRequestLoggingEntry(moon.RequestLoggingEntry{
+    Key: "request_id",
+    Value: func(ctx *moon.Context, err error) any {
+        id, _ := ctx.GetLocal[string](request_id.DefaultLocalKey)
+        return id
+    },
+})
+app.UseAll(h)
 ```
-
-With request logging enabled, each request then includes the request ID:
-
-```go
-app := moon.New(
-    moon.WithRequestLogging(true),
-)
-```
-
-Because the entry is added to the app's logging list, it is logged for requests
-where the handler ran. A skipped request logs an empty ID unless a custom value
-function handles that case.
-
-The entry key must not collide with existing keys such as `duration`, `remote`,
-`method`, `path`, `status` or `error`. Use
-`WithRequestLoggingEntryKey` to rename it when needed.
 
 ## Examples
 
 ### Default setup
 
 ```go
-app.UseAll(request_id.New().Handle)
+app.UseAll(request_id.New())
 ```
 
 ### Custom header
@@ -246,7 +192,7 @@ app.UseAll(request_id.New().Handle)
 ```go
 app.UseAll(request_id.New(
     request_id.WithHeader("X-Correlation-ID"),
-).Handle)
+))
 ```
 
 ### UUID generator
@@ -256,32 +202,17 @@ app.UseAll(request_id.New(
     request_id.WithGenerator(func() string {
         return uuid.NewString()
     }),
-).Handle)
+))
 ```
 
 ### Request ID plus response timing
 
 ```go
-app.UseAll(request_id.New().Handle)
-app.UseAll(response_time.New().Handle)
+app.UseAll(request_id.New())
+app.UseAll(response_time.New())
 ```
 
 The request ID is available to the timing middleware and every later handler.
-
-### Logging the ID
-
-```go
-h := request_id.New()
-app.AddRequestLoggingEntry(h.GetRequestLoggingEntry())
-app.UseAll(h.Handle)
-
-app.MapGet("/orders", func(ctx *moon.Context) error {
-    logger := ctx.GetAppLogger()
-    id, _ := ctx.GetLocal[string](request_id.DefaultLocalKey)
-    logger.Info("listing orders", "request_id", id)
-    return ctx.WriteJson(http.StatusOK, orders)
-})
-```
 
 ### Returning the ID to clients
 
@@ -304,11 +235,8 @@ and include it in bug reports.
 ```go
 const DefaultLocalKey = "moon.handlers.request_id.local_key"
 
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
-func (h *Handler) GetRequestLoggingEntry() moon.RequestLoggingEntry
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 
@@ -319,8 +247,6 @@ func WithSkip(f func(ctx *moon.Context) bool) Option
 func WithHeader(s string) Option
 func WithGenerator(f func() string) Option
 func WithLocalKey(s string) Option
-func WithRequestLoggingEntryKey(s string) Option
-func WithRequestLoggingEntryValue(f moon.RequestLoggingEntryValue) Option
 ```
 
 ## Limitations

@@ -1,12 +1,12 @@
 // Package swagger serves an OpenAPI document generated from a moon app's
 // route specs, together with a Swagger UI page that renders it.
 //
-// Register [Handler.Handle] on a wildcard route:
+// Register the handler returned by [New] on a wildcard route:
 //
 //	app.MapGet("/swagger/*", swagger.New(
 //		swagger.WithTitle("My API"),
 //		swagger.WithVersion("1.0.0"),
-//	).Handle)
+//	))
 //
 // To use a custom mount, pass [WithMountPath] and use the same path in the
 // wildcard route:
@@ -14,7 +14,7 @@
 //	app.MapGet("/docs/*", swagger.New(
 //		swagger.WithMountPath("/docs"),
 //		swagger.WithTitle("My API"),
-//	).Handle)
+//	))
 //
 // The UI is served at the mount path ("/swagger" by default) or at
 // "<mount>/index.html"; the document is served at "<mount>/openapi.json". The
@@ -68,23 +68,8 @@ const swaggerUiVersion = "5.34.0"
 // present is generated.
 const maxOptionalVariants = 8
 
-// Handler serves an OpenAPI document and the Swagger UI page rendering it.
-// Use [New] to construct it, passing [Option]s to configure it, then register
-// [Handler.Handle] on a wildcard route.
-type Handler struct {
-	options options
-
-	specOnce sync.Once
-	specJson []byte
-	specErr  error
-
-	uiOnce sync.Once
-	uiHtml []byte
-	uiErr  error
-}
-
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	mountPath             string
 	caseSensitiveMatching bool
@@ -98,17 +83,25 @@ type options struct {
 }
 
 // New returns a handler built from sensible defaults, customized by the given
-// options. Register [Handler.Handle] on a wildcard route:
+// options. Register the returned handler on a wildcard route:
 //
 //	app.MapGet("/swagger/*", swagger.New(
 //		swagger.WithTitle("My API"),
 //		swagger.WithVersion("1.0.0"),
-//	).Handle)
+//	))
 //
-// The default mount path is [DefaultMountPath]. The generated document is
-// built on the first request and cached, so register all routes first. Use one
-// Handler per [moon.App]: the cache belongs to the handler, not the app.
-func New(opts ...Option) *Handler {
+// The default mount path is [DefaultMountPath]. The handler serves the UI at
+// the mount path or at "<mount>/index.html", and the document at
+// "<mount>/openapi.json". Unknown paths call [moon.Context.Next], so the
+// handler can also be used as middleware; when no handler follows, Next returns
+// [moon.ErrNotFound].
+//
+// The generated document is built on the first request for it and cached, so
+// register all routes first. Use one handler instance per [moon.App], and never
+// share one handler instance across apps: the cache belongs to the handler, not
+// the app. Build failures are cached too, so later requests return the same
+// error until a new handler is created.
+func New(opts ...Option) moon.Handler {
 	options := options{
 		mountPath: DefaultMountPath,
 		title:     "API Documentation",
@@ -118,10 +111,46 @@ func New(opts ...Option) *Handler {
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return &Handler{options: options}
+
+	// Each handler instance owns its cache. sync.Once runs each build at most
+	// once and makes the cached bytes and errors safe to read concurrently after
+	// Do returns.
+	var uiOnce, specOnce sync.Once
+	var uiHtml, specJson []byte
+	var uiErr, specErr error
+
+	return func(ctx *moon.Context) error {
+		suffix, ok := suffix(ctx.GetPath(), options)
+		if !ok {
+			return ctx.Next()
+		}
+
+		switch {
+		case suffix == "" || pathMatches(suffix, "/index.html", options.caseSensitiveMatching):
+			uiOnce.Do(func() {
+				uiHtml, uiErr = buildUi(options)
+			})
+			if uiErr != nil {
+				return uiErr
+			}
+			ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
+			return ctx.Write(http.StatusOK, uiHtml)
+		case pathMatches(suffix, "/"+SpecFileName, options.caseSensitiveMatching):
+			specOnce.Do(func() {
+				specJson, specErr = buildSpecJson(ctx.GetApiSpecs(), options)
+			})
+			if specErr != nil {
+				return specErr
+			}
+			ctx.SetHeader("Content-Type", "application/json; charset=utf-8")
+			return ctx.Write(http.StatusOK, specJson)
+		default:
+			return ctx.Next()
+		}
+	}
 }
 
-// Option configures a [Handler]. Pass them to [New].
+// Option configures the handler returned by [New]. Pass them to [New].
 type Option func(*options)
 
 // WithMountPath sets the path the handler is mounted on. A missing leading
@@ -131,7 +160,7 @@ type Option func(*options)
 // "<mount>/openapi.json". Register the handler with a wildcard so those paths
 // reach it:
 //
-//	app.MapGet("/docs/*", swagger.New(swagger.WithMountPath("/docs")).Handle)
+//	app.MapGet("/docs/*", swagger.New(swagger.WithMountPath("/docs")))
 //
 // Default: [DefaultMountPath]
 func WithMountPath(mountPath string) Option {
@@ -238,40 +267,22 @@ func WithUiAssets(cssUrl, jsUrl string) Option {
 	}
 }
 
-// Handle serves the Swagger UI page or the OpenAPI document, depending on the
-// request path. Unknown paths call [moon.Context.Next], so the handler can also
-// be used as middleware; when no handler follows, Next returns [moon.ErrNotFound].
-func (me *Handler) Handle(ctx *moon.Context) error {
-	suffix, ok := me.suffix(ctx.GetPath())
-	if !ok {
-		return ctx.Next()
-	}
-	switch {
-	case suffix == "" || me.pathMatches(suffix, "/index.html"):
-		return me.writeUi(ctx)
-	case me.pathMatches(suffix, "/"+SpecFileName):
-		return me.writeSpec(ctx)
-	default:
-		return ctx.Next()
-	}
-}
-
 // suffix returns the part of requestPath below the mount path, or false when
 // the path is outside the mount. The mount comparison follows
 // [WithCaseSensitiveMountMatching].
-func (me *Handler) suffix(requestPath string) (string, bool) {
-	mountPath := me.options.mountPath
+func suffix(requestPath string, options options) (string, bool) {
+	mountPath := options.mountPath
 	if mountPath == "/" {
 		if requestPath == "/" {
 			return "", true
 		}
 		return requestPath, strings.HasPrefix(requestPath, "/")
 	}
-	if me.pathMatches(requestPath, mountPath) {
+	if pathMatches(requestPath, mountPath, options.caseSensitiveMatching) {
 		return "", true
 	}
 	prefix := mountPath + "/"
-	if len(requestPath) >= len(prefix) && me.pathMatches(requestPath[:len(prefix)], prefix) {
+	if len(requestPath) >= len(prefix) && pathMatches(requestPath[:len(prefix)], prefix, options.caseSensitiveMatching) {
 		return requestPath[len(mountPath):], true
 	}
 	return "", false
@@ -279,36 +290,14 @@ func (me *Handler) suffix(requestPath string) (string, bool) {
 
 // pathMatches reports whether a and b are equal, ignoring letter case unless
 // [WithCaseSensitiveMountMatching] is enabled.
-func (me *Handler) pathMatches(a, b string) bool {
-	if me.options.caseSensitiveMatching {
+func pathMatches(a, b string, caseSensitive bool) bool {
+	if caseSensitive {
 		return a == b
 	}
 	return strings.EqualFold(a, b)
 }
 
-func (me *Handler) writeUi(ctx *moon.Context) error {
-	me.uiOnce.Do(func() {
-		me.uiHtml, me.uiErr = me.buildUi()
-	})
-	if me.uiErr != nil {
-		return me.uiErr
-	}
-	ctx.SetHeader("Content-Type", "text/html; charset=utf-8")
-	return ctx.Write(http.StatusOK, me.uiHtml)
-}
-
-func (me *Handler) writeSpec(ctx *moon.Context) error {
-	me.specOnce.Do(func() {
-		me.specJson, me.specErr = me.buildSpecJson(ctx.GetApiSpecs())
-	})
-	if me.specErr != nil {
-		return me.specErr
-	}
-	ctx.SetHeader("Content-Type", "application/json; charset=utf-8")
-	return ctx.Write(http.StatusOK, me.specJson)
-}
-
-func (me *Handler) buildUi() ([]byte, error) {
+func buildUi(options options) ([]byte, error) {
 	var buffer bytes.Buffer
 	err := uiTemplate.Execute(&buffer, struct {
 		Title   string
@@ -316,10 +305,10 @@ func (me *Handler) buildUi() ([]byte, error) {
 		JsUrl   string
 		SpecUrl string
 	}{
-		Title:   me.options.title,
-		CssUrl:  me.options.uiCssUrl,
-		JsUrl:   me.options.uiJsUrl,
-		SpecUrl: path.Join(me.options.mountPath, SpecFileName),
+		Title:   options.title,
+		CssUrl:  options.uiCssUrl,
+		JsUrl:   options.uiJsUrl,
+		SpecUrl: path.Join(options.mountPath, SpecFileName),
 	})
 	if err != nil {
 		return nil, err
@@ -327,8 +316,8 @@ func (me *Handler) buildUi() ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func (me *Handler) buildSpecJson(entries []moon.ApiSpecEntry) ([]byte, error) {
-	document, err := me.buildDocument(entries)
+func buildSpecJson(entries []moon.ApiSpecEntry, options options) ([]byte, error) {
+	document, err := buildDocument(entries, options)
 	if err != nil {
 		return nil, err
 	}
@@ -339,19 +328,19 @@ func (me *Handler) buildSpecJson(entries []moon.ApiSpecEntry) ([]byte, error) {
 	return data, nil
 }
 
-func (me *Handler) buildDocument(entries []moon.ApiSpecEntry) (openApiDocument, error) {
+func buildDocument(entries []moon.ApiSpecEntry, options options) (openApiDocument, error) {
 	document := openApiDocument{
 		OpenApi: OpenApiVersion,
 		Info: openApiInfo{
-			Title:       me.options.title,
-			Description: me.options.description,
-			Version:     me.options.version,
+			Title:       options.title,
+			Description: options.description,
+			Version:     options.version,
 		},
 		Paths:      make(map[string]map[string]any),
-		Components: maps.Clone(me.options.components),
+		Components: maps.Clone(options.components),
 	}
-	if me.options.serverUrl != "" {
-		document.Servers = []openApiServer{{Url: me.options.serverUrl}}
+	if options.serverUrl != "" {
+		document.Servers = []openApiServer{{Url: options.serverUrl}}
 	}
 
 	for _, entry := range entries {

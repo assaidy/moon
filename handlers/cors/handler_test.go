@@ -12,9 +12,9 @@ import (
 
 const defaultAllowMethods = "HEAD, GET, POST, PUT, PATCH, DELETE, QUERY"
 
-func newTestApp(handler *Handler) *moon.App {
+func newTestApp(handler moon.Handler) *moon.App {
 	app := moon.New()
-	app.UseAll(handler.Handle)
+	app.UseAll(handler)
 	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		return ctx.Write(http.StatusOK, "downstream")
 	})
@@ -73,61 +73,86 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("multiple options combine", func(t *testing.T) {
-		h := New(WithMaxAge(10), WithAllowPrivateNetwork(true))
-		require.Equal(t, 10, h.options.maxAge)
-		require.True(t, h.options.allowPrivateNetwork)
+		app := newTestApp(New(WithMaxAge(10), WithAllowPrivateNetwork(true)))
+		resp := request(app, http.MethodOptions, "/resource", map[string]string{
+			headerOrigin:                             "https://any.example",
+			headerAccessControlRequestMethod:         moon.MethodPost,
+			headerAccessControlRequestPrivateNetwork: "true",
+		})
+		require.Equal(t, http.StatusNoContent, resp.StatusCode)
+		require.Equal(t, "10", resp.Header.Get(headerAccessControlMaxAge))
+		require.Equal(t, "true", resp.Header.Get(headerAccessControlAllowPrivateNetwork))
 	})
 }
 
 func TestNew_Defaults(t *testing.T) {
-	opts := New().options
+	app := newTestApp(New())
 
-	require.Equal(t, []string{"*"}, opts.allowedOrigins)
-	require.Equal(t, []string{
-		moon.MethodHead,
-		moon.MethodGet,
-		moon.MethodPost,
-		moon.MethodPut,
-		moon.MethodPatch,
-		moon.MethodDelete,
-		moon.MethodQuery,
-	}, opts.allowedMethods)
-	require.Equal(t, defaultAllowMethods, opts.allowedMethodsString)
-	require.Equal(t, -1, opts.maxAge, "max age is off by default")
-	require.Nil(t, opts.allowedOriginsFunc)
-	require.Nil(t, opts.skip)
-	require.False(t, opts.allowCredentials)
-	require.False(t, opts.allowPrivateNetwork)
-	require.Empty(t, opts.allowedHeaders)
-	require.Empty(t, opts.allowedHeadersString)
-	require.Empty(t, opts.exposedHeaders)
-	require.Empty(t, opts.exposedHeadersString)
+	resp := request(app, http.MethodGet, "/resource", map[string]string{
+		headerOrigin: "https://any.example",
+	})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "*", resp.Header.Get(headerAccessControlAllowOrigin))
+	requireAbsentHeaders(t, resp,
+		headerVary,
+		headerAccessControlAllowCredentials,
+		headerAccessControlExposeHeaders,
+	)
+
+	resp = request(app, http.MethodOptions, "/resource", map[string]string{
+		headerOrigin:                     "https://any.example",
+		headerAccessControlRequestMethod: moon.MethodPost,
+	})
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	require.Equal(t, defaultAllowMethods, resp.Header.Get(headerAccessControlAllowMethods))
+	requireAbsentHeaders(t, resp,
+		headerAccessControlMaxAge,
+		headerAccessControlAllowHeaders,
+		headerAccessControlAllowCredentials,
+		headerAccessControlAllowPrivateNetwork,
+	)
 }
 
 func TestWithAllowedOrigins(t *testing.T) {
 	t.Run("normalizes entries", func(t *testing.T) {
-		opts := New(WithAllowedOrigins([]string{
+		app := newTestApp(New(WithAllowedOrigins([]string{
 			" HTTPS://Example.COM/ ",
 			"http://sub.Example.com:80",
 			"HTTPS://example.com:443",
 			"null",
-		})).options
-		require.Equal(t, []string{
-			"https://example.com",
-			"http://sub.example.com",
-			"https://example.com",
-			"null",
-		}, opts.allowedOrigins)
+		})))
+
+		for _, tc := range []struct {
+			origin string
+			want   string
+		}{
+			{"HTTPS://Example.COM/", "https://example.com"},
+			{"http://sub.example.com", "http://sub.example.com"},
+			{"https://example.com:443", "https://example.com"},
+			{"null", "null"},
+		} {
+			resp := request(app, http.MethodGet, "/resource", map[string]string{headerOrigin: tc.origin})
+			require.Equal(t, http.StatusOK, resp.StatusCode, "origin %s", tc.origin)
+			require.Equal(t, tc.want, resp.Header.Get(headerAccessControlAllowOrigin), "origin %s", tc.origin)
+			require.Equal(t, "Origin", resp.Header.Get(headerVary), "origin %s", tc.origin)
+		}
 	})
 
 	t.Run("keeps non default ports", func(t *testing.T) {
-		opts := New(WithAllowedOrigins([]string{"https://example.com:8443"})).options
-		require.Equal(t, []string{"https://example.com:8443"}, opts.allowedOrigins)
+		app := newTestApp(New(WithAllowedOrigins([]string{"https://example.com:8443"})))
+		resp := request(app, http.MethodGet, "/resource", map[string]string{
+			headerOrigin: "https://example.com:8443",
+		})
+		require.Equal(t, "https://example.com:8443", resp.Header.Get(headerAccessControlAllowOrigin))
 	})
 
 	t.Run("lone wildcard is kept verbatim", func(t *testing.T) {
-		opts := New(WithAllowedOrigins([]string{" * "})).options
-		require.Equal(t, []string{"*"}, opts.allowedOrigins)
+		app := newTestApp(New(WithAllowedOrigins([]string{" * "})))
+		resp := request(app, http.MethodGet, "/resource", map[string]string{
+			headerOrigin: "https://any.example",
+		})
+		require.Equal(t, "*", resp.Header.Get(headerAccessControlAllowOrigin))
+		requireAbsentHeaders(t, resp, headerVary)
 	})
 
 	t.Run("wildcard combined with other origins panics", func(t *testing.T) {
@@ -137,29 +162,31 @@ func TestWithAllowedOrigins(t *testing.T) {
 	})
 
 	t.Run("normalizes subdomain wildcards", func(t *testing.T) {
-		opts := New(WithAllowedOrigins([]string{
-			" HTTPS://*.Example.COM/ ",
-			"http://*.example.com:80",
-			"https://*.example.com:8443",
-		})).options
-		require.Equal(t, []string{
-			"https://*.example.com",
-			"http://*.example.com",
-			"https://*.example.com:8443",
-		}, opts.allowedOrigins)
+		for _, tc := range []struct {
+			allowed string
+			origin  string
+		}{
+			{" HTTPS://*.Example.COM/ ", "https://api.example.com"},
+			{"http://*.example.com:80", "http://api.example.com"},
+			{"https://*.example.com:8443", "https://api.example.com:8443"},
+		} {
+			app := newTestApp(New(WithAllowedOrigins([]string{tc.allowed})))
+			resp := request(app, http.MethodGet, "/resource", map[string]string{headerOrigin: tc.origin})
+			require.Equal(t, tc.origin, resp.Header.Get(headerAccessControlAllowOrigin), "allowed %q", tc.allowed)
+		}
 	})
 
 	t.Run("subdomain wildcards combine with other origins", func(t *testing.T) {
-		opts := New(WithAllowedOrigins([]string{
+		app := newTestApp(New(WithAllowedOrigins([]string{
 			"https://*.example.com",
 			"https://app.example",
 			"null",
-		})).options
-		require.Equal(t, []string{
-			"https://*.example.com",
-			"https://app.example",
-			"null",
-		}, opts.allowedOrigins)
+		})))
+		for _, origin := range []string{"https://api.example.com", "https://app.example", "null"} {
+			resp := request(app, http.MethodGet, "/resource", map[string]string{headerOrigin: origin})
+			require.Equal(t, origin, resp.Header.Get(headerAccessControlAllowOrigin), "origin %s", origin)
+			require.Equal(t, "Origin", resp.Header.Get(headerVary), "origin %s", origin)
+		}
 	})
 
 	t.Run("subdomain wildcards may be paired with credentials", func(t *testing.T) {
@@ -477,7 +504,7 @@ func TestSubdomainWildcards(t *testing.T) {
 func TestHandleGeneralRequest(t *testing.T) {
 	testCases := []struct {
 		name       string
-		handler    *Handler
+		handler    moon.Handler
 		headers    map[string]string
 		wantHeader map[string]string
 		wantAbsent []string
@@ -726,7 +753,7 @@ func TestAllowedOriginsFunc(t *testing.T) {
 func TestHandlePreflight(t *testing.T) {
 	testCases := []struct {
 		name       string
-		handler    *Handler
+		handler    moon.Handler
 		headers    map[string]string
 		wantHeader map[string]string
 		wantAbsent []string

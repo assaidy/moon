@@ -5,7 +5,7 @@ a request-scoped `Info` value and stores it in the request context. It does not
 query anything itself: the application decides which pagination policy to use.
 
 ```go
-app.UseAll(pagination.New().Handle)
+app.UseAll(pagination.New())
 ```
 
 Page numbers, offsets, sorting and cursors are all available at the same time, so
@@ -23,7 +23,7 @@ import "github.com/assaidy/moon/handlers/pagination"
 Register the handler and read the parsed values downstream:
 
 ```go
-app.UseAll(pagination.New().Handle)
+app.UseAll(pagination.New())
 
 app.MapGet("/users", func(ctx *moon.Context) error {
     info, ok := ctx.GetLocal[*pagination.Info](pagination.DefaultLocalKey)
@@ -112,7 +112,7 @@ safely to a database. Enable it with a query key and an allowlist:
 app.UseAll(pagination.New(
     pagination.WithSortQueryKey("sort"),
     pagination.WithAllowedSortKeys([]string{"created_at", "name", "id"}),
-).Handle)
+))
 ```
 
 The syntax is:
@@ -332,7 +332,7 @@ app.UseAll(pagination.New(
     pagination.WithOffsetQueryKey("start"),
     pagination.WithSortQueryKey("order"),
     pagination.WithCursorQueryKey("token"),
-).Handle)
+))
 ```
 
 `WithPageQueryKey`, `WithLimitQueryKey`, `WithOffsetQueryKey`,
@@ -347,7 +347,7 @@ default, so the fields stay at their zero values.
 app.UseAll(pagination.New(
     pagination.WithPageQueryKey(""),
     pagination.WithLimitQueryKey(""),
-).Handle)
+))
 ```
 
 Here `?page=5&limit=500` is ignored: `GetPage` returns the default page and
@@ -361,7 +361,7 @@ app.UseAll(pagination.New(
     pagination.WithDefaultPage(1),
     pagination.WithDefaultLimit(25),
     pagination.WithDefaultOffset(0),
-).Handle)
+))
 ```
 
 These set the values used when the corresponding query parameter is absent. The
@@ -379,7 +379,7 @@ app.UseAll(pagination.New(
     pagination.WithMinLimit(1),
     pagination.WithMaxLimit(200),
     pagination.WithDefaultLimit(50),
-).Handle)
+))
 ```
 
 These set the accepted limit range, inclusive. Both must be positive and must
@@ -395,7 +395,7 @@ app.UseAll(pagination.New(
     pagination.WithMinLimit(1),
     pagination.WithMaxLimit(200),
     pagination.WithDefaultLimit(50),
-).Handle)
+))
 ```
 
 With clamping enabled, `limit=0` becomes `1` and `limit=999` becomes `200`. Values
@@ -417,7 +417,7 @@ app.UseAll(pagination.New(
         {Key: "created_at", Order: pagination.OrderDescending},
         {Key: "id"},
     }),
-).Handle)
+))
 ```
 
 The default sort is used when the sort query parameter is absent. Keys and orders
@@ -463,7 +463,7 @@ Default: `"cursor"`.
 h := pagination.New(
     pagination.WithLocalKey("app.pagination"),
 )
-app.UseAll(h.Handle)
+app.UseAll(h)
 
 info, _ := ctx.GetLocal[*pagination.Info]("app.pagination")
 ```
@@ -478,7 +478,7 @@ Default: `pagination.DefaultLocalKey`.
 ### Page and limit
 
 ```go
-app.UseAll(pagination.New().Handle)
+app.UseAll(pagination.New())
 
 app.MapGet("/posts", func(ctx *moon.Context) error {
     info, _ := ctx.GetLocal[*pagination.Info](pagination.DefaultLocalKey)
@@ -494,7 +494,7 @@ app.MapGet("/posts", func(ctx *moon.Context) error {
 ### Offset and limit
 
 ```go
-app.UseAll(pagination.New().Handle)
+app.UseAll(pagination.New())
 
 app.MapGet("/posts", func(ctx *moon.Context) error {
     info, _ := ctx.GetLocal[*pagination.Info](pagination.DefaultLocalKey)
@@ -518,7 +518,7 @@ app.UseAll(pagination.New(
     pagination.WithDefaultSort([]pagination.Sort{
         {Key: "created_at", Order: pagination.OrderDescending},
     }),
-).Handle)
+))
 ```
 
 Requests such as `?sort=-created_at,title&limit=20` produce two criteria.
@@ -530,7 +530,7 @@ type eventCursor struct {
     ID int `json:"id"`
 }
 
-app.UseAll(pagination.New().Handle)
+app.UseAll(pagination.New())
 
 app.MapGet("/events", func(ctx *moon.Context) error {
     info, _ := ctx.GetLocal[*pagination.Info](pagination.DefaultLocalKey)
@@ -576,14 +576,14 @@ app.UseAll(pagination.New(
     pagination.WithSortQueryKey("order"),
     pagination.WithCursorQueryKey("after"),
     pagination.WithAllowedSortKeys([]string{"id", "name"}),
-).Handle)
+))
 ```
 
 ### Route-specific pagination
 
 ```go
 app.MapGet("/search", search,
-    moon.WithMiddlewares(pagination.New().Handle),
+    moon.WithMiddlewares(pagination.New()),
 )
 ```
 
@@ -596,7 +596,7 @@ app.UseAll(pagination.New(
     pagination.WithSkip(func(ctx *moon.Context) bool {
         return ctx.GetMethod() != http.MethodGet
     }),
-).Handle)
+))
 ```
 
 ## Security notes
@@ -632,13 +632,11 @@ const (
     DefaultLocalKey = "moon.handlers.pagination.local_key"
 )
 
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
 func EncodeCursor(v any) ([]byte, error)
 func DecodeCursor(raw []byte, v any) error
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 
 type Sort struct {

@@ -13,14 +13,23 @@ import (
 )
 
 func TestWithHeader(t *testing.T) {
-	require.Equal(t, "X-Took", New(WithHeader(" x-took ")).options.header)
+	app := moon.New()
+	app.Use("/*", New(WithHeader(" x-took ")))
+	app.Map(http.MethodGet, "/timed", func(ctx *moon.Context) error {
+		return ctx.WriteStatus(http.StatusOK)
+	})
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/timed", nil))
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotEmpty(t, resp.Header.Get("X-Took"))
+
 	require.Panics(t, func() { New(WithHeader("  ")) })
 }
 
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name        string
-		handler     *Handler
+		handler     moon.Handler
 		route       moon.Handler
 		header      string
 		wantStatus  int
@@ -89,7 +98,7 @@ func TestHandle(t *testing.T) {
 			}
 
 			app := moon.New()
-			app.Use("/*", h.Handle)
+			app.Use("/*", h)
 			app.Map(http.MethodGet, "/timed", route)
 
 			resp := app.Test(httptest.NewRequest(http.MethodGet, "/timed", nil))

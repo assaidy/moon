@@ -19,10 +19,10 @@ func allowAll(*moon.Context, string) (bool, error) {
 	return true, nil
 }
 
-func newTestApp(h *Handler) (*moon.App, *bool) {
+func newTestApp(h moon.Handler) (*moon.App, *bool) {
 	next := new(bool)
 	app := moon.New()
-	app.UseAll(h.Handle)
+	app.UseAll(h)
 	app.Map(http.MethodGet, "/resource", func(ctx *moon.Context) error {
 		*next = true
 		return ctx.Write(http.StatusOK, "ok")
@@ -48,12 +48,21 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("defaults", func(t *testing.T) {
-		h := New(WithValidator(allowAll))
+		app, next := newTestApp(New(WithValidator(func(_ *moon.Context, key string) (bool, error) {
+			return key == "secret", nil
+		})))
 
-		require.NotNil(t, h.options.source.Extractor)
-		require.Equal(t, "Bearer", h.options.source.Challenge.Scheme)
-		require.Equal(t, "Restricted", h.options.source.Challenge.Realm)
-		require.Nil(t, h.options.skip)
+		resp := doRequest(app, func(req *http.Request) {
+			req.Header.Set("Authorization", "Bearer secret")
+		})
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.True(t, *next)
+
+		*next = false
+		resp = doRequest(app, nil)
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.False(t, *next)
+		require.Equal(t, defaultAuthorizationChallenge, resp.Header.Get("WWW-Authenticate"))
 	})
 
 	t.Run("custom key source is normalized", func(t *testing.T) {
@@ -68,10 +77,13 @@ func TestNew(t *testing.T) {
 				},
 			}),
 		)
+		app, next := newTestApp(h)
 
-		require.Equal(t, "ApiKey", h.options.source.Challenge.Scheme)
-		require.Equal(t, "My Realm", h.options.source.Challenge.Realm)
-		require.Equal(t, "invalid_token", h.options.source.Challenge.Error)
+		resp := doRequest(app, nil)
+
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+		require.False(t, *next)
+		require.Equal(t, `ApiKey realm="My Realm", error="invalid_token"`, resp.Header.Get("WWW-Authenticate"))
 	})
 }
 
@@ -425,7 +437,7 @@ func TestHandleDownstreamError(t *testing.T) {
 
 	next := false
 	app := moon.New()
-	app.UseAll(h.Handle)
+	app.UseAll(h)
 	app.Map(http.MethodGet, "/resource", func(*moon.Context) error {
 		next = true
 		return moon.ErrTeapot

@@ -1,12 +1,12 @@
 // Package response_time provides a handler that records how long the
-// handler chain took and reports it in a response header. Register
-// [Handler.Handle] as a middleware or a route handler:
+// handler chain took and reports it in a response header. Register the
+// handler returned by [New] as a middleware or a route handler:
 //
-//	app.UseAll(response_time.New().Handle)
+//	app.UseAll(response_time.New())
 //
 // Customize the header or skip timing for some requests:
 //
-//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")))
 //
 // As a middleware it runs before the route is resolved, so the timing
 // covers the full chain and the header is set even for unmatched requests
@@ -21,41 +21,44 @@ import (
 	"github.com/assaidy/moon"
 )
 
-// Handler measures the handler chain duration and reports it in a
-// response header. Use [New] to construct it, passing [Option]s
-// to configure it, then register [Handler.Handle]
-// in the chain.
-type Handler struct {
-	options options
-}
-
-// options holds the configuration of a [Handler]. All fields are private;
-// pass [Option]s to [New] to configure it.
+// options holds the configuration of the handler returned by [New]. All fields
+// are private; pass [Option]s to [New] to configure it.
 type options struct {
 	skip   func(ctx *moon.Context) bool
 	header string
 }
 
 // New returns a handler built from sensible defaults, customized by the given
-// options, then register [Handler.Handle] in the chain:
+// options, then register the returned handler in the chain:
 //
-//	app.UseAll(response_time.New().Handle)
-//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")).Handle)
+//	app.UseAll(response_time.New())
+//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")))
 //
 // Default header: "X-Response-Time" (see [WithHeader]).
 // Requests for which the [WithSkip] predicate returns true run the
-// chain without recording anything.
-func New(opts ...Option) *Handler {
+// chain without recording anything. Otherwise the handler measures the chain,
+// sets the header even when the chain returns an error, and returns that error.
+func New(opts ...Option) moon.Handler {
 	options := options{header: "X-Response-Time"}
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return &Handler{options: options}
+
+	return func(ctx *moon.Context) error {
+		if options.skip != nil && options.skip(ctx) {
+			return ctx.Next()
+		}
+
+		start := time.Now()
+		err := ctx.Next()
+		ctx.SetHeader(options.header, time.Since(start).String())
+		return err
+	}
 }
 
-// Option configures a [Handler]. Pass them to [New]:
+// Option configures the handler returned by [New]. Pass them to [New]:
 //
-//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")).Handle)
+//	app.UseAll(response_time.New(response_time.WithHeader("X-Took")))
 type Option func(*options)
 
 // WithSkip skips timing for requests where f returns true.
@@ -79,20 +82,4 @@ func WithHeader(s string) Option {
 		moon.Assert(s != "", "header cannot be empty or whitespace")
 		o.header = http.CanonicalHeaderKey(s)
 	}
-}
-
-// Handle measures the handler chain duration and sets it as a response
-// header after [moon.Context.Next] returns. The header value is formatted
-// with [time.Duration.String], so it parses with [time.ParseDuration]. The
-// header is set even when the chain returns an error, and the error is
-// passed through unchanged.
-func (me *Handler) Handle(ctx *moon.Context) error {
-	if me.options.skip != nil && me.options.skip(ctx) {
-		return ctx.Next()
-	}
-
-	start := time.Now()
-	err := ctx.Next()
-	ctx.SetHeader(me.options.header, time.Since(start).String())
-	return err
 }

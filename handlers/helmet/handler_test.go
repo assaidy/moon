@@ -12,7 +12,7 @@ import (
 func TestHandle(t *testing.T) {
 	testCases := []struct {
 		name       string
-		handler    *Handler
+		handler    moon.Handler
 		wantHeader map[string]string
 		wantAbsent []string
 	}{
@@ -119,7 +119,7 @@ func TestHandle(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Use("/*", tc.handler.Handle)
+			app.Use("/*", tc.handler)
 			app.Map(http.MethodGet, "/secure", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "hello")
 			})
@@ -140,7 +140,7 @@ func TestHandle(t *testing.T) {
 func TestHandleHsts(t *testing.T) {
 	testCases := []struct {
 		name    string
-		handler *Handler
+		handler moon.Handler
 		want    []string
 	}{
 		{
@@ -178,7 +178,7 @@ func TestHandleHsts(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := moon.New()
-			app.Use("/*", tc.handler.Handle)
+			app.Use("/*", tc.handler)
 			app.Map(http.MethodGet, "/secure", func(ctx *moon.Context) error {
 				return ctx.Write(http.StatusOK, "hello")
 			})

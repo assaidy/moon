@@ -7,7 +7,7 @@ specs, together with a Swagger UI page that renders it.
 app.MapGet("/swagger/*", swagger.New(
     swagger.WithTitle("My API"),
     swagger.WithVersion("1.0.0"),
-).Handle)
+))
 ```
 
 The handler turns the documentation metadata attached with
@@ -28,7 +28,7 @@ Register the handler on a wildcard route:
 app.MapGet("/swagger/*", swagger.New(
     swagger.WithTitle("Example API"),
     swagger.WithVersion("1.0.0"),
-).Handle)
+))
 ```
 
 Open:
@@ -68,7 +68,7 @@ The default mount path is `/swagger`. Register the handler with a wildcard so th
 UI, the index page and the document all reach it:
 
 ```go
-app.MapGet("/swagger/*", swagger.New().Handle)
+app.MapGet("/swagger/*", swagger.New())
 ```
 
 A custom mount:
@@ -77,7 +77,7 @@ A custom mount:
 app.MapGet("/docs/*", swagger.New(
     swagger.WithMountPath("/docs"),
     swagger.WithTitle("Example API"),
-).Handle)
+))
 ```
 
 Served paths for a mount of `/docs`:
@@ -109,7 +109,10 @@ This means:
    request to the handler.
 2. Routes registered after the first request are not reflected in the cached
    document.
-3. Use one `Handler` per app. The cache belongs to the handler, not the app.
+3. Use one handler instance per app, and never share one handler instance across
+   apps. The cache belongs to the handler, not the app. If the same handler
+   instance is registered on multiple apps, every app receives the document
+   cached from the first app that requested it.
 
 The document is built from `Context.GetApiSpecs`, which returns a snapshot of all
 routes in registration order.
@@ -233,7 +236,7 @@ app.MapGet("/docs/*", swagger.New(
             },
         },
     }),
-).Handle)
+))
 
 app.MapGet("/private", handler,
     moon.WithApiSpec(moon.NewApiSpec(
@@ -398,7 +401,7 @@ app.MapGet("/swagger/*", swagger.New(
     swagger.WithTitle("Example API"),
     swagger.WithVersion("2.1.0"),
     swagger.WithDescription("Internal API for the example service."),
-).Handle)
+))
 ```
 
 ### Documented route
@@ -451,12 +454,12 @@ app.MapGet("/docs/*", swagger.New(
         "/assets/swagger-ui.css",
         "/assets/swagger-ui-bundle.js",
     ),
-).Handle)
+))
 
 app.MapGet("/assets/*", static.New(
     static.WithRoot("./swagger-ui"),
     static.WithStripPathPrefix("/assets"),
-).Handle)
+))
 ```
 
 The asset routes must be registered and reachable by the browser.
@@ -503,7 +506,7 @@ app.MapGet("/docs/*", swagger.New(
             },
         },
     }),
-).Handle)
+))
 ```
 
 Reference the component from a schema:
@@ -529,10 +532,8 @@ Schema: moon.Object{"$ref": "#/components/schemas/User"}
 ## API reference
 
 ```go
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 
@@ -568,7 +569,9 @@ const (
   and `moon.ApiParameter`.
 - The handler does not validate requests or responses against the document.
 - The document and UI are cached after the first request; late route registration is
-  not reflected.
+  not reflected. Build failures are cached for the lifetime of the handler.
+- A handler instance is tied to one app: sharing it across apps serves the first
+  app's cached document.
 - Optional path parameters expand to at most 8 variants. Routes with 4 or more
   optional parameters are documented only with every optional parameter present.
 - Same path shapes with different parameter names produce separate Path Items.

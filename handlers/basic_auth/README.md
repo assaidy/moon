@@ -6,7 +6,7 @@ request header, validates the credentials with a callback, and stores the
 authenticated user-id in a context local.
 
 ```go
-app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)).Handle)
+app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)))
 ```
 
 Basic authentication transmits the password in cleartext; base64 is only an
@@ -25,7 +25,7 @@ func authorize(ctx *moon.Context, user, password string) (bool, error) {
     return user == "admin" && password == "secret", nil
 }
 
-app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)).Handle)
+app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)))
 ```
 
 Read the authenticated user in a handler:
@@ -46,7 +46,7 @@ Use a custom realm:
 app.UseAll(basic_auth.New(
     basic_auth.WithAuthorizer(authorize),
     basic_auth.WithRealm("Admin area"),
-).Handle)
+))
 ```
 
 ## How it works
@@ -197,7 +197,7 @@ h := basic_auth.New(
     basic_auth.WithAuthorizer(authorize),
     basic_auth.WithLocalKey("app.user"),
 )
-app.UseAll(h.Handle)
+app.UseAll(h)
 
 user, _ := ctx.GetLocal[string]("app.user")
 ```
@@ -247,7 +247,7 @@ func authorize(ctx *moon.Context, user, password string) (bool, error) {
     return subtle.ConstantTimeCompare([]byte(password), []byte(want)) == 1, nil
 }
 
-app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)).Handle)
+app.UseAll(basic_auth.New(basic_auth.WithAuthorizer(authorize)))
 ```
 
 Store hashes, not plaintext passwords, in real applications.
@@ -274,7 +274,7 @@ h := basic_auth.New(
     basic_auth.WithAuthorizer(authorize),
     basic_auth.WithRealm("Admin area"),
 )
-app.Use("/admin", h.Handle)
+app.Use("/admin", h)
 ```
 
 Requests to `/admin` and paths below it require credentials. Other paths are
@@ -287,7 +287,7 @@ untouched. Register the middleware before the routes it should protect:
 app.UseAll(basic_auth.New(
     basic_auth.WithAuthorizer(authorize),
     basic_auth.WithLocalKey("app.user"),
-).Handle)
+))
 
 app.MapGet("/me", func(ctx *moon.Context) error {
     user, ok := ctx.GetLocal[string]("app.user")
@@ -303,7 +303,7 @@ app.MapGet("/me", func(ctx *moon.Context) error {
 Prefer scoping the middleware:
 
 ```go
-app.Use("/account", basic_auth.New(basic_auth.WithAuthorizer(authorize)).Handle)
+app.Use("/account", basic_auth.New(basic_auth.WithAuthorizer(authorize)))
 ```
 
 If the middleware is global, use `WithSkip` for public paths:
@@ -319,7 +319,7 @@ app.UseAll(basic_auth.New(
             return false
         }
     }),
-).Handle)
+))
 ```
 
 ## Security notes
@@ -357,10 +357,8 @@ app.UseAll(basic_auth.New(
 ```go
 const DefaultLocalKey = "moon.handlers.basic_auth.local_key"
 
-func New(options ...Option) *Handler
-func (h *Handler) Handle(ctx *moon.Context) error
+func New(options ...Option) moon.Handler
 
-type Handler struct { /* ... */ }
 type Option func(*options)
 ```
 
