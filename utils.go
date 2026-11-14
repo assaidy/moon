@@ -15,11 +15,12 @@ import (
 //	return ctx.WriteAs(http.StatusOK, CodecJson, Object{"hello": "world"})
 type Object map[string]any
 
-// Assert panics when condition is false, with message when given.
-func Assert(condition bool, message ...string) {
+// Assert panics if condition is false, using [fmt.Sprint] on the provided
+// arguments as the panic message, or a default message if none are provided.
+func Assert(condition bool, args ...any) {
 	if !condition {
-		if len(message) > 0 {
-			panic(message[0])
+		if len(args) > 0 {
+			panic(fmt.Sprint(args...))
 		}
 		panic("assertion failed")
 	}
