@@ -129,3 +129,30 @@ func TestDefaultErrorHandler(t *testing.T) {
 		require.EqualError(t, details, "boom")
 	})
 }
+
+func TestDefaultErrorHandlerWriteFailure(t *testing.T) {
+	var logged error
+	app := New(WithErrorHandler(func(ctx *Context) error {
+		logged = DefaultErrorHandler(ctx)
+		return logged
+	}))
+	app.Map(http.MethodGet, "/x", func(ctx *Context) error {
+		// channels cannot be JSON-encoded, so writing the error body fails.
+		return ErrNotFound.WithDetails(make(chan int))
+	})
+
+	resp := app.Test(httptest.NewRequest(http.MethodGet, "/x", nil))
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	// The status must still be the error's status, not the implicit 200 sent
+	// when an unwritten response flushes.
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.Empty(t, raw)
+
+	// The write failure is joined into the returned error for logging, while
+	// the original error stays matchable.
+	require.ErrorIs(t, logged, ErrNotFound)
+	require.Contains(t, logged.Error(), "error handler:")
+	require.Contains(t, logged.Error(), "chan int")
+}

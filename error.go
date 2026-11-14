@@ -105,7 +105,8 @@ var (
 // It returns the error to log: err itself when it is an [Error], keeping
 // its Details in the logs, and [ErrInternalServerError] with err as Details
 // otherwise, so request logging always records an [Error]. It returns nil when
-// the chain succeeded.
+// the chain succeeded. If writing the error body fails, the status code is
+// still sent and the write error is joined into the returned error.
 //
 // It is registered as the first handler in the chain, so error rendering runs
 // after the rest of the chain returns. To measure that rendering time, for
@@ -128,6 +129,12 @@ func DefaultErrorHandler(ctx *Context) error {
 		// wrap non-[Error] failures so the logs always carry an [Error].
 		err = ErrInternalServerError.WithDetails(err)
 	}
-	ctx.WriteJson(response.StatusCode, response)
+
+	// make sure we set status code in case encoding failed before it.
+	ctx.SetStatusCode(response.StatusCode)
+	if writeErr := ctx.WriteJson(response.StatusCode, response); writeErr != nil {
+		err = errors.Join(err, fmt.Errorf("error handler: %w", writeErr))
+	}
+
 	return err
 }
