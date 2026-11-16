@@ -1,13 +1,19 @@
 package moon
 
-import "reflect"
+import (
+	"fmt"
+	"reflect"
+)
 
 // AddDependency registers a dependency that can be retrieved through [Context.GetDependency].
-// If a dependency of the same type is already registered, it is replaced.
 // The dependency must not be nil.
+// It panics if a dependency of the same type is already registered.
 func (me *App) AddDependency(d any) {
 	Assert(!IsNilValue(d), "dependency cannot be nil")
-	me.dependencies[reflect.TypeOf(d)] = d
+	t := reflect.TypeOf(d)
+	_, exists := me.dependencies[t]
+	Assert(!exists, fmt.Sprintf("dependency of type: %s is already registered", t.String()))
+	me.dependencies[t] = d
 }
 
 // GetDependency returns the dependency registered for T through

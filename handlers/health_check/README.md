@@ -208,7 +208,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
 ```go
 app.AddDependency(cfg)
 app.AddService(func(_ moon.ServiceProvider) *Database {
-    return db
+    return NewDb(cfg.DbUrl)
 })
 
 app.MapGet(health_check.ReadinessEndpoint, health_check.New(

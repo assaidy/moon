@@ -42,13 +42,15 @@ func TestDependency(t *testing.T) {
 		require.Equal(t, []string{"shared", "shared"}, seen)
 	})
 
-	t.Run("replace same type", func(t *testing.T) {
+	t.Run("duplicate type panics", func(t *testing.T) {
 		app := New()
 		app.AddDependency("a")
-		app.AddDependency("b")
+		require.PanicsWithValue(t, "dependency of type: string is already registered", func() {
+			app.AddDependency("b")
+		})
 
 		app.Map(http.MethodGet, "/", func(ctx *Context) error {
-			require.Equal(t, "b", ctx.GetDependency[string]())
+			require.Equal(t, "a", ctx.GetDependency[string]())
 			return nil
 		})
 

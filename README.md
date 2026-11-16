@@ -824,7 +824,7 @@ app.MapGet("/users", func(ctx *moon.Context) error {
 ```
 
 - The lookup key is the concrete type of the registered value.
-- Registering the same type again replaces the previous value.
+- Registering the same type again panics.
 - `AddDependency` panics on a nil value (including a typed nil).
 - `GetDependency[T]` panics when no dependency of type `T` was registered.
 
