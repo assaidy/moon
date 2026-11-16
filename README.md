@@ -844,19 +844,39 @@ type Service interface {
 }
 ```
 
-Register one with `AddService`:
+Register a constructor with `AddService`:
 
 ```go
-app.AddService(billing)
+app.AddService(func(_ moon.ServiceProvider) *BillingService {
+    return NewBillingService(cfg.BillingURL)
+})
 ```
 
-`AddService` panics when the service is nil, its name is empty or
-whitespace-only, or a service of the same concrete type is already registered.
+`AddService` does not construct the service immediately. Constructors run when
+services are started (through `App.Start` or `App.StartServices`), in
+registration order. The `ServiceProvider` argument gives a constructor access to
+services that have already started, so later services can depend on earlier
+ones:
+
+```go
+app.AddService(func(_ moon.ServiceProvider) *Database {
+    return NewDatabase(cfg.DatabaseURL)
+})
+app.AddService(func(p moon.ServiceProvider) *BillingService {
+    return NewBillingService(p.GetService[*Database]().Pool())
+})
+```
+
+`AddService` panics when the constructor is nil or when a service of the same
+concrete type is already registered. The constructor's return type is the
+service type used by `GetService`. A constructor that returns nil causes
+`StartServices` to panic.
 
 Services are started by `App.Start`, or explicitly by `App.StartServices` when
 testing without listening. They are stopped by `App.Shutdown` or explicitly by
 `App.StopServices`. Starting services again skips those that are already
-started, and successfully stopped services can be started again.
+started, so their constructors do not run again. A successfully stopped service
+is constructed and started again on the next start.
 
 Retrieve a started service in a handler:
 
@@ -865,7 +885,9 @@ billing := ctx.GetService[*BillingService]()
 ```
 
 `GetService` panics when no service of that type was registered, or when it was
-registered but never successfully started.
+registered but never successfully started. The same rules apply inside
+constructors through `ServiceProvider.GetService`; only earlier services that
+have started are visible.
 
 Lifecycle details:
 
@@ -883,7 +905,9 @@ For tests:
 
 ```go
 app := moon.New()
-app.AddService(testBilling)
+app.AddService(func(_ moon.ServiceProvider) *BillingService {
+    return testBilling
+})
 
 if err := app.StartServices(); err != nil {
     t.Fatalf("start services: %v", err)

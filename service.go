@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strings"
 )
 
 // Service is a managed background resource owned by the [App].
@@ -50,25 +49,51 @@ func (me *App) CheckServicesReadiness() bool {
 
 type serviceInfo struct {
 	type_   reflect.Type
+	build   func(ServiceProvider) any
 	value   any
 	started bool
 }
 
-// AddService registers a service that becomes retrievable through
-// [Context.GetService] only after it has been successfully started
-// (see [App.StartServices]).
-// It panics if a service of the same type is already registered.
-// The service must not be nil.
-func (me *App) AddService[T Service](s T) {
-	Assert(!IsNilValue(s), "service cannot be nil")
-	t := reflect.TypeOf(s)
-	Assert(strings.TrimSpace(s.Name()) != "", "service name cannot be empty or whitespace")
+// ServiceProvider gives service constructors access to services that have
+// already started. The app supplies it when a constructor runs.
+type ServiceProvider struct {
+	app *App
+}
+
+// GetService returns the started service of type T.
+// It panics if T was not registered or has not started yet, or if the provider
+// was not supplied by the app.
+func (me ServiceProvider) GetService[T Service]() T {
+	Assert(me.app != nil, "ServiceProvider must be supplied by moon")
+	t := reflect.TypeFor[T]()
+	i := slices.IndexFunc(me.app.services, func(s serviceInfo) bool {
+		return s.type_ == t
+	})
+	Assert(i != -1, "service not found: "+t.String())
+	s := me.app.services[i]
+	Assert(s.started && !IsNilValue(s.value), "service didn't start: "+t.String())
+	return s.value.(T)
+}
+
+// AddService registers a constructor for the service type T.
+// The constructor runs when the service is started (see [App.StartServices]),
+// in registration order, and receives a [ServiceProvider] that exposes
+// services which have already started. This lets later services depend on
+// earlier ones.
+//
+// It panics if build is nil or a service of the same type is already
+// registered.
+func (me *App) AddService[T Service](build func(ServiceProvider) T) {
+	Assert(build != nil, "service constructor cannot be nil")
+	t := reflect.TypeFor[T]()
 	Assert(
 		slices.IndexFunc(me.services, func(s serviceInfo) bool { return s.type_ == t }) == -1,
 		fmt.Sprintf("service of type: %s is already registered", t.String()),
 	)
-
-	me.services = append(me.services, serviceInfo{type_: t, value: s})
+	me.services = append(me.services, serviceInfo{
+		type_: t,
+		build: func(p ServiceProvider) any { return build(p) },
+	})
 }
 
 // GetService returns the started service for T (see [App.AddService] and
@@ -76,16 +101,14 @@ func (me *App) AddService[T Service](s T) {
 // It panics when no service of that type was registered, or when it was
 // registered but never successfully started.
 func (me *Context) GetService[T Service]() T {
-	t := reflect.TypeFor[T]()
-	i := slices.IndexFunc(me.app.services, func(s serviceInfo) bool { return s.type_ == t })
-	Assert(i != -1, "service not found: "+t.String())
-	s := me.app.services[i]
-	Assert(s.started, "service didn't start: "+t.String())
-	return s.value.(T)
+	return ServiceProvider{app: me.app}.GetService[T]()
 }
 
-// StartServices starts all registered services in registration order.
-// Services that are already started are left untouched.
+// StartServices constructs and starts all registered services in registration
+// order. Constructors can retrieve services that have already started through
+// [ServiceProvider.GetService]. Services that are already started are left
+// untouched, so their constructors do not run again.
+//
 // If any service fails to start, already-started services are stopped and
 // discarded; the start error is returned.
 //
@@ -98,17 +121,23 @@ func (me *Context) GetService[T Service]() T {
 func (me *App) StartServices() error {
 	me.options.logger.Info("starting all services")
 
+	provider := ServiceProvider{app: me}
+
 	for i, s := range me.services {
-		if !s.started {
-			service := s.value.(Service)
-			if err := service.Start(); err != nil {
-				me.options.logger.Error("failed to start service", "name", service.Name(), "error", err)
-				me.StopServices()
-				return fmt.Errorf("failed to start %q service: %w", service.Name(), err)
-			}
-			me.services[i].started = true
-			me.options.logger.Info("service started", "name", service.Name())
+		if s.started {
+			continue
 		}
+		value := s.build(provider)
+		Assert(!IsNilValue(value), "service constructor returned nil: "+s.type_.String())
+		service := value.(Service)
+		if err := service.Start(); err != nil {
+			me.options.logger.Error("failed to start service", "name", service.Name(), "error", err)
+			me.StopServices()
+			return fmt.Errorf("failed to start %q service: %w", service.Name(), err)
+		}
+		me.services[i].value = value
+		me.services[i].started = true
+		me.options.logger.Info("service started", "name", service.Name())
 	}
 
 	me.options.logger.Info("all services started")
@@ -129,15 +158,16 @@ func (me *App) StopServices() {
 	// stop in reverse registration order so services that depend on earlier
 	// services are stopped before their dependencies.
 	for i, s := range slices.Backward(me.services) {
-		if s.started {
-			service := s.value.(Service)
-			if err := service.Stop(); err != nil {
-				me.options.logger.Error("failed to stop service", "name", service.Name(), "error", err)
-				continue
-			}
-			me.services[i].started = false
-			me.options.logger.Info("service stopped", "name", service.Name())
+		if !s.started {
+			continue
 		}
+		service := s.value.(Service)
+		if err := service.Stop(); err != nil {
+			me.options.logger.Error("failed to stop service", "name", service.Name(), "error", err)
+			continue
+		}
+		me.services[i].started = false
+		me.options.logger.Info("service stopped", "name", service.Name())
 	}
 
 	me.options.logger.Info("all services stopped")

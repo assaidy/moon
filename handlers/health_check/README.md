@@ -207,7 +207,9 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
 
 ```go
 app.AddDependency(cfg)
-app.AddService(db)
+app.AddService(func(_ moon.ServiceProvider) *Database {
+    return db
+})
 
 app.MapGet(health_check.ReadinessEndpoint, health_check.New(
     health_check.WithProbe(func(ctx *moon.Context) bool {
@@ -219,8 +221,10 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
 ))
 ```
 
-`GetService` panics if no service of that type was registered or if it was
-registered but never started. In tests, call `app.StartServices()` before
+`AddService` registers a constructor that runs when services start, in
+registration order. Its `ServiceProvider` argument can retrieve earlier started
+services. `GetService` panics if no service of that type was registered or if it
+was registered but never started. In tests, call `app.StartServices()` before
 exercising handlers that use services.
 
 ### Kubernetes-style probes

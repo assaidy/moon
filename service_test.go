@@ -43,26 +43,29 @@ type stubServiceB struct{ *stubBase }
 func newStubA() *stubServiceA { return &stubServiceA{&stubBase{name: "a", ready: true}} }
 func newStubB() *stubServiceB { return &stubServiceB{&stubBase{name: "b", ready: true}} }
 
+func staticService[T Service](service T) func(ServiceProvider) T {
+	return func(ServiceProvider) T { return service }
+}
+
 func TestService_AddGet(t *testing.T) {
-	t.Run("nil panics", func(t *testing.T) {
+	t.Run("nil constructor panics", func(t *testing.T) {
 		app := New()
-		var nilSvc *stubServiceA
-		require.PanicsWithValue(t, "service cannot be nil", func() {
-			app.AddService(nilSvc)
+		require.PanicsWithValue(t, "service constructor cannot be nil", func() {
+			app.AddService[*stubServiceA](nil)
 		})
 	})
 
 	t.Run("duplicate type panics", func(t *testing.T) {
 		app := New()
-		app.AddService(newStubA())
+		app.AddService(staticService(newStubA()))
 		require.PanicsWithValue(t, "service of type: *moon.stubServiceA is already registered", func() {
-			app.AddService(newStubA())
+			app.AddService(staticService(newStubA()))
 		})
 	})
 
 	t.Run("get before start panics", func(t *testing.T) {
 		app := New()
-		app.AddService(newStubA())
+		app.AddService(staticService(newStubA()))
 
 		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Panics(t, func() { ctx.GetService[*stubServiceA]() })
@@ -74,8 +77,9 @@ func TestService_AddGet(t *testing.T) {
 	t.Run("get after start returns instance", func(t *testing.T) {
 		app := New()
 		svc := newStubA()
-		app.AddService(svc)
+		app.AddService(staticService(svc))
 		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
 
 		app.Map(http.MethodGet, "/", func(ctx *Context) error {
 			require.Same(t, svc, ctx.GetService[*stubServiceA]())
@@ -91,6 +95,48 @@ func TestService_AddGet(t *testing.T) {
 			return nil
 		})
 		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+	})
+}
+
+func TestServiceProvider_GetService(t *testing.T) {
+	t.Run("zero value panics", func(t *testing.T) {
+		require.PanicsWithValue(t, "ServiceProvider must be supplied by moon", func() {
+			ServiceProvider{}.GetService[*stubServiceA]()
+		})
+	})
+
+	t.Run("constructor gets earlier started service", func(t *testing.T) {
+		app := New()
+		a, b := newStubA(), newStubB()
+		app.AddService(staticService(a))
+		app.AddService(func(p ServiceProvider) *stubServiceB {
+			require.Same(t, a, p.GetService[*stubServiceA]())
+			return b
+		})
+
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
+
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
+			require.Same(t, a, ctx.GetService[*stubServiceA]())
+			require.Same(t, b, ctx.GetService[*stubServiceB]())
+			return nil
+		})
+		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+	})
+
+	t.Run("constructor cannot get later unstarted service", func(t *testing.T) {
+		app := New()
+		app.AddService(func(p ServiceProvider) *stubServiceA {
+			require.PanicsWithValue(t, "service didn't start: *moon.stubServiceB", func() {
+				p.GetService[*stubServiceB]()
+			})
+			return newStubA()
+		})
+		app.AddService(staticService(newStubB()))
+
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
 	})
 }
 
@@ -135,8 +181,8 @@ func TestApp_CheckServicesReadiness(t *testing.T) {
 
 	t.Run("all started and ready", func(t *testing.T) {
 		app := New()
-		app.AddService(newStubA())
-		app.AddService(newStubB())
+		app.AddService(staticService(newStubA()))
+		app.AddService(staticService(newStubB()))
 		require.NoError(t, app.StartServices())
 		t.Cleanup(app.StopServices)
 
@@ -145,7 +191,7 @@ func TestApp_CheckServicesReadiness(t *testing.T) {
 
 	t.Run("registered but not started", func(t *testing.T) {
 		app := New()
-		app.AddService(newStubA())
+		app.AddService(staticService(newStubA()))
 
 		require.False(t, app.CheckServicesReadiness())
 	})
@@ -153,8 +199,8 @@ func TestApp_CheckServicesReadiness(t *testing.T) {
 	t.Run("one not ready", func(t *testing.T) {
 		app := New()
 		a, b := newStubA(), newStubB()
-		app.AddService(a)
-		app.AddService(b)
+		app.AddService(staticService(a))
+		app.AddService(staticService(b))
 		require.NoError(t, app.StartServices())
 		t.Cleanup(app.StopServices)
 		b.ready = false
@@ -169,8 +215,8 @@ func TestService_StopOrder(t *testing.T) {
 	a, b := newStubA(), newStubB()
 	a.stopOrder = &order
 	b.stopOrder = &order
-	app.AddService(a)
-	app.AddService(b)
+	app.AddService(staticService(a))
+	app.AddService(staticService(b))
 	require.NoError(t, app.StartServices())
 
 	app.StopServices()
@@ -182,9 +228,10 @@ func TestService_StartStop(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
 		app := New()
 		a, b := newStubA(), newStubB()
-		app.AddService(a)
-		app.AddService(b)
+		app.AddService(staticService(a))
+		app.AddService(staticService(b))
 		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
 
 		require.Equal(t, int32(1), a.startCalls.Load())
 		require.Equal(t, int32(1), b.startCalls.Load())
@@ -199,27 +246,55 @@ func TestService_StartStop(t *testing.T) {
 		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
 	})
 
-	t.Run("already started services are skipped", func(t *testing.T) {
-		app := New()
-		a, b := newStubA(), newStubB()
-		app.AddService(a)
-		app.AddService(b)
-		require.NoError(t, app.StartServices())
-		require.NoError(t, app.StartServices())
-
-		require.Equal(t, int32(1), a.startCalls.Load())
-		require.Equal(t, int32(1), b.startCalls.Load())
-	})
-
-	t.Run("stopped services start again", func(t *testing.T) {
+	t.Run("constructors run lazily and only once while started", func(t *testing.T) {
 		app := New()
 		a := newStubA()
-		app.AddService(a)
-		require.NoError(t, app.StartServices())
+		buildCalls := 0
+		app.AddService(func(ServiceProvider) *stubServiceA {
+			buildCalls++
+			return a
+		})
 
+		require.Zero(t, buildCalls)
+
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
+		require.Equal(t, 1, buildCalls)
+		require.Equal(t, int32(1), a.startCalls.Load())
+
+		require.NoError(t, app.StartServices())
+		require.Equal(t, 1, buildCalls)
+		require.Equal(t, int32(1), a.startCalls.Load())
+	})
+
+	t.Run("stopped services are constructed and started again", func(t *testing.T) {
+		app := New()
+		var built []*stubServiceA
+		app.AddService(func(ServiceProvider) *stubServiceA {
+			svc := newStubA()
+			built = append(built, svc)
+			return svc
+		})
+
+		require.NoError(t, app.StartServices())
 		app.StopServices()
 		require.NoError(t, app.StartServices())
-		require.Equal(t, int32(2), a.startCalls.Load())
+		t.Cleanup(app.StopServices)
+
+		require.Len(t, built, 2)
+		require.NotSame(t, built[0], built[1])
+		require.Equal(t, int32(1), built[0].startCalls.Load())
+		require.Equal(t, int32(1), built[1].startCalls.Load())
+		require.Equal(t, int32(1), built[0].stopCalls.Load())
+	})
+
+	t.Run("nil service from constructor panics", func(t *testing.T) {
+		app := New()
+		app.AddService(func(ServiceProvider) *stubServiceA { return nil })
+
+		require.PanicsWithValue(t, "service constructor returned nil: *moon.stubServiceA", func() {
+			_ = app.StartServices()
+		})
 	})
 
 	t.Run("start failure aborts and discards", func(t *testing.T) {
@@ -227,8 +302,8 @@ func TestService_StartStop(t *testing.T) {
 		app := New()
 		a, b := newStubA(), newStubB()
 		b.startErr = startBoom
-		app.AddService(a)
-		app.AddService(b)
+		app.AddService(staticService(a))
+		app.AddService(staticService(b))
 
 		err := app.StartServices()
 		require.ErrorIs(t, err, startBoom)
@@ -254,7 +329,7 @@ func TestService_StartStop(t *testing.T) {
 		app := New()
 		a := newStubA()
 		a.stopErr = errors.New("stop boom")
-		app.AddService(a)
+		app.AddService(staticService(a))
 		require.NoError(t, app.StartServices())
 
 		app.StopServices()
@@ -265,9 +340,14 @@ func TestService_StartStop(t *testing.T) {
 	t.Run("stop without start is clean", func(t *testing.T) {
 		app := New()
 		a := newStubA()
-		app.AddService(a)
+		buildCalls := 0
+		app.AddService(func(ServiceProvider) *stubServiceA {
+			buildCalls++
+			return a
+		})
 
 		app.StopServices()
+		require.Zero(t, buildCalls)
 		require.Equal(t, int32(0), a.stopCalls.Load())
 	})
 
@@ -275,7 +355,7 @@ func TestService_StartStop(t *testing.T) {
 		app := New()
 		a := newStubA()
 		a.stopErr = errors.New("stop boom")
-		app.AddService(a)
+		app.AddService(staticService(a))
 		require.NoError(t, app.StartServices())
 
 		require.NoError(t, app.Shutdown())
@@ -285,7 +365,7 @@ func TestService_StartStop(t *testing.T) {
 	t.Run("shutdown clean", func(t *testing.T) {
 		app := New()
 		a := newStubA()
-		app.AddService(a)
+		app.AddService(staticService(a))
 		require.NoError(t, app.StartServices())
 
 		require.NoError(t, app.Shutdown())
