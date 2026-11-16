@@ -43,8 +43,8 @@ type stubServiceB struct{ *stubBase }
 func newStubA() *stubServiceA { return &stubServiceA{&stubBase{name: "a", ready: true}} }
 func newStubB() *stubServiceB { return &stubServiceB{&stubBase{name: "b", ready: true}} }
 
-func staticService[T Service](service T) func(ServiceProvider) T {
-	return func(ServiceProvider) T { return service }
+func staticService[T Service](service T) func(Injected) T {
+	return func(Injected) T { return service }
 }
 
 func TestService_AddGet(t *testing.T) {
@@ -98,10 +98,10 @@ func TestService_AddGet(t *testing.T) {
 	})
 }
 
-func TestServiceProvider_GetService(t *testing.T) {
+func TestInjected_GetService(t *testing.T) {
 	t.Run("zero value panics", func(t *testing.T) {
-		require.PanicsWithValue(t, "ServiceProvider must be supplied by moon", func() {
-			ServiceProvider{}.GetService[*stubServiceA]()
+		require.PanicsWithValue(t, "Injected must be supplied by moon", func() {
+			Injected{}.GetService[*stubServiceA]()
 		})
 	})
 
@@ -109,8 +109,8 @@ func TestServiceProvider_GetService(t *testing.T) {
 		app := New()
 		a, b := newStubA(), newStubB()
 		app.AddService(staticService(a))
-		app.AddService(func(p ServiceProvider) *stubServiceB {
-			require.Same(t, a, p.GetService[*stubServiceA]())
+		app.AddService(func(injected Injected) *stubServiceB {
+			require.Same(t, a, injected.GetService[*stubServiceA]())
 			return b
 		})
 
@@ -127,9 +127,9 @@ func TestServiceProvider_GetService(t *testing.T) {
 
 	t.Run("constructor cannot get later unstarted service", func(t *testing.T) {
 		app := New()
-		app.AddService(func(p ServiceProvider) *stubServiceA {
+		app.AddService(func(injected Injected) *stubServiceA {
 			require.PanicsWithValue(t, "service didn't start: *moon.stubServiceB", func() {
-				p.GetService[*stubServiceB]()
+				injected.GetService[*stubServiceB]()
 			})
 			return newStubA()
 		})
@@ -250,7 +250,7 @@ func TestService_StartStop(t *testing.T) {
 		app := New()
 		a := newStubA()
 		buildCalls := 0
-		app.AddService(func(ServiceProvider) *stubServiceA {
+		app.AddService(func(Injected) *stubServiceA {
 			buildCalls++
 			return a
 		})
@@ -270,7 +270,7 @@ func TestService_StartStop(t *testing.T) {
 	t.Run("stopped services are constructed and started again", func(t *testing.T) {
 		app := New()
 		var built []*stubServiceA
-		app.AddService(func(ServiceProvider) *stubServiceA {
+		app.AddService(func(Injected) *stubServiceA {
 			svc := newStubA()
 			built = append(built, svc)
 			return svc
@@ -290,7 +290,7 @@ func TestService_StartStop(t *testing.T) {
 
 	t.Run("nil service from constructor panics", func(t *testing.T) {
 		app := New()
-		app.AddService(func(ServiceProvider) *stubServiceA { return nil })
+		app.AddService(func(Injected) *stubServiceA { return nil })
 
 		require.PanicsWithValue(t, "service constructor returned nil: *moon.stubServiceA", func() {
 			_ = app.StartServices()
@@ -341,7 +341,7 @@ func TestService_StartStop(t *testing.T) {
 		app := New()
 		a := newStubA()
 		buildCalls := 0
-		app.AddService(func(ServiceProvider) *stubServiceA {
+		app.AddService(func(Injected) *stubServiceA {
 			buildCalls++
 			return a
 		})

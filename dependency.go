@@ -20,8 +20,5 @@ func (me *App) AddDependency(d any) {
 // [App.AddDependency]. It panics when no dependency of that type
 // was registered.
 func (me *Context) GetDependency[T any]() T {
-	t := reflect.TypeFor[T]()
-	d, ok := me.app.dependencies[t].(T)
-	Assert(ok, "dependency not found: "+t.String())
-	return d
+	return Injected{app: me.app}.GetDependency[T]()
 }

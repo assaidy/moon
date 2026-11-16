@@ -847,23 +847,28 @@ type Service interface {
 Register a constructor with `AddService`:
 
 ```go
-app.AddService(func(_ moon.ServiceProvider) *BillingService {
+app.AddService(func(_ moon.Injected) *BillingService {
     return NewBillingService(cfg.BillingURL)
 })
 ```
 
 `AddService` does not construct the service immediately. Constructors run when
 services are started (through `App.Start` or `App.StartServices`), in
-registration order. The `ServiceProvider` argument gives a constructor access to
-services that have already started, so later services can depend on earlier
+registration order. The `Injected` argument gives a constructor access to
+registered dependencies through `GetDependency` and to services that have
+already started through `GetService`, so later services can depend on earlier
 ones:
 
 ```go
-app.AddService(func(_ moon.ServiceProvider) *Database {
-    return NewDatabase(cfg.DatabaseURL)
+app.AddDependency(cfg)
+app.AddService(func(injected moon.Injected) *Database {
+    return NewDatabase(injected.GetDependency[Config]().DatabaseURL)
 })
-app.AddService(func(p moon.ServiceProvider) *BillingService {
-    return NewBillingService(p.GetService[*Database]().Pool())
+app.AddService(func(injected moon.Injected) *BillingService {
+    return NewBillingService(
+        injected.GetDependency[Config]().BillingURL,
+        injected.GetService[*Database]().Pool(),
+    )
 })
 ```
 
@@ -886,8 +891,9 @@ billing := ctx.GetService[*BillingService]()
 
 `GetService` panics when no service of that type was registered, or when it was
 registered but never successfully started. The same rules apply inside
-constructors through `ServiceProvider.GetService`; only earlier services that
-have started are visible.
+constructors through `Injected.GetService`; only earlier services that have
+started are visible. `Injected.GetDependency` follows the same rules as
+`Context.GetDependency`.
 
 Lifecycle details:
 
@@ -905,7 +911,7 @@ For tests:
 
 ```go
 app := moon.New()
-app.AddService(func(_ moon.ServiceProvider) *BillingService {
+app.AddService(func(_ moon.Injected) *BillingService {
     return testBilling
 })
 

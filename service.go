@@ -49,41 +49,20 @@ func (me *App) CheckServicesReadiness() bool {
 
 type serviceInfo struct {
 	type_   reflect.Type
-	build   func(ServiceProvider) any
+	build   func(Injected) any
 	value   any
 	started bool
 }
 
-// ServiceProvider gives service constructors access to services that have
-// already started. The app supplies it when a constructor runs.
-type ServiceProvider struct {
-	app *App
-}
-
-// GetService returns the started service of type T.
-// It panics if T was not registered or has not started yet, or if the provider
-// was not supplied by the app.
-func (me ServiceProvider) GetService[T Service]() T {
-	Assert(me.app != nil, "ServiceProvider must be supplied by moon")
-	t := reflect.TypeFor[T]()
-	i := slices.IndexFunc(me.app.services, func(s serviceInfo) bool {
-		return s.type_ == t
-	})
-	Assert(i != -1, "service not found: "+t.String())
-	s := me.app.services[i]
-	Assert(s.started && !IsNilValue(s.value), "service didn't start: "+t.String())
-	return s.value.(T)
-}
-
 // AddService registers a constructor for the service type T.
 // The constructor runs when the service is started (see [App.StartServices]),
-// in registration order, and receives a [ServiceProvider] that exposes
-// services which have already started. This lets later services depend on
-// earlier ones.
+// in registration order, and receives an [Injected] that exposes registered
+// dependencies and services which have already started. This lets later
+// services depend on earlier ones.
 //
 // It panics if build is nil or a service of the same type is already
 // registered.
-func (me *App) AddService[T Service](build func(ServiceProvider) T) {
+func (me *App) AddService[T Service](build func(Injected) T) {
 	Assert(build != nil, "service constructor cannot be nil")
 	t := reflect.TypeFor[T]()
 	Assert(
@@ -92,7 +71,7 @@ func (me *App) AddService[T Service](build func(ServiceProvider) T) {
 	)
 	me.services = append(me.services, serviceInfo{
 		type_: t,
-		build: func(p ServiceProvider) any { return build(p) },
+		build: func(injected Injected) any { return build(injected) },
 	})
 }
 
@@ -101,12 +80,12 @@ func (me *App) AddService[T Service](build func(ServiceProvider) T) {
 // It panics when no service of that type was registered, or when it was
 // registered but never successfully started.
 func (me *Context) GetService[T Service]() T {
-	return ServiceProvider{app: me.app}.GetService[T]()
+	return Injected{app: me.app}.GetService[T]()
 }
 
 // StartServices constructs and starts all registered services in registration
-// order. Constructors can retrieve services that have already started through
-// [ServiceProvider.GetService]. Services that are already started are left
+// order. Constructors can retrieve dependencies and services that have already
+// started through [Injected]. Services that are already started are left
 // untouched, so their constructors do not run again.
 //
 // If any service fails to start, already-started services are stopped and
@@ -121,13 +100,13 @@ func (me *Context) GetService[T Service]() T {
 func (me *App) StartServices() error {
 	me.options.logger.Info("starting all services")
 
-	provider := ServiceProvider{app: me}
+	injected := Injected{app: me}
 
 	for i, s := range me.services {
 		if s.started {
 			continue
 		}
-		value := s.build(provider)
+		value := s.build(injected)
 		Assert(!IsNilValue(value), "service constructor returned nil: "+s.type_.String())
 		service := value.(Service)
 		if err := service.Start(); err != nil {

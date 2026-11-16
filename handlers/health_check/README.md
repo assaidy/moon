@@ -207,7 +207,7 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
 
 ```go
 app.AddDependency(cfg)
-app.AddService(func(_ moon.ServiceProvider) *Database {
+app.AddService(func(_ moon.Injected) *Database {
     return NewDb(cfg.DbUrl)
 })
 
@@ -222,10 +222,10 @@ app.MapGet(health_check.ReadinessEndpoint, health_check.New(
 ```
 
 `AddService` registers a constructor that runs when services start, in
-registration order. Its `ServiceProvider` argument can retrieve earlier started
-services. `GetService` panics if no service of that type was registered or if it
-was registered but never started. In tests, call `app.StartServices()` before
-exercising handlers that use services.
+registration order. Its `Injected` argument can retrieve registered dependencies
+and earlier started services. `GetService` panics if no service of that type was
+registered or if it was registered but never started. In tests, call
+`app.StartServices()` before exercising handlers that use services.
 
 ### Kubernetes-style probes
 

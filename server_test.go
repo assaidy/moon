@@ -40,7 +40,7 @@ func TestServer_StartServiceFailure(t *testing.T) {
 	app := New(WithListenAddress("127.0.0.1:0"))
 	svc := newStubA()
 	svc.startErr = errors.New("start boom")
-	app.AddService(func(ServiceProvider) *stubServiceA { return svc })
+	app.AddService(func(Injected) *stubServiceA { return svc })
 
 	require.ErrorIs(t, app.Start(), ErrFailedToStartServices)
 	require.Equal(t, int32(1), svc.startCalls.Load())
@@ -50,7 +50,7 @@ func TestServer_StartShutdownLifecycle(t *testing.T) {
 	addr := freePort(t)
 	app := New(WithListenAddress(addr))
 	svc := newStubA()
-	app.AddService(func(ServiceProvider) *stubServiceA { return svc })
+	app.AddService(func(Injected) *stubServiceA { return svc })
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- app.Start() }()
@@ -107,7 +107,7 @@ func TestServer_RunUntilSignal(t *testing.T) {
 		app := New(WithListenAddress("127.0.0.1:0"))
 		svc := newStubA()
 		svc.startErr = errors.New("start boom")
-		app.AddService(func(ServiceProvider) *stubServiceA { return svc })
+		app.AddService(func(Injected) *stubServiceA { return svc })
 
 		require.ErrorIs(t, app.RunUntilSignal(), ErrFailedToStartServices)
 	})
@@ -126,7 +126,7 @@ func TestServer_Shutdown(t *testing.T) {
 	t.Run("idle stops services", func(t *testing.T) {
 		app := New()
 		svc := newStubA()
-		app.AddService(func(ServiceProvider) *stubServiceA { return svc })
+		app.AddService(func(Injected) *stubServiceA { return svc })
 		require.NoError(t, app.StartServices())
 
 		require.NoError(t, app.Shutdown())
@@ -136,7 +136,7 @@ func TestServer_Shutdown(t *testing.T) {
 	t.Run("with shutdown timeout", func(t *testing.T) {
 		app := New(WithShutdownTimeout(time.Second))
 		svc := newStubA()
-		app.AddService(func(ServiceProvider) *stubServiceA { return svc })
+		app.AddService(func(Injected) *stubServiceA { return svc })
 		require.NoError(t, app.StartServices())
 
 		require.NoError(t, app.Shutdown())

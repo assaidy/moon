@@ -98,3 +98,40 @@ func TestDependency(t *testing.T) {
 		require.Panics(t, func() { app.AddDependency((*testDB)(nil)) })
 	})
 }
+
+func TestInjected_GetDependency(t *testing.T) {
+	type config struct{ dsn string }
+
+	t.Run("zero value panics", func(t *testing.T) {
+		require.PanicsWithValue(t, "Injected must be supplied by moon", func() {
+			Injected{}.GetDependency[config]()
+		})
+	})
+
+	t.Run("constructor gets registered dependency", func(t *testing.T) {
+		app := New()
+		cfg := config{dsn: "postgres://localhost"}
+		app.AddDependency(cfg)
+
+		app.AddService(func(injected Injected) *stubServiceA {
+			require.Equal(t, cfg, injected.GetDependency[config]())
+			return newStubA()
+		})
+
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
+	})
+
+	t.Run("missing dependency panics", func(t *testing.T) {
+		app := New()
+		app.AddService(func(injected Injected) *stubServiceA {
+			require.PanicsWithValue(t, "dependency not found: string", func() {
+				injected.GetDependency[string]()
+			})
+			return newStubA()
+		})
+
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
+	})
+}
