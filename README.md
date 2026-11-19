@@ -893,10 +893,10 @@ The same lookups can live inside a constructor returned by `New`:
 ```go
 func NewBilling() moon.ServiceConstructor[*BillingService] {
     return func(injected moon.Injected) *BillingService {
-        return NewBillingService(
-            injected.GetDependency[Config]().BillingURL,
-            injected.GetService[*Database]().Pool(),
-        )
+        return &BillingService{
+            url:  injected.GetDependency[Config]().BillingURL,
+            pool: injected.GetService[*Database]().Pool(),
+        }
     }
 }
 
