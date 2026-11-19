@@ -852,6 +852,22 @@ app.AddService(func(_ moon.Injected) *BillingService {
 })
 ```
 
+A service package can return a `moon.ServiceConstructor` from its `New`
+function, so registration stays short:
+
+```go
+func NewBilling(url string) moon.ServiceConstructor[*BillingService] {
+    return func(moon.Injected) *BillingService {
+        return &BillingService{url: url}
+    }
+}
+
+app.AddService(NewBilling(cfg.BillingURL))
+```
+
+`AddService` also accepts any function type with the same signature, so a
+service-local constructor type works too.
+
 `AddService` does not construct the service immediately. Constructors run when
 services are started (through `App.Start` or `App.StartServices`), in
 registration order. The `Injected` argument gives a constructor access to
@@ -870,6 +886,21 @@ app.AddService(func(injected moon.Injected) *BillingService {
         injected.GetService[*Database]().Pool(),
     )
 })
+```
+
+The same lookups can live inside a constructor returned by `New`:
+
+```go
+func NewBilling() moon.ServiceConstructor[*BillingService] {
+    return func(injected moon.Injected) *BillingService {
+        return NewBillingService(
+            injected.GetDependency[Config]().BillingURL,
+            injected.GetService[*Database]().Pool(),
+        )
+    }
+}
+
+app.AddService(NewBilling())
 ```
 
 `AddService` panics when the constructor is nil or when a service of the same

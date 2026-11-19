@@ -43,7 +43,7 @@ type stubServiceB struct{ *stubBase }
 func newStubA() *stubServiceA { return &stubServiceA{&stubBase{name: "a", ready: true}} }
 func newStubB() *stubServiceB { return &stubServiceB{&stubBase{name: "b", ready: true}} }
 
-func staticService[T Service](service T) func(Injected) T {
+func staticService[T Service](service T) ServiceConstructor[T] {
 	return func(Injected) T { return service }
 }
 
@@ -51,7 +51,7 @@ func TestService_AddGet(t *testing.T) {
 	t.Run("nil constructor panics", func(t *testing.T) {
 		app := New()
 		require.PanicsWithValue(t, "service constructor cannot be nil", func() {
-			app.AddService[*stubServiceA](nil)
+			app.AddService(ServiceConstructor[*stubServiceA](nil))
 		})
 	})
 
@@ -61,6 +61,26 @@ func TestService_AddGet(t *testing.T) {
 		require.PanicsWithValue(t, "service of type: *moon.stubServiceA is already registered", func() {
 			app.AddService(staticService(newStubA()))
 		})
+	})
+
+	t.Run("factory constructor is registered", func(t *testing.T) {
+		type constructor func(Injected) *stubServiceA
+
+		app := New()
+		svc := newStubA()
+		newService := func() constructor {
+			return func(Injected) *stubServiceA { return svc }
+		}
+
+		app.AddService(newService())
+		require.NoError(t, app.StartServices())
+		t.Cleanup(app.StopServices)
+
+		app.Map(http.MethodGet, "/", func(ctx *Context) error {
+			require.Same(t, svc, ctx.GetService[*stubServiceA]())
+			return nil
+		})
+		app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
 	})
 
 	t.Run("get before start panics", func(t *testing.T) {

@@ -23,6 +23,14 @@ type Service interface {
 	IsReady() bool
 }
 
+// ServiceConstructor builds a service of type T when the service starts.
+// It receives an [Injected] that exposes registered dependencies and services
+// which have already started.
+//
+// A service package can return one from its New function, so registration
+// stays short: app.AddService(postgres.New(url)).
+type ServiceConstructor[T Service] func(Injected) T
+
 // CheckServicesReadiness reports whether every given service is non-nil
 // and ready (see [Service.IsReady]). It returns true when called with no
 // services.
@@ -54,15 +62,20 @@ type serviceInfo struct {
 	started bool
 }
 
-// AddService registers a constructor for the service type T.
+// AddService registers a [ServiceConstructor] for the service type T.
 // The constructor runs when the service is started (see [App.StartServices]),
 // in registration order, and receives an [Injected] that exposes registered
 // dependencies and services which have already started. This lets later
 // services depend on earlier ones.
 //
+// build can be a [ServiceConstructor] or any function type with the same
+// signature, so a service's New function can return its constructor directly:
+//
+//	app.AddService(postgres.New(os.Getenv("POSTGRES_URL")))
+//
 // It panics if build is nil or a service of the same type is already
 // registered.
-func (me *App) AddService[T Service](build func(Injected) T) {
+func (me *App) AddService[T Service, F ~func(Injected) T](build F) {
 	Assert(build != nil, "service constructor cannot be nil")
 	t := reflect.TypeFor[T]()
 	Assert(
